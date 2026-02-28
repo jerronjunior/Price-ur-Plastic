@@ -32,10 +32,15 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
       _loading = true;
     });
-    final msg = await context.read<AuthProvider>().login(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
+    String? msg;
+    try {
+      msg = await context.read<AuthProvider>().login(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          );
+    } catch (_) {
+      msg = 'Login failed. Please try again.';
+    }
     if (!mounted) return;
     setState(() => _loading = false);
     if (msg != null) {

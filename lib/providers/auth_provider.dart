@@ -29,7 +29,18 @@ class AuthProvider with ChangeNotifier {
   void init() {
     _auth.authStateChanges.listen((User? user) async {
       if (user != null) {
-        await _loadUser(user.uid);
+        try {
+          await _loadUser(user.uid);
+        } catch (_) {
+          _user = UserModel(
+            userId: user.uid,
+            name: user.displayName ?? user.email?.split('@').first ?? 'User',
+            email: user.email ?? '',
+            totalPoints: 0,
+            totalBottles: 0,
+          );
+          notifyListeners();
+        }
       } else {
         _user = null;
         notifyListeners();
@@ -62,17 +73,30 @@ class AuthProvider with ChangeNotifier {
       );
       final uid = cred.user?.uid;
       if (uid == null) return 'Registration failed.';
-      await _firestore.setUser(UserModel(
-        userId: uid,
-        name: name,
-        email: email,
-        totalPoints: 0,
-        totalBottles: 0,
-      ));
-      await _loadUser(uid);
+      try {
+        await _firestore.setUser(UserModel(
+          userId: uid,
+          name: name,
+          email: email,
+          totalPoints: 0,
+          totalBottles: 0,
+        ));
+        await _loadUser(uid);
+      } catch (_) {
+        _user = UserModel(
+          userId: uid,
+          name: name,
+          email: email,
+          totalPoints: 0,
+          totalBottles: 0,
+        );
+        notifyListeners();
+      }
       return null;
     } on FirebaseAuthException catch (e) {
-      return e.message ?? 'Registration failed.';
+      return _friendlyAuthMessage(e, fallback: 'Registration failed.');
+    } catch (_) {
+      return 'Registration failed. Check Firebase Auth and Firestore setup.';
     }
   }
 
@@ -86,10 +110,52 @@ class AuthProvider with ChangeNotifier {
         email: email,
         password: password,
       );
-      if (cred.user != null) await _loadUser(cred.user!.uid);
+      if (cred.user != null) {
+        try {
+          await _loadUser(cred.user!.uid);
+        } catch (_) {
+          _user = UserModel(
+            userId: cred.user!.uid,
+            name:
+                cred.user!.displayName ?? cred.user!.email?.split('@').first ?? 'User',
+            email: cred.user!.email ?? '',
+            totalPoints: 0,
+            totalBottles: 0,
+          );
+          notifyListeners();
+        }
+      }
       return null;
     } on FirebaseAuthException catch (e) {
-      return e.message ?? 'Login failed.';
+      return _friendlyAuthMessage(e, fallback: 'Login failed.');
+    } catch (_) {
+      return 'Login failed. Check Firebase Auth and Firestore setup.';
+    }
+  }
+
+  String _friendlyAuthMessage(
+    FirebaseAuthException e, {
+    required String fallback,
+  }) {
+    switch (e.code) {
+      case 'operation-not-allowed':
+        return 'Email/password sign-in is disabled in Firebase Authentication.';
+      case 'invalid-credential':
+      case 'wrong-password':
+      case 'user-not-found':
+        return 'Incorrect email or password.';
+      case 'email-already-in-use':
+        return 'This email is already registered.';
+      case 'weak-password':
+        return 'Password is too weak. Use at least 6 characters.';
+      case 'invalid-email':
+        return 'Invalid email address.';
+      case 'network-request-failed':
+        return 'Network error. Check your internet connection.';
+      case 'too-many-requests':
+        return 'Too many attempts. Try again later.';
+      default:
+        return e.message ?? fallback;
     }
   }
 
