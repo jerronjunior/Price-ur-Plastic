@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import '../../core/theme.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scan_validation_service.dart';
 
-/// Scan bottle barcode; validate not already recycled.
+/// Scan bottle barcode with frame overlay; validate not already recycled.
 class ScanBottleScreen extends StatefulWidget {
   const ScanBottleScreen({
     super.key,
@@ -29,6 +28,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
   );
   bool _processing = false;
   String? _error;
+  String? _scannedResult;
 
   @override
   void dispose() {
@@ -59,61 +59,238 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       });
       return;
     }
-    widget.onScanned(code);
+    
+    // Show result temporarily before proceeding
+    setState(() => _scannedResult = code);
+    await Future.delayed(const Duration(seconds: 2));
+    if (mounted) {
+      widget.onScanned(code);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scan Bottle'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: widget.onBack,
-        ),
-      ),
-      body: Stack(
+      body: Column(
         children: [
-          MobileScanner(
-            controller: _controller,
-            onDetect: _onDetect,
-          ),
-          if (_error != null)
-            Positioned(
-              left: 24,
-              right: 24,
-              bottom: 48,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.error.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          else
-            Positioned(
-              left: 24,
-              right: 24,
-              bottom: 48,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Text(
-                  'Scan the bottle barcode',
-                  style: TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
+          // Blue Header
+          Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
             ),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+            child: SafeArea(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.person, color: Colors.white),
+                    onPressed: context.pop,
+                  ),
+                  const Text(
+                    'PuP',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.notifications, color: Colors.white),
+                    onPressed: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Camera with frame overlay
+          Expanded(
+            child: Stack(
+              children: [
+                MobileScanner(
+                  controller: _controller,
+                  onDetect: _onDetect,
+                ),
+                // Blue frame overlay
+                Center(
+                  child: Container(
+                    width: 300,
+                    height: 300,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: const Color(0xFF1565C0),
+                        width: 4,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ),
+                // Horizontal line through center
+                Center(
+                  child: Container(
+                    width: 300,
+                    height: 1,
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.3),
+                  ),
+                ),
+                // Help text below frame
+                Positioned(
+                  bottom: 60,
+                  left: 0,
+                  right: 0,
+                  child: Column(
+                    children: [
+                      Text(
+                        'Align barcode within frame...',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (_scannedResult != null) ...[
+                        const SizedBox(height: 24),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade700,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            'Scan result: $_scannedResult',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (_error != null) ...[
+                        const SizedBox(height: 24),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade700,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withValues(alpha: 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _BottomNavItem(
+              icon: Icons.home,
+              label: 'Home',
+              isActive: false,
+              onTap: () => context.push('/home'),
+            ),
+            _BottomNavItem(
+              icon: Icons.leaderboard,
+              label: 'Leaderboard',
+              isActive: false,
+              onTap: () => context.push('/leaderboard'),
+            ),
+            _BottomNavItem(
+              icon: Icons.camera_alt,
+              label: 'Scan',
+              isActive: true,
+              onTap: () {},
+            ),
+            _BottomNavItem(
+              icon: Icons.card_giftcard,
+              label: 'Rewards',
+              isActive: false,
+              onTap: () => context.push('/rewards'),
+            ),
+            _BottomNavItem(
+              icon: Icons.person,
+              label: 'Profile',
+              isActive: false,
+              onTap: () => context.push('/profile'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryBlue = Color(0xFF1565C0);
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: isActive ? primaryBlue : Colors.grey.shade700,
+            size: 24,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: isActive ? primaryBlue : Colors.grey.shade700,
+              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
         ],
       ),
     );

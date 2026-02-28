@@ -7,6 +7,7 @@ import '../screens/home/home_screen.dart';
 import '../screens/leaderboard/leaderboard_screen.dart';
 import '../screens/profile/profile_screen.dart';
 import '../screens/rewards/rewards_screen.dart';
+import '../screens/scan/scan_landing_screen.dart';
 import '../screens/scan/scan_flow_screen.dart';
 
 /// App routing with auth redirect.
@@ -40,6 +41,10 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       ),
       GoRoute(
         path: '/scan',
+        builder: (_, __) => const ScanLandingScreen(),
+      ),
+      GoRoute(
+        path: '/scan-flow',
         builder: (_, __) => const ScanFlowScreen(),
       ),
       GoRoute(
