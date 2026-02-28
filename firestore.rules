@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users: read/write own document only
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Recycled bottles: anyone authenticated can create; no duplicate barcode (enforced in app + optional security)
+    match /recycled_bottles/{docId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasAll(['barcode', 'userId', 'binId', 'timestamp']);
+      allow update, delete: if false;
+    }
+
+    // Bins: read-only for clients
+    match /bins/{binId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}

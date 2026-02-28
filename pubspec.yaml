@@ -1,0 +1,38 @@
+name: eco_recycle
+description: EcoRecycle - Reduce plastic bottle waste. Scan bottles, confirm recycling, earn points.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  
+  # Firebase
+  firebase_core: 4.4.0
+  firebase_auth: 6.1.4
+  cloud_firestore: 6.1.2
+  
+  # Scanning
+  mobile_scanner: ^4.0.1
+  
+  # Camera
+  camera: ^0.10.5+9
+  
+  # State & routing
+  provider: ^6.1.1
+  go_router: ^13.0.1
+  
+  # Utils
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
