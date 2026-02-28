@@ -66,70 +66,65 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
     return Scaffold(
       body: Column(
         children: [
-          // Header with wave and branding (full width, no scroll)
-          SizedBox(
-            width: screenWidth,
-            child: Stack(
-              children: [
-                Container(
-                  width: screenWidth,
-                  height: 300,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        const Color(0xFF1565C0),
-                        const Color(0xFF0D47A1),
-                      ],
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.recycling,
-                        size: 80,
-                        color: AppTheme.primaryGreen,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Price ur Plastic',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Recycle. Earn. Repeat.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              color: Colors.white70,
-                            ),
-                      ),
+          // Full-width header with wave and branding
+          Stack(
+            children: [
+              Container(
+                width: double.infinity,
+                height: 300,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xFF1565C0),
+                      const Color(0xFF0D47A1),
                     ],
                   ),
                 ),
-                Positioned(
-                  bottom: -1,
-                  left: 0,
-                  right: 0,
-                  child: CustomPaint(
-                    painter: WavePainter(),
-                    size: Size(screenWidth, 60),
-                  ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.recycling,
+                      size: 80,
+                      color: AppTheme.primaryGreen,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Price ur Plastic',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Recycle. Earn. Repeat.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: Colors.white70,
+                          ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                bottom: -1,
+                left: 0,
+                right: 0,
+                child: CustomPaint(
+                  painter: WavePainter(),
+                  size: Size(MediaQuery.of(context).size.width, 60),
+                ),
+              ),
+            ],
           ),
-          // Scrollable form content
           Expanded(
             child: SingleChildScrollView(
               child: Padding(
@@ -354,11 +349,12 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     ),
                   ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
