@@ -75,13 +75,13 @@ class _AuthScreenState extends State<AuthScreen> {
               Container(
                 width: double.infinity,
                 height: 300,
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      const Color(0xFF1565C0),
-                      const Color(0xFF0D47A1),
+                      Color(0xFF1565C0),
+                      Color(0xFF0D47A1),
                     ],
                   ),
                 ),
@@ -89,7 +89,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.recycling,
                       size: 80,
                       color: AppTheme.primaryGreen,

@@ -80,7 +80,7 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
+                const Icon(
                   Icons.warning_amber_rounded,
                   size: 64,
                   color: AppTheme.error,

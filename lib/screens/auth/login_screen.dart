@@ -62,7 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 48),
-                Icon(
+                const Icon(
                   Icons.recycling,
                   size: 80,
                   color: AppTheme.primaryGreen,

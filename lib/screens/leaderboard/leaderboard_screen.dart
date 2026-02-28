@@ -107,15 +107,15 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             ),
             const SizedBox(height: 24),
             // Leaderboard Section Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: [
-                  const Text(
+                  Text(
                     '🏆 ',
                     style: TextStyle(fontSize: 28),
                   ),
-                  const Text(
+                  Text(
                     'Leaderboard',
                     style: TextStyle(
                       fontSize: 24,
@@ -156,8 +156,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               stream: firestore.leaderboardStream(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20),
                     child: SizedBox(
                       height: 300,
                       child: Center(
@@ -191,7 +191,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                         final backgroundColor = topColors[rank] ??
                             Colors.white;
                         final medal =
-                            medalEmojis[rank] ?? '${rank}';
+                            medalEmojis[rank] ?? '$rank';
 
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 12),
@@ -204,7 +204,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                             medal: medal,
                           ),
                         );
-                      }).toList(),
+                      }),
                       // Show current user if not in top 10
                       if (currentUser != null &&
                           !leaderboardUsers.any(

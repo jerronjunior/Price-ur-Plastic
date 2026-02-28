@@ -162,7 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           const SizedBox(width: 16),
-                          Expanded(
+                          const Expanded(
                             child: _StatBox(
                               icon: '📊',
                               value: '0',
@@ -182,7 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           const SizedBox(width: 16),
-                          Expanded(
+                          const Expanded(
                             child: _StatBox(
                               icon: '📍',
                               value: '0',
@@ -240,7 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             value: (points % 100) / 100,
                             minHeight: 12,
                             backgroundColor: Colors.grey.shade300,
-                            valueColor: AlwaysStoppedAnimation(
+                            valueColor: const AlwaysStoppedAnimation(
                               AppTheme.primaryBlue,
                             ),
                           ),
