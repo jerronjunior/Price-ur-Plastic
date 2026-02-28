@@ -51,6 +51,13 @@ class FirestoreService {
     });
   }
 
+  /// Update user total points (for spin wheel and other features).
+  Future<void> updateTotalPoints(String userId, int points) async {
+    await _firestore.collection(_usersCollection).doc(userId).update({
+      'totalPoints': points,
+    });
+  }
+
   /// Increment user points and bottles (called after successful recycle).
   Future<void> incrementUserPointsAndBottles(String userId) async {
     final ref = _firestore.collection(_usersCollection).doc(userId);

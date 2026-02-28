@@ -174,4 +174,13 @@ class AuthProvider with ChangeNotifier {
     _user = _user!.copyWith(name: name);
     notifyListeners();
   }
+
+  /// Update total points (for spin wheel or other point changes).
+  Future<void> updateTotalPoints(int points) async {
+    final uid = userId;
+    if (uid == null || _user == null) return;
+    await _firestore.updateTotalPoints(uid, points);
+    _user = _user!.copyWith(totalPoints: points);
+    notifyListeners();
+  }
 }

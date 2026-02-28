@@ -5,12 +5,11 @@ import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scan_validation_service.dart';
-import 'scan_bin_screen.dart';
 import 'scan_bottle_screen.dart';
 import 'camera_confirm_screen.dart';
 import 'scan_success_screen.dart';
 
-/// Orchestrates: validate → scan bin → scan bottle → camera confirm → success.
+/// Orchestrates: validate → scan bottle → camera confirm → success.
 class ScanFlowScreen extends StatefulWidget {
   const ScanFlowScreen({super.key});
 
@@ -19,7 +18,6 @@ class ScanFlowScreen extends StatefulWidget {
 }
 
 class _ScanFlowScreenState extends State<ScanFlowScreen> {
-  String? _binId;
   String? _barcode;
   String? _validationError;
   bool _validating = true;
@@ -43,10 +41,6 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
       _validationError = error;
       _validating = false;
     });
-  }
-
-  void _onBinScanned(String binId) {
-    setState(() => _binId = binId);
   }
 
   void _onBottleScanned(String barcode) {
@@ -106,29 +100,67 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
             ),
           ),
         ),
+        bottomNavigationBar: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withValues(alpha: 0.1),
+                blurRadius: 8,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _BottomNavItem(
+                icon: Icons.home,
+                label: 'Home',
+                isActive: false,
+                onTap: () => context.push('/home'),
+              ),
+              _BottomNavItem(
+                icon: Icons.leaderboard,
+                label: 'Leaderboard',
+                isActive: false,
+                onTap: () => context.push('/leaderboard'),
+              ),
+              _BottomNavItem(
+                icon: Icons.camera_alt,
+                label: 'Scan',
+                isActive: true,
+                onTap: () {},
+              ),
+              _BottomNavItem(
+                icon: Icons.card_giftcard,
+                label: 'Rewards',
+                isActive: false,
+                onTap: () => context.push('/rewards'),
+              ),
+              _BottomNavItem(
+                icon: Icons.person,
+                label: 'Profile',
+                isActive: false,
+                onTap: () => context.push('/profile'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
-    // Step 1: Scan bin QR
-    if (_binId == null) {
-      return ScanBinScreen(
-        onScanned: _onBinScanned,
+    // Step 1: Scan bottle barcode
+    if (_barcode == null) {
+      return ScanBottleScreen(
+        onScanned: _onBottleScanned,
         onBack: () => context.pop(),
       );
     }
 
-    // Step 2: Scan bottle barcode
-    if (_barcode == null) {
-      return ScanBottleScreen(
-        binId: _binId!,
-        onScanned: _onBottleScanned,
-        onBack: () => setState(() => _binId = null),
-      );
-    }
-
-    // Step 3: Camera confirm (10s countdown + arrow detection)
+    // Step 2: Camera confirm (10s countdown + arrow detection)
     return CameraConfirmScreen(
-      binId: _binId!,
       barcode: _barcode!,
       onSuccess: () => Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
@@ -139,3 +171,43 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
     );
   }
 }
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryBlue = Color(0xFF1565C0);
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: isActive ? primaryBlue : Colors.grey.shade700,
+            size: 24,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: isActive ? primaryBlue : Colors.grey.shade700,
+              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }}

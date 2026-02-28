@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
 
-/// Profile: edit name, show stats, logout.
+/// Profile screen: user info, edit profile, logout.
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -13,32 +13,36 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _nameController = TextEditingController();
-  bool _editing = false;
+  late TextEditingController _firstNameController;
+  late TextEditingController _lastNameController;
+  late TextEditingController _emailController;
+  late TextEditingController _mobileController;
+  bool _isEditing = false;
 
   @override
   void initState() {
     super.initState();
     final user = context.read<AuthProvider>().user;
-    if (user != null) _nameController.text = user.name;
+    final nameParts = user?.name.split(' ') ?? ['', ''];
+    _firstNameController = TextEditingController(text: nameParts.isNotEmpty ? nameParts[0] : '');
+    _lastNameController = TextEditingController(text: nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '');
+    _emailController = TextEditingController(text: user?.email ?? '');
+    _mobileController = TextEditingController(text: ''); // Empty mobile field
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _emailController.dispose();
+    _mobileController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Profile'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-      ),
+      backgroundColor: const Color(0xFFF5F5F5),
       body: StreamBuilder(
         stream: context.read<AuthProvider>().userStream,
         builder: (context, snapshot) {
@@ -46,108 +50,238 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (user == null) {
             return const Center(child: Text('Not logged in'));
           }
-          if (!_editing && _nameController.text != user.name) {
-            _nameController.text = user.name;
-          }
+
+          final nameParts = user.name.split(' ');
+          final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
+          final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+          final userInitial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
 
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 24),
-                CircleAvatar(
-                  radius: 50,
-                  backgroundColor: AppTheme.primaryLight.withValues(alpha: 0.3),
-                  child: Text(
-                    user.name.isNotEmpty
-                        ? user.name.substring(0, 1).toUpperCase()
-                        : '?',
-                    style: const TextStyle(
-                      fontSize: 40,
-                      fontWeight: FontWeight.bold,
+                // Blue Header
+                Container(
+                  width: double.infinity,
+                  color: AppTheme.primaryBlue,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.person, color: Colors.white),
+                        onPressed: () {},
+                      ),
+                      const Text(
+                        'PROFILE',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.notifications, color: Colors.white),
+                        onPressed: () {},
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // User Info Card
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Container(
+                    decoration: BoxDecoration(
                       color: AppTheme.primaryBlue,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        // Avatar
+                        CircleAvatar(
+                          radius: 50,
+                          backgroundColor: Colors.white.withOpacity(0.3),
+                          child: Text(
+                            userInitial,
+                            style: const TextStyle(
+                              fontSize: 40,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Name
+                        Text(
+                          user.name,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        // Email
+                        Text(
+                          user.email,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 24),
-                if (_editing) ...[
-                  TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Name',
-                      border: OutlineInputBorder(),
+                // Info Section
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => setState(() => _editing = false),
-                          child: const Text('Cancel'),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            final name = _nameController.text.trim();
-                            if (name.isNotEmpty) {
-                              await context
-                                  .read<AuthProvider>()
-                                  .updateName(name);
-                              setState(() => _editing = false);
-                            }
-                          },
-                          child: const Text('Save'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ] else
-                  ListTile(
-                    title: Text(
-                      user.name,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    subtitle: Text(user.email),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.edit),
-                      onPressed: () => setState(() => _editing = true),
-                    ),
-                  ),
-                const SizedBox(height: 32),
-                Card(
-                  child: Padding(
                     padding: const EdgeInsets.all(20),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Stats',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: AppTheme.primaryBlue,
-                              ),
+                        // First Name
+                        _InfoRow(
+                          label: 'First Name',
+                          value: firstName,
+                          isEditing: _isEditing,
+                          controller: _firstNameController,
                         ),
-                        const SizedBox(height: 16),
-                        _StatRow('Total points', '${user.totalPoints}'),
-                        _StatRow('Bottles recycled', '${user.totalBottles}'),
+                        const Divider(height: 32),
+                        // Last Name
+                        _InfoRow(
+                          label: 'Last Name',
+                          value: lastName,
+                          isEditing: _isEditing,
+                          controller: _lastNameController,
+                        ),
+                        const Divider(height: 32),
+                        // Email
+                        _InfoRow(
+                          label: 'Email',
+                          value: user.email,
+                          isEditing: false,
+                          controller: _emailController,
+                        ),
+                        const Divider(height: 32),
+                        // Mobile
+                        _InfoRow(
+                          label: 'Mobile',
+                          value: '',
+                          isEditing: _isEditing,
+                          controller: _mobileController,
+                        ),
+                        const SizedBox(height: 24),
+                        // Edit Profile Button
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              if (_isEditing) {
+                                // Save changes
+                                final firstName = _firstNameController.text.trim();
+                                final lastName = _lastNameController.text.trim();
+                                final fullName = '$firstName $lastName'.trim();
+                                if (fullName.isNotEmpty) {
+                                  await context.read<AuthProvider>().updateName(fullName);
+                                }
+                              }
+                              setState(() => _isEditing = !_isEditing);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primaryBlue,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Text(
+                              _isEditing ? 'Save Profile' : 'Edit Profile',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Logout Button
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              await context.read<AuthProvider>().logout();
+                              if (context.mounted) context.go('/login');
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFE53935),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              'Logout',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 32),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    await context.read<AuthProvider>().logout();
-                    if (context.mounted) context.go('/login');
-                  },
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Log out'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.error,
-                    side: const BorderSide(color: AppTheme.error),
+                // Bottom Navigation
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  color: Colors.white,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _BottomNavItem(
+                        icon: Icons.home,
+                        label: 'Home',
+                        isActive: false,
+                        onTap: () => context.go('/home'),
+                      ),
+                      _BottomNavItem(
+                        icon: Icons.bar_chart,
+                        label: 'Leaderboard',
+                        isActive: false,
+                        onTap: () => context.push('/leaderboard'),
+                      ),
+                      _BottomNavItem(
+                        icon: Icons.camera_alt,
+                        label: 'Scan',
+                        isActive: false,
+                        onTap: () => context.push('/scan'),
+                      ),
+                      _BottomNavItem(
+                        icon: Icons.card_giftcard,
+                        label: 'Rewards',
+                        isActive: false,
+                        onTap: () => context.push('/rewards'),
+                      ),
+                      _BottomNavItem(
+                        icon: Icons.person,
+                        label: 'Profile',
+                        isActive: true,
+                        onTap: () {},
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -159,25 +293,110 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-class _StatRow extends StatelessWidget {
-  const _StatRow(this.label, this.value);
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.label,
+    required this.value,
+    required this.isEditing,
+    required this.controller,
+  });
 
   final String label;
   final String value;
+  final bool isEditing;
+  final TextEditingController controller;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    if (isEditing && label != 'Email') {
+      return Row(
         children: [
-          Text(label),
           Text(
-            value,
+            label,
             style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: AppTheme.primaryBlue,
+              fontSize: 14,
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const Spacer(),
+          SizedBox(
+            width: 150,
+            child: TextField(
+              controller: controller,
+              textAlign: TextAlign.right,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Colors.grey,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: isActive ? AppTheme.primaryBlue : Colors.grey.shade700,
+            size: 24,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: isActive ? AppTheme.primaryBlue : Colors.grey.shade700,
+              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
             ),
           ),
         ],

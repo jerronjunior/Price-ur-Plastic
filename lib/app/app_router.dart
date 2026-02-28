@@ -27,6 +27,10 @@ GoRouter createAppRouter(AuthProvider authProvider) {
         builder: (_, __) => const HomeScreen(),
       ),
       GoRoute(
+        path: '/home',
+        builder: (_, __) => const HomeScreen(),
+      ),
+      GoRoute(
         path: '/login',
         builder: (_, __) => const AuthScreen(),
       ),

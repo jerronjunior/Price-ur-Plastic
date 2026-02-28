@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme.dart';
 import '../../services/firestore_service.dart';
@@ -9,12 +10,10 @@ import '../../services/scan_validation_service.dart';
 class ScanBottleScreen extends StatefulWidget {
   const ScanBottleScreen({
     super.key,
-    required this.binId,
     required this.onScanned,
     required this.onBack,
   });
 
-  final String binId;
   final void Function(String barcode) onScanned;
   final VoidCallback onBack;
 

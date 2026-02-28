@@ -12,7 +12,7 @@ import 'arrow_detection.dart';
 class CameraConfirmScreen extends StatefulWidget {
   const CameraConfirmScreen({
     super.key,
-    required this.binId,
+    this.binId = '',
     required this.barcode,
     required this.onSuccess,
     required this.onBack,
