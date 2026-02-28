@@ -22,38 +22,39 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: String.fromEnvironment('FIREBASE_WEB_API_KEY', defaultValue: 'REPLACE_ME'),
-    appId: String.fromEnvironment('FIREBASE_WEB_APP_ID', defaultValue: 'REPLACE_ME'),
-    messagingSenderId: String.fromEnvironment('FIREBASE_WEB_MESSAGING_SENDER_ID', defaultValue: 'REPLACE_ME'),
-    projectId: String.fromEnvironment('FIREBASE_WEB_PROJECT_ID', defaultValue: 'REPLACE_ME'),
-    authDomain: String.fromEnvironment('FIREBASE_WEB_AUTH_DOMAIN', defaultValue: 'REPLACE_ME'),
-    storageBucket: String.fromEnvironment('FIREBASE_WEB_STORAGE_BUCKET', defaultValue: 'REPLACE_ME'),
-    measurementId: String.fromEnvironment('FIREBASE_WEB_MEASUREMENT_ID', defaultValue: 'REPLACE_ME'),
+    apiKey: 'AIzaSyBayhvqyLUVgZ_1dvAE1JwWeRNC77zST_A',
+    appId: '1:71140175089:web:8b1293315d4d02d7818d50',
+    messagingSenderId: '71140175089',
+    projectId: 'price-ur-plastic-faab5',
+    authDomain: 'price-ur-plastic-faab5.firebaseapp.com',
+    storageBucket: 'price-ur-plastic-faab5.firebasestorage.app',
+    measurementId: 'G-EDYCJB0YZZ',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: String.fromEnvironment('FIREBASE_ANDROID_API_KEY', defaultValue: 'REPLACE_ME'),
-    appId: String.fromEnvironment('FIREBASE_ANDROID_APP_ID', defaultValue: 'REPLACE_ME'),
-    messagingSenderId: String.fromEnvironment('FIREBASE_ANDROID_MESSAGING_SENDER_ID', defaultValue: 'REPLACE_ME'),
-    projectId: String.fromEnvironment('FIREBASE_ANDROID_PROJECT_ID', defaultValue: 'REPLACE_ME'),
-    storageBucket: String.fromEnvironment('FIREBASE_ANDROID_STORAGE_BUCKET', defaultValue: 'REPLACE_ME'),
+    apiKey: 'AIzaSyDfFAzePht8j1YIsnGABUZikm7tTwyvLIU',
+    appId: '1:71140175089:android:6bb69b793b333018818d50',
+    messagingSenderId: '71140175089',
+    projectId: 'price-ur-plastic-faab5',
+    storageBucket: 'price-ur-plastic-faab5.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: String.fromEnvironment('FIREBASE_IOS_API_KEY', defaultValue: 'REPLACE_ME'),
-    appId: String.fromEnvironment('FIREBASE_IOS_APP_ID', defaultValue: 'REPLACE_ME'),
-    messagingSenderId: String.fromEnvironment('FIREBASE_IOS_MESSAGING_SENDER_ID', defaultValue: 'REPLACE_ME'),
-    projectId: String.fromEnvironment('FIREBASE_IOS_PROJECT_ID', defaultValue: 'REPLACE_ME'),
-    storageBucket: String.fromEnvironment('FIREBASE_IOS_STORAGE_BUCKET', defaultValue: 'REPLACE_ME'),
-    iosBundleId: String.fromEnvironment('FIREBASE_IOS_BUNDLE_ID', defaultValue: 'REPLACE_ME'),
+    apiKey: 'AIzaSyDMhNS3Xm3fFU2we5WY3LlbIgoe4fT9mrU',
+    appId: '1:71140175089:ios:9d43ef8b7be0726d818d50',
+    messagingSenderId: '71140175089',
+    projectId: 'price-ur-plastic-faab5',
+    storageBucket: 'price-ur-plastic-faab5.firebasestorage.app',
+    iosBundleId: 'com.example.ecoRecycle',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: String.fromEnvironment('FIREBASE_MACOS_API_KEY', defaultValue: 'REPLACE_ME'),
-    appId: String.fromEnvironment('FIREBASE_MACOS_APP_ID', defaultValue: 'REPLACE_ME'),
-    messagingSenderId: String.fromEnvironment('FIREBASE_MACOS_MESSAGING_SENDER_ID', defaultValue: 'REPLACE_ME'),
-    projectId: String.fromEnvironment('FIREBASE_MACOS_PROJECT_ID', defaultValue: 'REPLACE_ME'),
-    storageBucket: String.fromEnvironment('FIREBASE_MACOS_STORAGE_BUCKET', defaultValue: 'REPLACE_ME'),
-    iosBundleId: String.fromEnvironment('FIREBASE_MACOS_BUNDLE_ID', defaultValue: 'REPLACE_ME'),
+    apiKey: 'AIzaSyDMhNS3Xm3fFU2we5WY3LlbIgoe4fT9mrU',
+    appId: '1:71140175089:ios:9d43ef8b7be0726d818d50',
+    messagingSenderId: '71140175089',
+    projectId: 'price-ur-plastic-faab5',
+    storageBucket: 'price-ur-plastic-faab5.firebasestorage.app',
+    iosBundleId: 'com.example.ecoRecycle',
   );
+
 }
