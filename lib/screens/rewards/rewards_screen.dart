@@ -35,7 +35,7 @@ class RewardsScreen extends StatelessWidget {
                     Text(
                       'Your points',
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: AppTheme.primaryDark,
+                            color: AppTheme.primaryBlue,
                           ),
                     ),
                     const SizedBox(height: 8),

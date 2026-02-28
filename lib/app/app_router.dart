@@ -2,8 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
-import '../screens/auth/login_screen.dart';
-import '../screens/auth/register_screen.dart';
+import '../screens/auth/auth_screen.dart';
 import '../screens/home/home_screen.dart';
 import '../screens/leaderboard/leaderboard_screen.dart';
 import '../screens/profile/profile_screen.dart';
@@ -29,11 +28,11 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       ),
       GoRoute(
         path: '/login',
-        builder: (_, __) => const LoginScreen(),
+        builder: (_, __) => const AuthScreen(),
       ),
       GoRoute(
         path: '/register',
-        builder: (_, __) => const RegisterScreen(),
+        builder: (_, __) => const AuthScreen(),
       ),
       GoRoute(
         path: '/scan',

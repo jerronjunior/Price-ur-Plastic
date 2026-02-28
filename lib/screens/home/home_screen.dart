@@ -40,7 +40,7 @@ class HomeScreen extends StatelessWidget {
                 Text(
                   'Hello, $name!',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: AppTheme.primaryDark,
+                        color: AppTheme.primaryBlue,
                         fontWeight: FontWeight.bold,
                       ),
                 ),
@@ -125,7 +125,7 @@ class _StatCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: AppTheme.primaryGreen, size: 32),
+            Icon(icon, color: AppTheme.primaryBlue, size: 32),
             const SizedBox(height: 12),
             Text(
               label,
@@ -138,7 +138,7 @@ class _StatCard extends StatelessWidget {
               value,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: AppTheme.primaryDark,
+                    color: AppTheme.primaryBlue,
                   ),
             ),
           ],
@@ -169,12 +169,12 @@ class _NavChip extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: AppTheme.primaryGreen, size: 28),
+            Icon(icon, color: AppTheme.primaryBlue, size: 28),
             const SizedBox(height: 8),
             Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppTheme.primaryDark,
+                    color: AppTheme.primaryBlue,
                   ),
             ),
           ],

@@ -94,7 +94,7 @@ class _LeaderboardTile extends StatelessWidget {
                   '$rank',
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: AppTheme.primaryDark,
+                    color: AppTheme.primaryBlue,
                   ),
                 ),
         ),
@@ -110,7 +110,7 @@ class _LeaderboardTile extends StatelessWidget {
             Text(
               '$points',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: AppTheme.primaryGreen,
+                    color: AppTheme.primaryBlue,
                     fontWeight: FontWeight.bold,
                   ),
             ),

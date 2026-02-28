@@ -66,7 +66,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: const TextStyle(
                       fontSize: 40,
                       fontWeight: FontWeight.bold,
-                      color: AppTheme.primaryDark,
+                      color: AppTheme.primaryBlue,
                     ),
                   ),
                 ),
@@ -127,7 +127,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         Text(
                           'Stats',
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: AppTheme.primaryDark,
+                                color: AppTheme.primaryBlue,
                               ),
                         ),
                         const SizedBox(height: 16),
@@ -177,7 +177,7 @@ class _StatRow extends StatelessWidget {
             value,
             style: const TextStyle(
               fontWeight: FontWeight.bold,
-              color: AppTheme.primaryGreen,
+              color: AppTheme.primaryBlue,
             ),
           ),
         ],
