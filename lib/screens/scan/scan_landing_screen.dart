@@ -1,15 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../widgets/bottom_nav_bar.dart';
+import '../../widgets/notification_panel.dart';
 
 /// Landing screen for scan & recycle feature.
-class ScanLandingScreen extends StatelessWidget {
+class ScanLandingScreen extends StatefulWidget {
   const ScanLandingScreen({super.key});
+
+  @override
+  State<ScanLandingScreen> createState() => _ScanLandingScreenState();
+}
+
+class _ScanLandingScreenState extends State<ScanLandingScreen> {
+  bool _showNotificationPanel = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      body: Stack(
+        children: [
+          Column(
         children: [
           // Blue Header
           Container(
@@ -40,7 +50,11 @@ class ScanLandingScreen extends StatelessWidget {
                   ),
                   IconButton(
                     icon: const Icon(Icons.notifications, color: Colors.white),
-                    onPressed: () {},
+                    onPressed: () {
+                      setState(() {
+                        _showNotificationPanel = !_showNotificationPanel;
+                      });
+                    },
                   ),
                 ],
               ),
@@ -142,6 +156,35 @@ class ScanLandingScreen extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+          // Notification Panel Overlay
+          if (_showNotificationPanel)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _showNotificationPanel = false;
+                  });
+                },
+                child: Container(
+                  color: Colors.black.withOpacity(0.3),
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: NotificationPanel(
+                      onClose: () {
+                        setState(() {
+                          _showNotificationPanel = false;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
       bottomNavigationBar: AppBottomNavBar(currentRoute: '/scan'),

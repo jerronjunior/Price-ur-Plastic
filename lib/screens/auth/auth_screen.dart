@@ -89,10 +89,19 @@ class _AuthScreenState extends State<AuthScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const Icon(
-                      Icons.recycling,
-                      size: 80,
-                      color: AppTheme.primaryGreen,
+                    // App Logo
+                    Image.asset(
+                      'assets/images/logo.png',
+                      width: 100,
+                      height: 100,
+                      errorBuilder: (context, error, stackTrace) {
+                        // Fallback to icon if logo not found
+                        return const Icon(
+                          Icons.recycling,
+                          size: 80,
+                          color: AppTheme.primaryGreen,
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
                     Text(

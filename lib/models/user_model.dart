@@ -5,6 +5,7 @@ class UserModel {
   final String email;
   final int totalPoints;
   final int totalBottles;
+  final String? profileImageUrl;
 
   const UserModel({
     required this.userId,
@@ -12,6 +13,7 @@ class UserModel {
     required this.email,
     this.totalPoints = 0,
     this.totalBottles = 0,
+    this.profileImageUrl,
   });
 
   factory UserModel.fromMap(String id, Map<String, dynamic> map) {
@@ -21,6 +23,7 @@ class UserModel {
       email: map['email'] as String? ?? '',
       totalPoints: (map['totalPoints'] as num?)?.toInt() ?? 0,
       totalBottles: (map['totalBottles'] as num?)?.toInt() ?? 0,
+      profileImageUrl: map['profileImageUrl'] as String?,
     );
   }
 
@@ -29,12 +32,14 @@ class UserModel {
         'email': email,
         'totalPoints': totalPoints,
         'totalBottles': totalBottles,
+        if (profileImageUrl != null) 'profileImageUrl': profileImageUrl,
       };
 
   UserModel copyWith({
     String? name,
     int? totalPoints,
     int? totalBottles,
+    String? profileImageUrl,
   }) {
     return UserModel(
       userId: userId,
@@ -42,6 +47,7 @@ class UserModel {
       email: email,
       totalPoints: totalPoints ?? this.totalPoints,
       totalBottles: totalBottles ?? this.totalBottles,
+      profileImageUrl: profileImageUrl ?? this.profileImageUrl,
     );
   }
 }

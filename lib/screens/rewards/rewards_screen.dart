@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'dart:math' as math;
 import '../../providers/auth_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
+import '../../widgets/notification_panel.dart';
 
 class RewardsScreen extends StatefulWidget {
   const RewardsScreen({super.key});
@@ -15,6 +16,7 @@ class RewardsScreen extends StatefulWidget {
 class _RewardsScreenState extends State<RewardsScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _spinController;
+  bool _showNotificationPanel = false;
   final int _spinCost = 20;
   final List<String> _prizes = [
     '50 pts',
@@ -96,54 +98,49 @@ class _RewardsScreenState extends State<RewardsScreen>
     final eligibleSpins = points ~/ _spinCost;
 
     return Scaffold(
-      body: Column(
+      bottomNavigationBar: AppBottomNavBar(currentRoute: '/rewards'),
+      body: Stack(
         children: [
-          // Blue Header
-          Container(
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-            child: SafeArea(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'REWARDS',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
+          Column(
+            children: [
+              // Blue Header
+              Container(
+                width: double.infinity,
+                color: const Color(0xFF1565C0),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.person, color: Colors.white),
+                      onPressed: () => context.push('/profile'),
                     ),
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.person, color: Colors.white),
-                        onPressed: () {},
+                    const Text(
+                      'REWARDS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.notifications, color: Colors.white),
-                        onPressed: () {},
-                      ),
-                    ],
-                  ),
-                ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.notifications, color: Colors.white),
+                      onPressed: () {
+                        setState(() {
+                          _showNotificationPanel = !_showNotificationPanel;
+                        });
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ),
-          // Body
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+              // Body
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                   // Error Banner (if insufficient points)
                   if (!canSpin)
                     Container(
@@ -255,7 +252,36 @@ class _RewardsScreenState extends State<RewardsScreen>
           ),
         ],
       ),
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/rewards'),
+          // Notification Panel Overlay
+          if (_showNotificationPanel)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: () {
+                  // Close panel when tapping outside
+                  setState(() {
+                    _showNotificationPanel = false;
+                  });
+                },
+                child: Container(
+                  color: Colors.black.withOpacity(0.3),
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: NotificationPanel(
+                      onClose: () {
+                        setState(() {
+                          _showNotificationPanel = false;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

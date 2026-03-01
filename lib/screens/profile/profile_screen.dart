@@ -1,9 +1,13 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
+import '../../widgets/notification_panel.dart';
+import '../../services/storage_service.dart';
 
 /// Profile screen: user info, edit profile, logout.
 class ProfileScreen extends StatefulWidget {
@@ -19,6 +23,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _emailController;
   late TextEditingController _mobileController;
   bool _isEditing = false;
+  bool _showNotificationPanel = false;
+  bool _uploadingImage = false;
+  final ImagePicker _imagePicker = ImagePicker();
+  final StorageService _storageService = StorageService();
 
   @override
   void initState() {
@@ -40,25 +48,101 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
+  Future<void> _pickAndUploadImage() async {
+    try {
+      // Show options: Camera or Gallery
+      final source = await showDialog<ImageSource>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Choose Image Source'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Camera'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Gallery'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (source == null) return;
+
+      // Pick image
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 85,
+      );
+
+      if (pickedFile == null) return;
+
+      setState(() => _uploadingImage = true);
+
+      // Upload to Firebase Storage
+      final userId = context.read<AuthProvider>().userId;
+      if (userId == null) return;
+
+      final imageUrl = await _storageService.uploadProfileImage(
+        userId,
+        File(pickedFile.path),
+      );
+
+      if (imageUrl != null && mounted) {
+        // Update user profile with new image URL
+        await context.read<AuthProvider>().updateProfileImage(imageUrl);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Profile picture updated!')),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to upload image')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingImage = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       bottomNavigationBar: AppBottomNavBar(currentRoute: '/profile'),
-      body: StreamBuilder(
-        stream: context.read<AuthProvider>().userStream,
-        builder: (context, snapshot) {
-          final user = snapshot.data ?? context.read<AuthProvider>().user;
-          if (user == null) {
-            return const Center(child: Text('Not logged in'));
-          }
+      body: Stack(
+        children: [
+          StreamBuilder(
+            stream: context.read<AuthProvider>().userStream,
+            builder: (context, snapshot) {
+              final user = snapshot.data ?? context.read<AuthProvider>().user;
+              if (user == null) {
+                return const Center(child: Text('Not logged in'));
+              }
 
-          final nameParts = user.name.split(' ');
-          final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
-          final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-          final userInitial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
+              final nameParts = user.name.split(' ');
+              final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
+              final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+              final userInitial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
 
-          return SingleChildScrollView(
+              return SingleChildScrollView(
             child: Column(
               children: [
                 // Blue Header
@@ -83,7 +167,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.notifications, color: Colors.white),
-                        onPressed: () {},
+                        onPressed: () {
+                          setState(() {
+                            _showNotificationPanel = !_showNotificationPanel;
+                          });
+                        },
                       ),
                     ],
                   ),
@@ -100,18 +188,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       children: [
-                        // Avatar
-                        CircleAvatar(
-                          radius: 50,
-                          backgroundColor: Colors.white.withOpacity(0.3),
-                          child: Text(
-                            userInitial,
-                            style: const TextStyle(
-                              fontSize: 40,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                        // Avatar with edit button
+                        Stack(
+                          children: [
+                            GestureDetector(
+                              onTap: _uploadingImage ? null : _pickAndUploadImage,
+                              child: CircleAvatar(
+                                radius: 50,
+                                backgroundColor: Colors.white.withOpacity(0.3),
+                                backgroundImage: user.profileImageUrl != null
+                                    ? NetworkImage(user.profileImageUrl!)
+                                    : null,
+                                child: _uploadingImage
+                                    ? const CircularProgressIndicator(
+                                        color: Colors.white,
+                                      )
+                                    : user.profileImageUrl == null
+                                        ? Text(
+                                            userInitial,
+                                            style: const TextStyle(
+                                              fontSize: 40,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : null,
+                              ),
                             ),
-                          ),
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: GestureDetector(
+                                onTap: _uploadingImage ? null : _pickAndUploadImage,
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: AppTheme.primaryBlue,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    Icons.camera_alt,
+                                    size: 18,
+                                    color: AppTheme.primaryBlue,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 16),
                         // Name
@@ -250,6 +377,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           );
         },
+      ),
+          // Notification Panel Overlay
+          if (_showNotificationPanel)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _showNotificationPanel = false;
+                  });
+                },
+                child: Container(
+                  color: Colors.black.withOpacity(0.3),
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: NotificationPanel(
+                      onClose: () {
+                        setState(() {
+                          _showNotificationPanel = false;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -175,6 +175,15 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Update profile image.
+  Future<void> updateProfileImage(String? imageUrl) async {
+    final uid = userId;
+    if (uid == null || _user == null) return;
+    await _firestore.updateProfileImage(uid, imageUrl);
+    _user = _user!.copyWith(profileImageUrl: imageUrl);
+    notifyListeners();
+  }
+
   /// Update total points (for spin wheel or other point changes).
   Future<void> updateTotalPoints(int points) async {
     final uid = userId;

@@ -6,6 +6,7 @@ import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/bottom_nav_bar.dart';
+import '../../widgets/notification_panel.dart';
 
 /// Leaderboard screen showing global rankings, friends, and achievements
 class LeaderboardScreen extends StatefulWidget {
@@ -18,6 +19,7 @@ class LeaderboardScreen extends StatefulWidget {
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   String _activeTab = 'Global'; // Global, Friends, Achievements
   String _activeFilter = 'All Time'; // All Time, Friends
+  bool _showNotificationPanel = false;
 
   // Color scheme for top 3 rankings
   final Map<int, Color> topColors = {
@@ -40,8 +42,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      body: SingleChildScrollView(
-        child: Column(
+      bottomNavigationBar: AppBottomNavBar(currentRoute: '/leaderboard'),
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            child: Column(
           children: [
             // Blue Header
             Container(
@@ -65,7 +70,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.notifications, color: Colors.white),
-                    onPressed: () {},
+                    onPressed: () {
+                      setState(() {
+                        _showNotificationPanel = !_showNotificationPanel;
+                      });
+                    },
                   ),
                 ],
               ),
@@ -239,7 +248,35 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/leaderboard'),
+          // Notification Panel Overlay
+          if (_showNotificationPanel)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _showNotificationPanel = false;
+                  });
+                },
+                child: Container(
+                  color: Colors.black.withOpacity(0.3),
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: NotificationPanel(
+                      onClose: () {
+                        setState(() {
+                          _showNotificationPanel = false;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -413,44 +450,3 @@ class _RankingCard extends StatelessWidget {
     );
   }
 }
-
-class _BottomNavItem extends StatelessWidget {
-  const _BottomNavItem({
-    required this.icon,
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: isActive ? AppTheme.primaryBlue : Colors.grey.shade700,
-            size: 24,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: isActive ? AppTheme.primaryBlue : Colors.grey.shade700,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-

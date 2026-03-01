@@ -15,9 +15,13 @@ dependencies:
   firebase_core: 4.4.0
   firebase_auth: 6.1.4
   cloud_firestore: 6.1.2
+  firebase_storage: ^13.0.6
   
   # Scanning
   mobile_scanner: ^4.0.1
+  
+  # Image
+  image_picker: ^1.0.7
   
   # Camera
   camera: ^0.10.5+9
@@ -36,3 +40,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Assets
+  # Uncomment after placing logo.png in assets/images/ folder
+  # assets:
+  #   - assets/images/logo.png

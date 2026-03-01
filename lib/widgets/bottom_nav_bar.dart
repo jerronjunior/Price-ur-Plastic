@@ -31,16 +31,16 @@ class AppBottomNavBar extends StatelessWidget {
             onTap: () => context.go('/'),
           ),
           _BottomNavItem(
-            icon: Icons.qr_code_2,
-            label: 'Scan',
-            isActive: currentRoute == '/scan' || currentRoute == '/scan-flow',
-            onTap: () => context.go('/scan'),
-          ),
-          _BottomNavItem(
             icon: Icons.leaderboard,
             label: 'Leaderboard',
             isActive: currentRoute == '/leaderboard',
             onTap: () => context.go('/leaderboard'),
+          ),
+          _BottomNavItem(
+            icon: Icons.qr_code_2,
+            label: 'Scan',
+            isActive: currentRoute == '/scan' || currentRoute == '/scan-flow',
+            onTap: () => context.go('/scan'),
           ),
           _BottomNavItem(
             icon: Icons.card_giftcard,

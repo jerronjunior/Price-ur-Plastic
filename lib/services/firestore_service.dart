@@ -51,6 +51,13 @@ class FirestoreService {
     });
   }
 
+  /// Update user profile image URL.
+  Future<void> updateProfileImage(String userId, String? imageUrl) async {
+    await _firestore.collection(_usersCollection).doc(userId).update({
+      'profileImageUrl': imageUrl,
+    });
+  }
+
   /// Update user total points (for spin wheel and other features).
   Future<void> updateTotalPoints(String userId, int points) async {
     await _firestore.collection(_usersCollection).doc(userId).update({
