@@ -5,6 +5,7 @@ import '../../core/theme.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/bottom_nav_bar.dart';
 
 /// Leaderboard screen showing global rankings, friends, and achievements
 class LeaderboardScreen extends StatefulWidget {
@@ -234,50 +235,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 );
               },
             ),
-            const SizedBox(height: 32),
-            // Bottom Navigation
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              color: Colors.white,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _BottomNavItem(
-                    icon: Icons.home,
-                    label: 'Home',
-                    isActive: false,
-                    onTap: () => context.go('/home'),
-                  ),
-                  _BottomNavItem(
-                    icon: Icons.bar_chart,
-                    label: 'Leaderboard',
-                    isActive: true,
-                    onTap: () {},
-                  ),
-                  _BottomNavItem(
-                    icon: Icons.camera_alt,
-                    label: 'Scan',
-                    isActive: false,
-                    onTap: () => context.push('/scan'),
-                  ),
-                  _BottomNavItem(
-                    icon: Icons.card_giftcard,
-                    label: 'Rewards',
-                    isActive: false,
-                    onTap: () => context.push('/rewards'),
-                  ),
-                  _BottomNavItem(
-                    icon: Icons.person,
-                    label: 'Profile',
-                    isActive: false,
-                    onTap: () => context.push('/profile'),
-                  ),
-                ],
-              ),
-            ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
+      bottomNavigationBar: AppBottomNavBar(currentRoute: '/leaderboard'),
     );
   }
 }

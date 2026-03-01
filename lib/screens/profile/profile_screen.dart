@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
+import '../../widgets/bottom_nav_bar.dart';
 
 /// Profile screen: user info, edit profile, logout.
 class ProfileScreen extends StatefulWidget {
@@ -43,6 +44,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
+      bottomNavigationBar: AppBottomNavBar(currentRoute: '/profile'),
       body: StreamBuilder(
         stream: context.read<AuthProvider>().userStream,
         builder: (context, snapshot) {
@@ -243,47 +245,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 32),
-                // Bottom Navigation
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  color: Colors.white,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _BottomNavItem(
-                        icon: Icons.home,
-                        label: 'Home',
-                        isActive: false,
-                        onTap: () => context.go('/home'),
-                      ),
-                      _BottomNavItem(
-                        icon: Icons.bar_chart,
-                        label: 'Leaderboard',
-                        isActive: false,
-                        onTap: () => context.push('/leaderboard'),
-                      ),
-                      _BottomNavItem(
-                        icon: Icons.camera_alt,
-                        label: 'Scan',
-                        isActive: false,
-                        onTap: () => context.push('/scan'),
-                      ),
-                      _BottomNavItem(
-                        icon: Icons.card_giftcard,
-                        label: 'Rewards',
-                        isActive: false,
-                        onTap: () => context.push('/rewards'),
-                      ),
-                      _BottomNavItem(
-                        icon: Icons.person,
-                        label: 'Profile',
-                        isActive: true,
-                        onTap: () {},
-                      ),
-                    ],
-                  ),
-                ),
+                const SizedBox(height: 24),
               ],
             ),
           );
@@ -361,46 +323,6 @@ class _InfoRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _BottomNavItem extends StatelessWidget {
-  const _BottomNavItem({
-    required this.icon,
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: isActive ? AppTheme.primaryBlue : Colors.grey.shade700,
-            size: 24,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: isActive ? AppTheme.primaryBlue : Colors.grey.shade700,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../widgets/bottom_nav_bar.dart';
 
 /// Landing screen for scan & recycle feature.
 class ScanLandingScreen extends StatelessWidget {
@@ -143,95 +144,7 @@ class ScanLandingScreen extends StatelessWidget {
           ),
         ],
       ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withValues(alpha: 0.1),
-              blurRadius: 8,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _BottomNavItem(
-              icon: Icons.home,
-              label: 'Home',
-              isActive: false,
-              onTap: () => context.push('/home'),
-            ),
-            _BottomNavItem(
-              icon: Icons.leaderboard,
-              label: 'Leaderboard',
-              isActive: false,
-              onTap: () => context.push('/leaderboard'),
-            ),
-            _BottomNavItem(
-              icon: Icons.camera_alt,
-              label: 'Scan',
-              isActive: true,
-              onTap: () {},
-            ),
-            _BottomNavItem(
-              icon: Icons.card_giftcard,
-              label: 'Rewards',
-              isActive: false,
-              onTap: () => context.push('/rewards'),
-            ),
-            _BottomNavItem(
-              icon: Icons.person,
-              label: 'Profile',
-              isActive: false,
-              onTap: () => context.push('/profile'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomNavItem extends StatelessWidget {
-  const _BottomNavItem({
-    required this.icon,
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    const primaryBlue = Color(0xFF1565C0);
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: isActive ? primaryBlue : Colors.grey.shade700,
-            size: 24,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: isActive ? primaryBlue : Colors.grey.shade700,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
+      bottomNavigationBar: AppBottomNavBar(currentRoute: '/scan'),
     );
   }
 }
