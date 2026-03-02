@@ -15,21 +15,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late bool _showWelcome;
+  bool _showWelcome = false;
   bool _showNotificationPanel = false;
 
   @override
   void initState() {
     super.initState();
-    _showWelcome = true;
-    // Hide welcome message after 2 seconds
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() {
-          _showWelcome = false;
-        });
-      }
-    });
+    // Check if user just logged in
+    final authProvider = context.read<AuthProvider>();
+    if (authProvider.justLoggedIn) {
+      _showWelcome = true;
+      // Hide welcome message after 2 seconds
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          setState(() {
+            _showWelcome = false;
+          });
+          // Reset the flag so it doesn't show again
+          authProvider.resetWelcomeMessage();
+        }
+      });
+    }
   }
 
   @override

@@ -22,6 +22,10 @@ class AuthProvider with ChangeNotifier {
 
   bool get isLoggedIn => userId != null;
 
+  // Flag to show welcome message only after login
+  bool _justLoggedIn = false;
+  bool get justLoggedIn => _justLoggedIn;
+
   /// Stream for router refresh on login/logout.
   Stream<User?> get authStateChanges => _auth.authStateChanges;
 
@@ -92,6 +96,8 @@ class AuthProvider with ChangeNotifier {
         );
         notifyListeners();
       }
+      // Set flag to show welcome message
+      _justLoggedIn = true;
       return null;
     } on FirebaseAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Registration failed.');
@@ -124,6 +130,8 @@ class AuthProvider with ChangeNotifier {
           );
           notifyListeners();
         }
+        // Set flag to show welcome message
+        _justLoggedIn = true;
       }
       return null;
     } on FirebaseAuthException catch (e) {
@@ -163,6 +171,13 @@ class AuthProvider with ChangeNotifier {
   Future<void> logout() async {
     await _auth.signOut();
     _user = null;
+    _justLoggedIn = false;
+    notifyListeners();
+  }
+
+  /// Reset welcome message flag after display.
+  void resetWelcomeMessage() {
+    _justLoggedIn = false;
     notifyListeners();
   }
 

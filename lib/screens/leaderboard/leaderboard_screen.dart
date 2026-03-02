@@ -18,7 +18,6 @@ class LeaderboardScreen extends StatefulWidget {
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   String _activeTab = 'Global'; // Global, Friends, Achievements
-  String _activeFilter = 'All Time'; // All Time, Friends
   bool _showNotificationPanel = false;
 
   // Color scheme for top 3 rankings
@@ -137,113 +136,214 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            // Filter Buttons: All Time, Friends
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  _FilterButton(
-                    label: 'All Time',
-                    isActive: _activeFilter == 'All Time',
-                    onTap: () {
-                      setState(() => _activeFilter = 'All Time');
-                    },
-                  ),
-                  const SizedBox(width: 12),
-                  _FilterButton(
-                    label: 'Friends',
-                    isActive: _activeFilter == 'Friends',
-                    onTap: () {
-                      setState(() => _activeFilter = 'Friends');
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            // Leaderboard List from Firestore
-            StreamBuilder<List<UserModel>>(
-              stream: firestore.leaderboardStream(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-                    child: SizedBox(
-                      height: 300,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          color: AppTheme.primaryBlue,
+            // Content based on active tab
+            if (_activeTab == 'Global') ...[
+              // Leaderboard List from Firestore - Top 10 users
+              StreamBuilder<List<UserModel>>(
+                stream: firestore.leaderboardStream(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 20),
+                      child: SizedBox(
+                        height: 300,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: AppTheme.primaryBlue,
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                }
+                    );
+                  }
 
-                if (snapshot.hasError) {
+                  if (snapshot.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Text('Error: ${snapshot.error}'),
+                    );
+                  }
+
+                  final leaderboardUsers = snapshot.data ?? [];
+
+                  if (leaderboardUsers.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 60),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.leaderboard,
+                              size: 64,
+                              color: Colors.grey.shade300,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No rankings yet',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey.shade500,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Text('Error: ${snapshot.error}'),
+                    child: Column(
+                      children: [
+                        // Top 10 users
+                        ...leaderboardUsers.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final rank = index + 1;
+                          final user = entry.value;
+
+                          final backgroundColor = topColors[rank] ?? Colors.white;
+                          final medal = medalEmojis[rank] ?? '$rank';
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _RankingCard(
+                              rank: rank,
+                              username: user.name,
+                              bottles: user.totalBottles,
+                              points: user.totalPoints,
+                              backgroundColor: backgroundColor,
+                              medal: medal,
+                            ),
+                          );
+                        }),
+                        // Show current user if not in top 10
+                        if (currentUser != null &&
+                            !leaderboardUsers.any(
+                              (u) => u.userId == currentUser.userId,
+                            ))
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: AppTheme.primaryBlue,
+                                width: 2,
+                                strokeAlign: BorderSide.strokeAlignOutside,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: _RankingCard(
+                              rank: 11,
+                              username: currentUser.name,
+                              bottles: currentUser.totalBottles,
+                              points: currentUser.totalPoints,
+                              backgroundColor: const Color(0xFFE3F2FD),
+                              medal: '👤',
+                              isCurrentUser: true,
+                            ),
+                          ),
+                      ],
+                    ),
                   );
-                }
-
-                final leaderboardUsers = snapshot.data ?? [];
-
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                },
+              ),
+            ] else if (_activeTab == 'Friends') ...[
+              // Friends tab - Coming Soon
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 80),
+                child: Center(
                   child: Column(
                     children: [
-                      // Top 10 users
-                      ...leaderboardUsers.asMap().entries.map((entry) {
-                        final index = entry.key;
-                        final rank = index + 1;
-                        final user = entry.value;
-
-                        final backgroundColor = topColors[rank] ??
-                            Colors.white;
-                        final medal =
-                            medalEmojis[rank] ?? '$rank';
-
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _RankingCard(
-                            rank: rank,
-                            username: user.name,
-                            bottles: user.totalBottles,
-                            points: user.totalPoints,
-                            backgroundColor: backgroundColor,
-                            medal: medal,
-                          ),
-                        );
-                      }),
-                      // Show current user if not in top 10
-                      if (currentUser != null &&
-                          !leaderboardUsers.any(
-                            (u) => u.userId == currentUser.userId,
-                          ))
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: AppTheme.primaryBlue,
-                              width: 2,
-                              strokeAlign: BorderSide.strokeAlignOutside,
-                            ),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: _RankingCard(
-                            rank: 11,
-                            username: currentUser.name,
-                            bottles: currentUser.totalBottles,
-                            points: currentUser.totalPoints,
-                            backgroundColor: const Color(0xFFE3F2FD),
-                            medal: '👤',
-                            isCurrentUser: true,
+                      Icon(
+                        Icons.people_outline,
+                        size: 80,
+                        color: Colors.grey.shade300,
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Coming Soon!',
+                        style: TextStyle(
+                          fontSize: 24,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Friends leaderboard feature\nis under development',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryBlue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: AppTheme.primaryBlue.withOpacity(0.3),
                           ),
                         ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 16,
+                              color: AppTheme.primaryBlue,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Compete with your friends soon!',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: AppTheme.primaryBlue,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                );
-              },
-            ),
+                ),
+              ),
+            ] else if (_activeTab == 'Achievements') ...[
+              // Achievements tab - Show users with achievements or empty state
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 80),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.emoji_events_outlined,
+                        size: 80,
+                        color: Colors.grey.shade300,
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'No Achievements Yet',
+                        style: TextStyle(
+                          fontSize: 20,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Achievement system coming soon!\nStart recycling to earn achievements',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
           ],
         ),

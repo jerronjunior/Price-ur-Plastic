@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import '../../providers/auth_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
+import '../../core/theme.dart';
 
 class RewardsScreen extends StatefulWidget {
   const RewardsScreen({super.key});
@@ -98,6 +99,7 @@ class _RewardsScreenState extends State<RewardsScreen>
     final eligibleSpins = points ~/ _spinCost;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       bottomNavigationBar: AppBottomNavBar(currentRoute: '/rewards'),
       body: Stack(
         children: [
@@ -106,7 +108,7 @@ class _RewardsScreenState extends State<RewardsScreen>
               // Blue Header
               Container(
                 width: double.infinity,
-                color: const Color(0xFF1565C0),
+                color: AppTheme.primaryBlue,
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
