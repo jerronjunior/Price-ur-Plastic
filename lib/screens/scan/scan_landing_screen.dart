@@ -99,7 +99,7 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
                     child: ElevatedButton(
                       onPressed: () => context.push('/scan-flow'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: const Color.fromARGB(255, 165, 172, 180),
                         padding: const EdgeInsets.symmetric(vertical: 18),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
