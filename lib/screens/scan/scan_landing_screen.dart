@@ -106,7 +106,7 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
                         ),
                       ),
                       child: const Text(
-                        'Scan Bottle Barcode',
+                        'Scan ',
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
