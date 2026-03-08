@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
@@ -14,14 +13,32 @@ import '../screens/scan/scan_flow_screen.dart';
 GoRouter createAppRouter(AuthProvider authProvider) {
   return GoRouter(
     initialLocation: '/',
-    refreshListenable: GoRouterRefreshStream(authProvider.authStateChanges),
+    refreshListenable: authProvider,
     redirect: (context, state) {
       final loggedIn = authProvider.isLoggedIn;
       final onAuth = state.matchedLocation == '/login' || state.matchedLocation == '/register';
-      if (!loggedIn && !onAuth) return '/login';
+
+      // Always allow root/home so the app never opens to a blank/blocked page.
+      if (!loggedIn && (state.matchedLocation == '/' || state.matchedLocation == '/home')) {
+        return null;
+      }
+
+      if (!loggedIn && !onAuth) return '/';
       if (loggedIn && onAuth) return '/';
       return null;
     },
+    errorBuilder: (context, state) => Scaffold(
+      appBar: AppBar(title: const Text('Page Error')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            state.error?.toString() ?? 'Unknown routing error.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    ),
     routes: [
       GoRoute(
         path: '/',
@@ -61,18 +78,4 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       ),
     ],
   );
-}
-
-/// Notifies router when auth state changes (for redirect).
-class GoRouterRefreshStream extends ChangeNotifier {
-  GoRouterRefreshStream(Stream<dynamic> stream) {
-    _subscription = stream.asBroadcastStream().listen((_) => notifyListeners());
-  }
-  late final StreamSubscription<dynamic> _subscription;
-
-  @override
-  void dispose() {
-    _subscription.cancel();
-    super.dispose();
-  }
 }

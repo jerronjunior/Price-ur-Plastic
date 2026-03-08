@@ -38,10 +38,10 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen> {
   bool _saving = false;
 
   /// Arrow region as fraction of preview (center rectangle).
-  static const double _regionLeft = 0.35;
-  static const double _regionTop = 0.35;
-  static const double _regionWidth = 0.3;
-  static const double _regionHeight = 0.25;
+  static const double _regionLeft = 0.15;
+  static const double _regionTop = 0.2;
+  static const double _regionWidth = 0.7;
+  static const double _regionHeight = 0.6;
 
   @override
   void initState() {

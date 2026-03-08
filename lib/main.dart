@@ -10,35 +10,93 @@ import 'services/firestore_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  runApp(const EcoRecycleApp());
+  runApp(const EcoRecycleBootstrap());
 }
 
-class EcoRecycleApp extends StatelessWidget {
-  const EcoRecycleApp({super.key});
+class EcoRecycleBootstrap extends StatelessWidget {
+  const EcoRecycleBootstrap({super.key});
+
+  Future<void> _initializeFirebase() {
+    return Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final authService = AuthService();
-    final firestoreService = FirestoreService();
-    final authProvider = AuthProvider(
-      authService: authService,
-      firestoreService: firestoreService,
-    );
-    authProvider.init();
+    return FutureBuilder<void>(
+      future: _initializeFirebase(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.theme,
+            home: const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
 
+        if (snapshot.hasError) {
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.theme,
+            home: Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'Startup error:\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return const EcoRecycleApp();
+      },
+    );
+  }
+}
+
+class EcoRecycleApp extends StatefulWidget {
+  const EcoRecycleApp({super.key});
+
+  @override
+  State<EcoRecycleApp> createState() => _EcoRecycleAppState();
+}
+
+class _EcoRecycleAppState extends State<EcoRecycleApp> {
+  late final AuthService _authService;
+  late final FirestoreService _firestoreService;
+  late final AuthProvider _authProvider;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService = AuthService();
+    _firestoreService = FirestoreService();
+    _authProvider = AuthProvider(
+      authService: _authService,
+      firestoreService: _firestoreService,
+    );
+    _authProvider.init();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
-        Provider<FirestoreService>.value(value: firestoreService),
+        ChangeNotifierProvider<AuthProvider>.value(value: _authProvider),
+        Provider<FirestoreService>.value(value: _firestoreService),
       ],
       child: MaterialApp.router(
         title: 'EcoRecycle',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.theme,
-        routerConfig: createAppRouter(authProvider),
+        routerConfig: createAppRouter(_authProvider),
       ),
     );
   }
