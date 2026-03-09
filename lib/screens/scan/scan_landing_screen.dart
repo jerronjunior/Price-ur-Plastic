@@ -86,7 +86,7 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
                   const SizedBox(height: 16),
                   // Description
                   Text(
-                    'Scan a bottle barcode or detect a recycling bin to earn points',
+                    'Scan bottle barcodes or recycling bin barcodes to earn points',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: Colors.grey.shade600,
                         ),
@@ -116,17 +116,11 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  // Detect Recycling Bin Button (disabled)
+                  // Scan Bin Barcode Button
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Bin detection coming soon!'),
-                          ),
-                        );
-                      },
+                      onPressed: () => context.push('/scan-bin'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF4CAF50),
                         padding: const EdgeInsets.symmetric(vertical: 18),
@@ -135,7 +129,7 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
                         ),
                       ),
                       child: const Text(
-                        'Detect Recycling Bin',
+                        'Scan Bin Barcode',
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -187,7 +181,7 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
             ),
         ],
       ),
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/scan'),
+      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/scan'),
     );
   }
 }

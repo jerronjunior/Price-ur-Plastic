@@ -14,6 +14,8 @@ class DefaultFirebaseOptions {
         return ios;
       case TargetPlatform.macOS:
         return macos;
+      case TargetPlatform.windows:
+        return windows;
       default:
         throw UnsupportedError(
           'DefaultFirebaseOptions are not configured for this platform.',
@@ -55,6 +57,16 @@ class DefaultFirebaseOptions {
     projectId: 'price-ur-plastic-faab5',
     storageBucket: 'price-ur-plastic-faab5.firebasestorage.app',
     iosBundleId: 'com.example.ecoRecycle',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyBayhvqyLUVgZ_1dvAE1JwWeRNC77zST_A',
+    appId: '1:71140175089:web:8b1293315d4d02d7818d50',
+    messagingSenderId: '71140175089',
+    projectId: 'price-ur-plastic-faab5',
+    authDomain: 'price-ur-plastic-faab5.firebaseapp.com',
+    storageBucket: 'price-ur-plastic-faab5.firebasestorage.app',
+    measurementId: 'G-EDYCJB0YZZ',
   );
 
 }

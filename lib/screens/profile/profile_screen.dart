@@ -126,7 +126,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/profile'),
+      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/profile'),
       body: Stack(
         children: [
           StreamBuilder(
@@ -230,7 +230,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       width: 2,
                                     ),
                                   ),
-                                  child: Icon(
+                                  child: const Icon(
                                     Icons.camera_alt,
                                     size: 18,
                                     color: AppTheme.primaryBlue,

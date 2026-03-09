@@ -42,7 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/'),
+      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/'),
       body: Stack(
         children: [
           // Main Content

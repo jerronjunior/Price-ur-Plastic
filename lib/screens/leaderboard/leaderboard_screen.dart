@@ -41,7 +41,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/leaderboard'),
+      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/leaderboard'),
       body: Stack(
         children: [
           SingleChildScrollView(
@@ -285,7 +285,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                             color: AppTheme.primaryBlue.withOpacity(0.3),
                           ),
                         ),
-                        child: Row(
+                        child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
@@ -293,7 +293,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                               size: 16,
                               color: AppTheme.primaryBlue,
                             ),
-                            const SizedBox(width: 8),
+                            SizedBox(width: 8),
                             Text(
                               'Compete with your friends soon!',
                               style: TextStyle(
@@ -420,43 +420,6 @@ class _TabButton extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FilterButton extends StatelessWidget {
-  const _FilterButton({
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isActive ? AppTheme.primaryBlue : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: !isActive
-              ? Border.all(color: Colors.grey.shade300, width: 1.5)
-              : null,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isActive ? Colors.white : Colors.grey.shade600,
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
-          ),
         ),
       ),
     );

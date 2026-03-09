@@ -100,7 +100,7 @@ class _RewardsScreenState extends State<RewardsScreen>
 
     return Scaffold(
       backgroundColor: Colors.white,
-      bottomNavigationBar: AppBottomNavBar(currentRoute: '/rewards'),
+      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/rewards'),
       body: Stack(
         children: [
           Column(

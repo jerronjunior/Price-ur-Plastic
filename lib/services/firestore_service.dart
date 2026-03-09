@@ -159,6 +159,26 @@ class FirestoreService {
         .set(bin.toMap(), SetOptions(merge: true));
   }
 
+  /// Increment user points by a specific amount (for bin scans, etc).
+  Future<void> incrementUserPoints(String userId, int points) async {
+    final ref = _firestore.collection(_usersCollection).doc(userId);
+    await _firestore.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final currentPoints = (snap.data()?['totalPoints'] as num?)?.toInt() ?? 0;
+      tx.update(ref, {
+        'totalPoints': currentPoints + points,
+      });
+    });
+  }
+
+  /// Log a bin scan for analytics.
+  Future<void> logBinScan(String userId, String binId) async {
+    await _firestore.collection(_usersCollection).doc(userId).collection('bin_scans').add({
+      'binId': binId,
+      'timestamp': Timestamp.now(),
+    });
+  }
+
   // --- Leaderboard ---
 
   /// Top 10 users by totalPoints, real-time stream.
