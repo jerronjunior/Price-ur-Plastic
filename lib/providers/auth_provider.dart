@@ -40,6 +40,7 @@ class AuthProvider with ChangeNotifier {
             userId: user.uid,
             name: user.displayName ?? user.email?.split('@').first ?? 'User',
             email: user.email ?? '',
+            mobile: '',
             totalPoints: 0,
             totalBottles: 0,
           );
@@ -82,6 +83,7 @@ class AuthProvider with ChangeNotifier {
           userId: uid,
           name: name,
           email: email,
+          mobile: '',
           totalPoints: 0,
           totalBottles: 0,
         ));
@@ -91,6 +93,7 @@ class AuthProvider with ChangeNotifier {
           userId: uid,
           name: name,
           email: email,
+          mobile: '',
           totalPoints: 0,
           totalBottles: 0,
         );
@@ -125,6 +128,7 @@ class AuthProvider with ChangeNotifier {
             name:
                 cred.user!.displayName ?? cred.user!.email?.split('@').first ?? 'User',
             email: cred.user!.email ?? '',
+            mobile: '',
             totalPoints: 0,
             totalBottles: 0,
           );
@@ -187,6 +191,22 @@ class AuthProvider with ChangeNotifier {
     if (uid == null || _user == null) return;
     await _firestore.updateUserName(uid, name);
     _user = _user!.copyWith(name: name);
+    notifyListeners();
+  }
+
+  /// Update editable profile fields from profile screen.
+  Future<void> updateProfile({
+    required String name,
+    required String mobile,
+  }) async {
+    final uid = userId;
+    if (uid == null || _user == null) return;
+    await _firestore.updateUserProfile(
+      userId: uid,
+      name: name,
+      mobile: mobile,
+    );
+    _user = _user!.copyWith(name: name, mobile: mobile);
     notifyListeners();
   }
 

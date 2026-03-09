@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme.dart';
+import '../../models/bin_model.dart';
 import '../../services/firestore_service.dart';
 
 /// Scan bin QR code to get bin ID.
@@ -52,10 +53,41 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
     if (bin != null) {
       widget.onScanned(bin.binId);
     } else {
-      setState(() {
-        _error = 'Unknown bin. Please scan a valid recycling bin QR code.';
-        _processing = false;
-      });
+      final shouldAdd = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Bin Not Found'),
+              content: Text('Add this QR as a new bin?\n\nBin ID: $code'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Add Bin'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+
+      if (!mounted) return;
+      if (shouldAdd) {
+        await firestore.setBin(
+          BinModel(
+            binId: code,
+            locationName: 'User Added Bin',
+          ),
+        );
+        if (!mounted) return;
+        widget.onScanned(code);
+      } else {
+        setState(() {
+          _error = 'Unknown bin. Please scan a registered bin QR code.';
+          _processing = false;
+        });
+      }
     }
   }
 

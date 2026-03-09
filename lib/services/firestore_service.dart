@@ -51,6 +51,18 @@ class FirestoreService {
     });
   }
 
+  /// Update profile fields that can be edited in profile screen.
+  Future<void> updateUserProfile({
+    required String userId,
+    required String name,
+    required String mobile,
+  }) async {
+    await _firestore.collection(_usersCollection).doc(userId).update({
+      'name': name,
+      'mobile': mobile,
+    });
+  }
+
   /// Update user profile image URL.
   Future<void> updateProfileImage(String userId, String? imageUrl) async {
     await _firestore.collection(_usersCollection).doc(userId).update({

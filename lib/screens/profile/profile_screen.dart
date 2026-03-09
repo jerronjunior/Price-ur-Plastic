@@ -28,15 +28,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   final StorageService _storageService = StorageService();
 
+  void _syncControllersFromUser() {
+    final user = context.read<AuthProvider>().user;
+    final nameParts = user?.name.split(' ') ?? ['', ''];
+    _firstNameController.text = nameParts.isNotEmpty ? nameParts[0] : '';
+    _lastNameController.text =
+        nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+    _emailController.text = user?.email ?? '';
+    _mobileController.text = user?.mobile ?? '';
+  }
+
   @override
   void initState() {
     super.initState();
-    final user = context.read<AuthProvider>().user;
-    final nameParts = user?.name.split(' ') ?? ['', ''];
-    _firstNameController = TextEditingController(text: nameParts.isNotEmpty ? nameParts[0] : '');
-    _lastNameController = TextEditingController(text: nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '');
-    _emailController = TextEditingController(text: user?.email ?? '');
-    _mobileController = TextEditingController(text: ''); // Empty mobile field
+    _firstNameController = TextEditingController();
+    _lastNameController = TextEditingController();
+    _emailController = TextEditingController();
+    _mobileController = TextEditingController();
+    _syncControllersFromUser();
   }
 
   @override
@@ -141,6 +150,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
               final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
               final userInitial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
+
+              if (!_isEditing) {
+                _syncControllersFromUser();
+              }
 
               return SingleChildScrollView(
             child: Column(
@@ -304,7 +317,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         // Mobile
                         _InfoRow(
                           label: 'Mobile',
-                          value: '',
+                          value: user.mobile,
                           isEditing: _isEditing,
                           controller: _mobileController,
                         ),
@@ -318,9 +331,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 // Save changes
                                 final firstName = _firstNameController.text.trim();
                                 final lastName = _lastNameController.text.trim();
+                                final mobile = _mobileController.text.trim();
                                 final fullName = '$firstName $lastName'.trim();
                                 if (fullName.isNotEmpty) {
-                                  await context.read<AuthProvider>().updateName(fullName);
+                                  await context.read<AuthProvider>().updateProfile(
+                                        name: fullName,
+                                        mobile: mobile,
+                                      );
                                 }
                               }
                               setState(() => _isEditing = !_isEditing);
@@ -437,17 +454,18 @@ class _InfoRow extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const Spacer(),
-          SizedBox(
-            width: 150,
+          const SizedBox(width: 16),
+          Expanded(
             child: TextField(
               controller: controller,
               textAlign: TextAlign.right,
               decoration: InputDecoration(
+                isDense: true,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               ),
               style: const TextStyle(
                 fontSize: 14,
