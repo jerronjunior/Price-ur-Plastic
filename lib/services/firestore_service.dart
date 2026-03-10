@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_model.dart';
 import '../models/recycled_bottle_model.dart';
 import '../models/bin_model.dart';
+import '../models/reward_config_model.dart';
 
 /// Firestore operations for users, recycled_bottles, and bins.
 class FirestoreService {
@@ -10,6 +11,7 @@ class FirestoreService {
   static const String _usersCollection = 'users';
   static const String _recycledBottlesCollection = 'recycled_bottles';
   static const String _binsCollection = 'bins';
+  static const String _rewardConfigCollection = 'reward_config';
 
   // --- Users ---
 
@@ -202,5 +204,86 @@ class FirestoreService {
         .snapshots()
         .map((snap) =>
             snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
+  }
+
+  // --- Admin: Bin Management ---
+
+  /// Get all bins (admin view).
+  Stream<List<BinModel>> getAllBinsStream() {
+    return _firestore
+        .collection(_binsCollection)
+        .orderBy('locationName')
+        .snapshots()
+        .map((snap) =>
+            snap.docs.map((d) => BinModel.fromMap(d.id, d.data())).toList());
+  }
+
+  /// Add a new bin (admin).
+  Future<void> addBin(String binId, String locationName) async {
+    await _firestore.collection(_binsCollection).doc(binId).set({
+      'locationName': locationName,
+    });
+  }
+
+  /// Update bin location (admin).
+  Future<void> updateBin(String binId, String locationName) async {
+    await _firestore.collection(_binsCollection).doc(binId).update({
+      'locationName': locationName,
+    });
+  }
+
+  /// Delete bin (admin).
+  Future<void> deleteBin(String binId) async {
+    await _firestore.collection(_binsCollection).doc(binId).delete();
+  }
+
+  // --- Admin: Reward Configuration ---
+
+  /// Get reward configuration (or return default).
+  Future<RewardConfigModel> getRewardConfig() async {
+    final doc = await _firestore
+        .collection(_rewardConfigCollection)
+        .doc('default')
+        .get();
+    if (doc.exists && doc.data() != null) {
+      return RewardConfigModel.fromMap(doc.id, doc.data()!);
+    }
+    // Return defaults if not configured yet
+    return const RewardConfigModel(id: 'default');
+  }
+
+  /// Stream reward configuration.
+  Stream<RewardConfigModel> rewardConfigStream() {
+    return _firestore
+        .collection(_rewardConfigCollection)
+        .doc('default')
+        .snapshots()
+        .map((doc) {
+      if (doc.exists && doc.data() != null) {
+        return RewardConfigModel.fromMap(doc.id, doc.data()!);
+      }
+      return const RewardConfigModel(id: 'default');
+    });
+  }
+
+  /// Update reward configuration (admin).
+  Future<void> updateRewardConfig(RewardConfigModel config) async {
+    await _firestore
+        .collection(_rewardConfigCollection)
+        .doc('default')
+        .set(config.toMap(), SetOptions(merge: true));
+  }
+
+  /// Get total counts for admin dashboard.
+  Future<Map<String, int>> getAdminStats() async {
+    final usersCount = await _firestore.collection(_usersCollection).count().get();
+    final binsCount = await _firestore.collection(_binsCollection).count().get();
+    final bottlesCount = await _firestore.collection(_recycledBottlesCollection).count().get();
+    
+    return {
+      'totalUsers': usersCount.count ?? 0,
+      'totalBins': binsCount.count ?? 0,
+      'totalBottlesRecycled': bottlesCount.count ?? 0,
+    };
   }
 }

@@ -7,6 +7,7 @@ class UserModel {
   final int totalPoints;
   final int totalBottles;
   final String? profileImageUrl;
+  final bool isAdmin;
 
   const UserModel({
     required this.userId,
@@ -16,6 +17,7 @@ class UserModel {
     this.totalPoints = 0,
     this.totalBottles = 0,
     this.profileImageUrl,
+    this.isAdmin = false,
   });
 
   factory UserModel.fromMap(String id, Map<String, dynamic> map) {
@@ -27,6 +29,7 @@ class UserModel {
       totalPoints: (map['totalPoints'] as num?)?.toInt() ?? 0,
       totalBottles: (map['totalBottles'] as num?)?.toInt() ?? 0,
       profileImageUrl: map['profileImageUrl'] as String?,
+      isAdmin: map['isAdmin'] as bool? ?? false,
     );
   }
 
@@ -36,6 +39,7 @@ class UserModel {
         'mobile': mobile,
         'totalPoints': totalPoints,
         'totalBottles': totalBottles,
+        'isAdmin': isAdmin,
         if (profileImageUrl != null) 'profileImageUrl': profileImageUrl,
       };
 
