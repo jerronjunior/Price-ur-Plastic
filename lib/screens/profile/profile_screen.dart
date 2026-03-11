@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
+import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
@@ -28,14 +30,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   final StorageService _storageService = StorageService();
 
-  void _syncControllersFromUser() {
-    final user = context.read<AuthProvider>().user;
-    final nameParts = user?.name.split(' ') ?? ['', ''];
+  void _syncControllersFromUser([UserModel? user]) {
+    final userData = user ?? context.read<AuthProvider>().user;
+    final nameParts = userData?.name.split(' ') ?? ['', ''];
     _firstNameController.text = nameParts.isNotEmpty ? nameParts[0] : '';
     _lastNameController.text =
         nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-    _emailController.text = user?.email ?? '';
-    _mobileController.text = user?.mobile ?? '';
+    _emailController.text = userData?.email ?? '';
+    _mobileController.text = userData?.mobile ?? '';
   }
 
   @override
@@ -141,18 +143,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
           StreamBuilder(
             stream: context.read<AuthProvider>().userStream,
             builder: (context, snapshot) {
-              final user = snapshot.data ?? context.read<AuthProvider>().user;
-              if (user == null) {
+              final authProvider = context.read<AuthProvider>();
+              final fallbackFirebaseUser = authProvider.firebaseUser;
+              final user = snapshot.data ?? authProvider.user;
+              if (user == null && fallbackFirebaseUser == null) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
                 return const Center(child: Text('Not logged in'));
               }
 
-              final nameParts = user.name.split(' ');
+              final displayName =
+                  user?.name ?? fallbackFirebaseUser?.displayName ?? 'User';
+              final displayEmail = user?.email ?? fallbackFirebaseUser?.email ?? '';
+              final displayMobile = user?.mobile ?? '';
+              final displayProfileImage = user?.profileImageUrl;
+              final displayIsAdmin = user?.isAdmin ?? false;
+
+              final nameParts = displayName.split(' ');
               final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
               final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-              final userInitial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
+              final userInitial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
 
               if (!_isEditing) {
-                _syncControllersFromUser();
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && !_isEditing && user != null) {
+                    _syncControllersFromUser(user);
+                  }
+                });
+              }
+
+              if (!_isEditing && user == null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted || _isEditing) return;
+                  _firstNameController.text = firstName;
+                  _lastNameController.text = lastName;
+                  _emailController.text = displayEmail;
+                  _mobileController.text = displayMobile;
+                });
               }
 
               return SingleChildScrollView(
@@ -162,7 +190,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Container(
                   width: double.infinity,
                   color: AppTheme.primaryBlue,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    20 + MediaQuery.of(context).padding.top,
+                    24,
+                    20,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -209,14 +242,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: CircleAvatar(
                                 radius: 50,
                                 backgroundColor: Colors.white.withOpacity(0.3),
-                                backgroundImage: user.profileImageUrl != null
-                                    ? NetworkImage(user.profileImageUrl!)
+                                backgroundImage: displayProfileImage != null
+                                  ? NetworkImage(displayProfileImage)
                                     : null,
                                 child: _uploadingImage
                                     ? const CircularProgressIndicator(
                                         color: Colors.white,
                                       )
-                                    : user.profileImageUrl == null
+                                  : displayProfileImage == null
                                         ? Text(
                                             userInitial,
                                             style: const TextStyle(
@@ -256,7 +289,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 16),
                         // Name
                         Text(
-                          user.name,
+                          displayName,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             fontSize: 20,
@@ -267,7 +300,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 8),
                         // Email
                         Text(
-                          user.email,
+                          displayEmail,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             fontSize: 14,
@@ -309,7 +342,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         // Email
                         _InfoRow(
                           label: 'Email',
-                          value: user.email,
+                          value: displayEmail,
                           isEditing: false,
                           controller: _emailController,
                         ),
@@ -317,7 +350,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         // Mobile
                         _InfoRow(
                           label: 'Mobile',
-                          value: user.mobile,
+                          value: displayMobile,
                           isEditing: _isEditing,
                           controller: _mobileController,
                         ),
@@ -333,14 +366,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 final lastName = _lastNameController.text.trim();
                                 final mobile = _mobileController.text.trim();
                                 final fullName = '$firstName $lastName'.trim();
-                                if (fullName.isNotEmpty) {
+                                
+                                if (fullName.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Name cannot be empty'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  return;
+                                }
+                                
+                                try {
                                   await context.read<AuthProvider>().updateProfile(
                                         name: fullName,
                                         mobile: mobile,
                                       );
+                                  
+                                  setState(() => _isEditing = false);
+                                  
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Profile updated successfully!'),
+                                        backgroundColor: Colors.green,
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Failed to update profile: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
                                 }
+                              } else {
+                                setState(() => _isEditing = true);
                               }
-                              setState(() => _isEditing = !_isEditing);
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppTheme.primaryBlue,
@@ -361,7 +426,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(height: 12),
                         // Admin Dashboard Button (only for admins)
-                        if (user.isAdmin)
+                        if (displayIsAdmin)
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton.icon(
@@ -384,7 +449,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                           ),
-                        if (user.isAdmin) const SizedBox(height: 12),
+                        if (displayIsAdmin) const SizedBox(height: 12),
                         // Logout Button
                         SizedBox(
                           width: double.infinity,
@@ -469,7 +534,8 @@ class _InfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isEditing && label != 'Email') {
-      return Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
@@ -479,23 +545,25 @@ class _InfoRow extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              textAlign: TextAlign.right,
-              decoration: InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          const SizedBox(height: 8),
+          TextField(
+            controller: controller,
+            textAlign: TextAlign.left,
+            keyboardType: label == 'Mobile' ? TextInputType.phone : TextInputType.text,
+            inputFormatters: label == 'Mobile' 
+                ? [FilteringTextInputFormatter.digitsOnly]
+                : null,
+            decoration: InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
               ),
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],

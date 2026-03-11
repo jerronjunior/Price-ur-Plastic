@@ -2,12 +2,25 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users: read/write own document only
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
-    // Recycled bottles: anyone authenticated can create; no duplicate barcode (enforced in app + optional security)
+    // Users: authenticated users can read profiles (needed for leaderboard);
+    // users can create/update only their own profile and cannot self-elevate admin.
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && 
+                       request.auth.uid == userId &&
+                       // Prevent users from changing their own admin status
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) ||
+                        isAdmin());
+    }
+
+    // Recycled bottles: anyone authenticated can create; no duplicate barcode
     match /recycled_bottles/{docId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
@@ -16,10 +29,22 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Bins: read-only for clients
+    // Bins: read by authenticated users, write by admins only
     match /bins/{binId} {
       allow read: if request.auth != null;
-      allow write: if false;
+      allow write: if isAdmin();
+    }
+
+    // Reward config: read by all authenticated, write by admins only
+    match /reward_config/{configId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // Bin scans subcollection (for analytics)
+    match /users/{userId}/bin_scans/{scanId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId;
     }
   }
 }

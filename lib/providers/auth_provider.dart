@@ -34,16 +34,9 @@ class AuthProvider with ChangeNotifier {
     _auth.authStateChanges.listen((User? user) async {
       if (user != null) {
         try {
-          await _loadUser(user.uid);
+          await _loadUser(user.uid, firebaseUser: user);
         } catch (_) {
-          _user = UserModel(
-            userId: user.uid,
-            name: user.displayName ?? user.email?.split('@').first ?? 'User',
-            email: user.email ?? '',
-            mobile: '',
-            totalPoints: 0,
-            totalBottles: 0,
-          );
+          _user = _fallbackUserFromFirebase(user);
           notifyListeners();
         }
       } else {
@@ -53,8 +46,40 @@ class AuthProvider with ChangeNotifier {
     });
   }
 
-  Future<void> _loadUser(String uid) async {
-    _user = await _firestore.getUser(uid);
+  UserModel _fallbackUserFromFirebase(User user) {
+    return UserModel(
+      userId: user.uid,
+      name: user.displayName ?? user.email?.split('@').first ?? 'User',
+      email: user.email ?? '',
+      mobile: '',
+      totalPoints: 0,
+      totalBottles: 0,
+    );
+  }
+
+  Future<void> _loadUser(String uid, {User? firebaseUser}) async {
+    final firestoreUser = await _firestore.getUser(uid);
+    if (firestoreUser != null) {
+      _user = firestoreUser;
+      notifyListeners();
+      return;
+    }
+
+    // If the Firestore profile doc is missing, keep UI usable and self-heal.
+    final fbUser = firebaseUser ?? _auth.currentUser;
+    if (fbUser != null) {
+      final fallback = _fallbackUserFromFirebase(fbUser);
+      _user = fallback;
+      notifyListeners();
+      try {
+        await _firestore.setUser(fallback);
+      } catch (_) {
+        // Keep local fallback even if network/rules fail.
+      }
+      return;
+    }
+
+    _user = null;
     notifyListeners();
   }
 
@@ -87,16 +112,18 @@ class AuthProvider with ChangeNotifier {
           totalPoints: 0,
           totalBottles: 0,
         ));
-        await _loadUser(uid);
+        await _loadUser(uid, firebaseUser: cred.user);
       } catch (_) {
-        _user = UserModel(
-          userId: uid,
-          name: name,
-          email: email,
-          mobile: '',
-          totalPoints: 0,
-          totalBottles: 0,
-        );
+        _user = cred.user != null
+            ? _fallbackUserFromFirebase(cred.user!)
+            : UserModel(
+                userId: uid,
+                name: name,
+                email: email,
+                mobile: '',
+                totalPoints: 0,
+                totalBottles: 0,
+              );
         notifyListeners();
       }
       // Set flag to show welcome message
@@ -121,17 +148,9 @@ class AuthProvider with ChangeNotifier {
       );
       if (cred.user != null) {
         try {
-          await _loadUser(cred.user!.uid);
+          await _loadUser(cred.user!.uid, firebaseUser: cred.user);
         } catch (_) {
-          _user = UserModel(
-            userId: cred.user!.uid,
-            name:
-                cred.user!.displayName ?? cred.user!.email?.split('@').first ?? 'User',
-            email: cred.user!.email ?? '',
-            mobile: '',
-            totalPoints: 0,
-            totalBottles: 0,
-          );
+          _user = _fallbackUserFromFirebase(cred.user!);
           notifyListeners();
         }
         // Set flag to show welcome message
