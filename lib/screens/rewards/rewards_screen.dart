@@ -39,12 +39,6 @@ class _RewardsScreenState extends State<RewardsScreen>
       duration: const Duration(seconds: 5),
       vsync: this,
     );
-    _spinController.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        setState(() => _isSpinning = false);
-        _showSpinResult();
-      }
-    });
   }
 
   @override
@@ -53,24 +47,50 @@ class _RewardsScreenState extends State<RewardsScreen>
     super.dispose();
   }
 
-  void _spin() {
+  Future<void> _spin() async {
     final user = context.read<AuthProvider>().user;
     final points = user?.totalPoints ?? 0;
 
-    if (points < _spinCost) return;
+    if (points < _spinCost) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Not enough points. Need 20 points.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
-    setState(() => _isSpinning = true);
+    if (_isSpinning) return;
 
-    // Random spin with random offset for landing position
-    final randomOffset = math.Random().nextDouble();
+    final selectedIndex = math.Random().nextInt(_prizes.length);
+    final selectedPrize = _prizes[selectedIndex];
 
-    _spinController.forward(from: 0.0).then((_) {
-      final selectedIndex = (randomOffset * _prizes.length).toInt() % _prizes.length;
-      _lastResult = _prizes[selectedIndex];
-
-      // Deduct points from user
-      context.read<AuthProvider>().updateTotalPoints(points - _spinCost);
+    setState(() {
+      _isSpinning = true;
+      _lastResult = selectedPrize;
     });
+
+    try {
+      // Deduct spin cost before spinning.
+      await context.read<AuthProvider>().updateTotalPoints(points - _spinCost);
+
+      await _spinController.forward(from: 0.0);
+
+      if (!mounted) return;
+      setState(() => _isSpinning = false);
+      _showSpinResult();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSpinning = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to spin. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _showSpinResult() {
@@ -80,7 +100,7 @@ class _RewardsScreenState extends State<RewardsScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('🎉 You Won!'),
-        content: Text('You got: $_lastResult'),
+        content: Text('You win $_lastResult.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -230,7 +250,7 @@ class _RewardsScreenState extends State<RewardsScreen>
                   const SizedBox(height: 40),
                   // Spin Button
                   ElevatedButton(
-                    onPressed: _isSpinning || !canSpin ? null : _spin,
+                    onPressed: _isSpinning ? null : _spin,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF4CAF50),
                       disabledBackgroundColor: Colors.grey.shade400,
