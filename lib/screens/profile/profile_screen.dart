@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
 import '../../services/storage_service.dart';
@@ -502,6 +503,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(
+                      notifications:
+                          context.watch<NotificationProvider>().notifications,
                       onClose: () {
                         setState(() {
                           _showNotificationPanel = false;

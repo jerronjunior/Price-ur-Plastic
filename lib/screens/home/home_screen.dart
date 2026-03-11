@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
 
@@ -348,6 +349,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(
+                      notifications:
+                          context.watch<NotificationProvider>().notifications,
                       onClose: () {
                         setState(() {
                           _showNotificationPanel = false;

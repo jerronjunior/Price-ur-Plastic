@@ -7,6 +7,7 @@ import '../../widgets/notification_panel.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scan_validation_service.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../models/bin_model.dart';
 import 'camera_confirm_screen.dart';
 
@@ -88,6 +89,8 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(
+                      notifications:
+                          context.watch<NotificationProvider>().notifications,
                       onClose: () => setState(() => _showNotificationPanel = false),
                     ),
                   ),

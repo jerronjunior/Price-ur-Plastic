@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/theme.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
@@ -234,6 +235,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(
+                      notifications:
+                          context.watch<NotificationProvider>().notifications,
                       onClose: () =>
                           setState(() => _showNotificationPanel = false),
                     ),

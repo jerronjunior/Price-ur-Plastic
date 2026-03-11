@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:math' as math;
 import '../../providers/auth_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
 import '../../core/theme.dart';
@@ -95,6 +96,8 @@ class _RewardsScreenState extends State<RewardsScreen>
 
   void _showSpinResult() {
     if (_lastResult == null) return;
+
+    context.read<NotificationProvider>().addRewardNotification(_lastResult!);
 
     showDialog(
       context: context,
@@ -292,6 +295,8 @@ class _RewardsScreenState extends State<RewardsScreen>
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(
+                      notifications:
+                          context.watch<NotificationProvider>().notifications,
                       onClose: () {
                         setState(() {
                           _showNotificationPanel = false;

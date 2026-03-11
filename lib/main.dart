@@ -5,6 +5,7 @@ import 'firebase_options.dart';
 import 'core/theme.dart';
 import 'app/app_router.dart';
 import 'providers/auth_provider.dart';
+import 'providers/notification_provider.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
 
@@ -32,6 +33,9 @@ class EcoRecycleApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+        ChangeNotifierProvider<NotificationProvider>(
+          create: (_) => NotificationProvider(),
+        ),
         Provider<FirestoreService>.value(value: firestoreService),
       ],
       child: MaterialApp.router(
