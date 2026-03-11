@@ -246,4 +246,22 @@ class AuthProvider with ChangeNotifier {
     _user = _user!.copyWith(totalPoints: points);
     notifyListeners();
   }
+
+  /// Change account password for logged-in user.
+  Future<String?> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _auth.changePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+      return null;
+    } on FirebaseAuthException catch (e) {
+      return _friendlyAuthMessage(e, fallback: 'Failed to change password.');
+    } catch (_) {
+      return 'Failed to change password. Please try again.';
+    }
+  }
 }
