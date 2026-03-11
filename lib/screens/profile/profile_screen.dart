@@ -136,6 +136,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasUnread = context.watch<NotificationProvider>().hasUnread;
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       bottomNavigationBar: const AppBottomNavBar(currentRoute: '/profile'),
@@ -213,8 +214,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.notifications, color: Colors.white),
+                        icon: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            const Icon(Icons.notifications, color: Colors.white),
+                            if (hasUnread)
+                              const Positioned(
+                                right: -1,
+                                top: -1,
+                                child: SizedBox(
+                                  width: 10,
+                                  height: 10,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                         onPressed: () {
+                          if (!_showNotificationPanel) {
+                            context
+                                .read<NotificationProvider>()
+                                .markAllAsRead();
+                          }
                           setState(() {
                             _showNotificationPanel = !_showNotificationPanel;
                           });

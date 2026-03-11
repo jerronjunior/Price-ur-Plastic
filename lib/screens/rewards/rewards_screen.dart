@@ -117,6 +117,7 @@ class _RewardsScreenState extends State<RewardsScreen>
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
+    final hasUnread = context.watch<NotificationProvider>().hasUnread;
     final points = user?.totalPoints ?? 0;
     final canSpin = points >= _spinCost;
     final eligibleSpins = points ~/ _spinCost;
@@ -149,8 +150,31 @@ class _RewardsScreenState extends State<RewardsScreen>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.notifications, color: Colors.white),
+                      icon: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          const Icon(Icons.notifications, color: Colors.white),
+                          if (hasUnread)
+                            const Positioned(
+                              right: -1,
+                              top: -1,
+                              child: SizedBox(
+                                width: 10,
+                                height: 10,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                       onPressed: () {
+                        if (!_showNotificationPanel) {
+                          context.read<NotificationProvider>().markAllAsRead();
+                        }
                         setState(() {
                           _showNotificationPanel = !_showNotificationPanel;
                         });

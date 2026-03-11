@@ -4,8 +4,10 @@ import '../models/notification_model.dart';
 /// Stores in-app notifications visible in the notification panel.
 class NotificationProvider with ChangeNotifier {
   final List<NotificationModel> _notifications = [];
+  bool _hasUnread = false;
 
   List<NotificationModel> get notifications => List.unmodifiable(_notifications);
+  bool get hasUnread => _hasUnread;
 
   void addRewardNotification(String reward) {
     final now = DateTime.now();
@@ -20,6 +22,13 @@ class NotificationProvider with ChangeNotifier {
 
     // Keep latest items first.
     _notifications.insert(0, notification);
+    _hasUnread = true;
+    notifyListeners();
+  }
+
+  void markAllAsRead() {
+    if (!_hasUnread) return;
+    _hasUnread = false;
     notifyListeners();
   }
 

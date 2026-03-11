@@ -47,6 +47,7 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
   @override
   Widget build(BuildContext context) {
     // Full-screen takeovers
+    final hasUnread = context.watch<NotificationProvider>().hasUnread;
     if (_step == _Step.cameraConfirm) {
       return CameraConfirmScreen(
         barcode: _barcode!,
@@ -66,7 +67,12 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
           Column(
             children: [
               _Header(onNotification: () =>
-                  setState(() => _showNotificationPanel = !_showNotificationPanel)),
+                  setState(() {
+                    if (!_showNotificationPanel) {
+                      context.read<NotificationProvider>().markAllAsRead();
+                    }
+                    _showNotificationPanel = !_showNotificationPanel;
+                  }), hasUnread: hasUnread),
               _StepBar(step: _step),
               Expanded(
                 child: _step == _Step.scanBin
@@ -108,8 +114,9 @@ class _ScanLandingScreenState extends State<ScanLandingScreen> {
 // Header
 // ─────────────────────────────────────────────────────────────────────────────
 class _Header extends StatelessWidget {
-  const _Header({required this.onNotification});
+  const _Header({required this.onNotification, required this.hasUnread});
   final VoidCallback onNotification;
+  final bool hasUnread;
 
   @override
   Widget build(BuildContext context) {
@@ -139,7 +146,27 @@ class _Header extends StatelessWidget {
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.notifications, color: Colors.white),
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.notifications, color: Colors.white),
+                  if (hasUnread)
+                    const Positioned(
+                      right: -1,
+                      top: -1,
+                      child: SizedBox(
+                        width: 10,
+                        height: 10,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
               onPressed: onNotification,
             ),
           ],
