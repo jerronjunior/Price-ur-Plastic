@@ -6,6 +6,11 @@ import '../../services/firestore_service.dart';
 import '../../services/scan_validation_service.dart';
 
 /// Scan bottle barcode with frame overlay; validate not already recycled.
+///
+/// FIX: Explicitly stops and disposes MobileScannerController BEFORE calling
+/// [onScanned]. MobileScanner uses CameraX which holds Camera id=0 open.
+/// If not released first, the next screen (camera package) causes:
+/// "BufferQueue has been abandoned" + Device error codes 3/4.
 class ScanBottleScreen extends StatefulWidget {
   const ScanBottleScreen({
     super.key,
@@ -21,23 +26,41 @@ class ScanBottleScreen extends StatefulWidget {
 }
 
 class _ScanBottleScreenState extends State<ScanBottleScreen> {
-  final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
-    facing: CameraFacing.back,
-    torchEnabled: false,
-  );
+  late MobileScannerController _controller;
   bool _processing = false;
+  bool _released = false;
   String? _error;
   String? _scannedResult;
 
   @override
+  void initState() {
+    super.initState();
+    _controller = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+      torchEnabled: false,
+    );
+  }
+
+  @override
   void dispose() {
-    _controller.dispose();
+    if (!_released) _controller.dispose();
     super.dispose();
   }
 
+  Future<void> _releaseCamera() async {
+    if (_released) return;
+    _released = true;
+    try {
+      await _controller.stop();
+    } catch (_) {}
+    try {
+      _controller.dispose();
+    } catch (_) {}
+  }
+
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (_processing) return;
+    if (_processing || _released) return;
     final barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
     final code = barcodes.first.rawValue?.trim();
@@ -52,6 +75,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     final validation = ScanValidationService(firestore);
     final err = await validation.validateBarcode(code);
     if (!mounted) return;
+
     if (err != null) {
       setState(() {
         _error = err;
@@ -59,13 +83,21 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       });
       return;
     }
-    
-    // Show result temporarily before proceeding
+
     setState(() => _scannedResult = code);
-    await Future.delayed(const Duration(seconds: 2));
-    if (mounted) {
-      widget.onScanned(code);
-    }
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+
+    // ── KEY FIX ───────────────────────────────────────────────────────────
+    // Stop MobileScanner (CameraX) BEFORE switching to CameraConfirmScreen.
+    // CameraX holds Camera id=0 open. Without releasing it first, the camera
+    // package fails to open the same hardware, causing BufferQueue errors.
+    await _releaseCamera();
+
+    // Give Android ~400ms to fully close the CameraX session.
+    await Future.delayed(const Duration(milliseconds: 400));
+
+    if (mounted) widget.onScanned(code);
   }
 
   @override
@@ -89,8 +121,8 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.person, color: Colors.white),
-                    onPressed: context.pop,
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    onPressed: widget.onBack,
                   ),
                   const Text(
                     'PuP',
@@ -112,10 +144,15 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
           Expanded(
             child: Stack(
               children: [
-                MobileScanner(
-                  controller: _controller,
-                  onDetect: _onDetect,
-                ),
+                // Only render MobileScanner while camera is active
+                if (!_released)
+                  MobileScanner(
+                    controller: _controller,
+                    onDetect: _onDetect,
+                  )
+                else
+                  const ColoredBox(color: Colors.black),
+
                 // Blue frame overlay
                 Center(
                   child: Container(
@@ -130,15 +167,15 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                     ),
                   ),
                 ),
-                // Horizontal line through center
+                // Scan line
                 Center(
                   child: Container(
                     width: 300,
-                    height: 1,
-                    color: const Color(0xFF1565C0).withValues(alpha: 0.3),
+                    height: 2,
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.5),
                   ),
                 ),
-                // Help text below frame
+                // Status text
                 Positioned(
                   bottom: 60,
                   left: 0,
@@ -146,11 +183,13 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                   child: Column(
                     children: [
                       Text(
-                        'Align barcode within frame...',
+                        _released
+                            ? 'Opening camera...'
+                            : 'Align barcode within frame...',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 16,
-                          color: Colors.grey.shade700,
+                          color: _released ? Colors.white : Colors.grey.shade700,
                           fontWeight: FontWeight.w500,
                         ),
                       ),

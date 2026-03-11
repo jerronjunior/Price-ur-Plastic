@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
 import '../models/recycled_bottle_model.dart';
 import '../models/bin_model.dart';
@@ -195,7 +196,7 @@ class FirestoreService {
 
   // --- Leaderboard ---
 
-  /// Top 10 users by totalPoints, real-time stream.
+  /// Top 10 users by totalPoints, real-time stream (legacy, kept for compat).
   Stream<List<UserModel>> leaderboardStream() {
     return _firestore
         .collection(_usersCollection)
@@ -204,6 +205,50 @@ class FirestoreService {
         .snapshots()
         .map((snap) =>
             snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
+  }
+
+  /// ALL users ordered by totalPoints descending — real-time stream.
+  ///
+  /// IMPORTANT: Does NOT use orderBy('totalPoints') in the Firestore query
+  /// because:
+  ///   1. Users registered before points were introduced have no totalPoints
+  ///      field — Firestore orderBy silently skips documents missing the
+  ///      ordered field, making them invisible on the leaderboard.
+  ///   2. orderBy on a non-indexed field throws a requires-index error.
+  ///
+  /// Instead: fetch all users with no filter, sort client-side in Dart.
+  /// This guarantees every registered user appears on the leaderboard.
+  Stream<List<UserModel>> leaderboardStreamAll() {
+    return _firestore
+        .collection(_usersCollection)
+        .snapshots()
+        .map((snap) {
+      final all = <UserModel>[];
+      for (final doc in snap.docs) {
+        try {
+          // doc.data() returns an unmodifiable map — copy it first
+          final raw = Map<String, dynamic>.from(doc.data());
+
+          // Safely parse totalPoints — handle int, double, null, missing
+          final pts = raw['totalPoints'];
+          raw['totalPoints'] = pts is num ? pts.toInt() : 0;
+
+          final bottles = raw['totalBottles'];
+          raw['totalBottles'] = bottles is num ? bottles.toInt() : 0;
+
+          raw['name'] ??= 'User';
+          raw['email'] ??= '';
+
+          all.add(UserModel.fromMap(doc.id, raw));
+        } catch (e) {
+          // Skip malformed documents — never crash the whole leaderboard
+          debugPrint('leaderboardStreamAll: skipping doc ${doc.id}: $e');
+        }
+      }
+      // Sort by totalPoints descending in Dart
+      all.sort((a, b) => b.totalPoints.compareTo(a.totalPoints));
+      return all;
+    });
   }
 
   // --- Admin: Bin Management ---

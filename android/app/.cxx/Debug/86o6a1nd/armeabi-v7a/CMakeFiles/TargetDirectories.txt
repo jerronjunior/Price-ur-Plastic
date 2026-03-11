@@ -1,0 +1,2 @@
+D:/New folder/Price-ur-Plastic/android/app/.cxx/Debug/86o6a1nd/armeabi-v7a/CMakeFiles/edit_cache.dir
+D:/New folder/Price-ur-Plastic/android/app/.cxx/Debug/86o6a1nd/armeabi-v7a/CMakeFiles/rebuild_cache.dir

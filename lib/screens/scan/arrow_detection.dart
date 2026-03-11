@@ -1,9 +1,14 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'arrow_detection_impl.dart';
 
 /// Overlay showing the "arrow region" and running frame-difference detection.
 /// When pixel change in region exceeds threshold, calls [onArrowDisappeared].
+///
+/// IMPORTANT: This widget manages its own image stream lifecycle.
+/// The [controller] must be fully initialized before passing it here,
+/// and must NOT already have an active image stream.
 class ArrowRegionOverlay extends StatefulWidget {
   const ArrowRegionOverlay({
     super.key,
@@ -25,10 +30,17 @@ class ArrowRegionOverlay extends StatefulWidget {
 class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
   ArrowDetectionImpl? _detector;
   bool _disposed = false;
+  bool _streamStarted = false;
 
   @override
   void initState() {
     super.initState();
+    _startDetection();
+  }
+
+  Future<void> _startDetection() async {
+    if (_disposed) return;
+
     _detector = ArrowDetectionImpl(
       onArrowDisappeared: () {
         if (!_disposed && !widget.disabled) {
@@ -36,36 +48,79 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
         }
       },
     );
-    widget.controller.startImageStream(_onImage);
+
+    // Guard: only start stream if controller is ready and not already streaming
+    if (!widget.controller.value.isInitialized) return;
+    if (widget.controller.value.isStreamingImages) return;
+
+    try {
+      await widget.controller.startImageStream(_onImage);
+      if (mounted) {
+        setState(() => _streamStarted = true);
+      }
+    } catch (e) {
+      debugPrint('ArrowRegionOverlay: Failed to start image stream: $e');
+    }
   }
 
   void _onImage(CameraImage image) {
-    _detector?.processImage(image);
+    if (!_disposed) {
+      _detector?.processImage(image);
+    }
   }
 
   @override
   void dispose() {
     _disposed = true;
-    widget.controller.stopImageStream();
     _detector?.dispose();
+
+    // Only stop stream if we started it and it's still running
+    if (_streamStarted && widget.controller.value.isInitialized) {
+      try {
+        if (widget.controller.value.isStreamingImages) {
+          widget.controller.stopImageStream();
+        }
+      } catch (e) {
+        debugPrint('ArrowRegionOverlay: Error stopping image stream: $e');
+      }
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.green, width: 4),
+        border: Border.all(
+          color: widget.disabled ? Colors.grey : Colors.green,
+          width: 4,
+        ),
         borderRadius: BorderRadius.circular(12),
+        color: Colors.transparent,
       ),
-      child: const Center(
-        child: Text(
-          'Insert bottle here',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            shadows: [Shadow(color: Colors.black, blurRadius: 4)],
-          ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Arrow icon pointing down — this is what gets occluded by the bottle
+            Icon(
+              Icons.arrow_downward,
+              color: widget.disabled ? Colors.grey : Colors.white,
+              size: 36,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              widget.disabled ? 'Detected!' : 'Insert bottle here',
+              style: TextStyle(
+                color: widget.disabled ? Colors.grey : Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                shadows: const [Shadow(color: Colors.black, blurRadius: 4)],
+              ),
+            ),
+          ],
         ),
       ),
     );
