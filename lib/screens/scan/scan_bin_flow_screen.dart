@@ -31,15 +31,15 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
       final firestore = context.read<FirestoreService>();
       
-      // Add points for bin scan (10 points)
-      await firestore.incrementUserPoints(userId, 10);
+      // Keep points and bottle count in sync: +1 point and +1 bottle.
+      await firestore.incrementUserPointsAndBottles(userId);
       
       // Log the bin scan
       await firestore.logBinScan(userId, binId);
 
       if (!mounted) return;
       setState(() {
-        _successMessage = 'Bin scanned successfully!\n+10 points earned';
+        _successMessage = 'Bottle recorded successfully!\n+1 point and +1 bottle';
         _processing = false;
       });
 

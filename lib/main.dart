@@ -33,8 +33,13 @@ class EcoRecycleApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
-        ChangeNotifierProvider<NotificationProvider>(
+        ChangeNotifierProxyProvider<AuthProvider, NotificationProvider>(
           create: (_) => NotificationProvider(),
+          update: (_, auth, notifications) {
+            final provider = notifications ?? NotificationProvider();
+            provider.bindToUser(auth.userId);
+            return provider;
+          },
         ),
         Provider<FirestoreService>.value(value: firestoreService),
       ],

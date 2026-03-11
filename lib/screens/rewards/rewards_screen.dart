@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import '../../providers/auth_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -16,8 +17,10 @@ class RewardsScreen extends StatefulWidget {
 }
 
 class _RewardsScreenState extends State<RewardsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _spinController;
+  late AnimationController _celebrationController;
+  late Animation<double> _turnsAnimation;
   bool _showNotificationPanel = false;
   final int _spinCost = 20;
   final List<String> _prizes = [
@@ -32,6 +35,7 @@ class _RewardsScreenState extends State<RewardsScreen>
   ];
   bool _isSpinning = false;
   String? _lastResult;
+  double _currentTurns = 0.0;
 
   @override
   void initState() {
@@ -40,11 +44,17 @@ class _RewardsScreenState extends State<RewardsScreen>
       duration: const Duration(seconds: 5),
       vsync: this,
     );
+    _celebrationController = AnimationController(
+      duration: const Duration(milliseconds: 1100),
+      vsync: this,
+    );
+    _turnsAnimation = AlwaysStoppedAnimation<double>(_currentTurns);
   }
 
   @override
   void dispose() {
     _spinController.dispose();
+    _celebrationController.dispose();
     super.dispose();
   }
 
@@ -67,6 +77,27 @@ class _RewardsScreenState extends State<RewardsScreen>
 
     final selectedIndex = math.Random().nextInt(_prizes.length);
     final selectedPrize = _prizes[selectedIndex];
+    final segmentSize = 1 / _prizes.length;
+    final segmentCenter = (selectedIndex + 0.5) * segmentSize;
+
+    // Rotate enough full turns, then land with winning segment under the top pointer.
+    final landingOffset = (1 - segmentCenter) % 1;
+    final extraFullTurns = 6 + math.Random().nextInt(3);
+    var targetTurns =
+        _currentTurns.floorToDouble() + extraFullTurns + landingOffset;
+    while (targetTurns <= _currentTurns) {
+      targetTurns += 1;
+    }
+
+    _turnsAnimation = Tween<double>(
+      begin: _currentTurns,
+      end: targetTurns,
+    ).animate(
+      CurvedAnimation(
+        parent: _spinController,
+        curve: const Interval(0.0, 1.0, curve: _SpinCurve()),
+      ),
+    );
 
     setState(() {
       _isSpinning = true;
@@ -78,9 +109,14 @@ class _RewardsScreenState extends State<RewardsScreen>
       await context.read<AuthProvider>().updateTotalPoints(points - _spinCost);
 
       await _spinController.forward(from: 0.0);
+      _currentTurns = targetTurns;
 
       if (!mounted) return;
       setState(() => _isSpinning = false);
+
+      // Play a short win burst after the wheel settles.
+      await _celebrationController.forward(from: 0.0);
+      if (!mounted) return;
       _showSpinResult();
     } catch (_) {
       if (!mounted) return;
@@ -258,21 +294,103 @@ class _RewardsScreenState extends State<RewardsScreen>
                   const SizedBox(height: 40),
                   // Spinning Wheel
                   Center(
-                    child: RotationTransition(
-                      turns: Tween(begin: 0.0, end: 10.0).animate(_spinController),
-                      child: CustomPaint(
-                        painter: SpinWheelPainter(_prizes),
-                        size: const Size(280, 280),
-                      ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        // Outer decorative gradient ring
+                        AnimatedBuilder(
+                          animation: _celebrationController,
+                          builder: (context, _) {
+                            final glow = _celebrationController.value;
+                            return Container(
+                              width: 316,
+                              height: 316,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: const SweepGradient(
+                                  colors: [
+                                    Color(0xFFFFD700),
+                                    Color(0xFFFF6B35),
+                                    Color(0xFFE040FB),
+                                    Color(0xFF00E5FF),
+                                    Color(0xFF69F0AE),
+                                    Color(0xFFFFD700),
+                                  ],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.amber.withValues(
+                                      alpha: 0.18 + 0.42 * glow,
+                                    ),
+                                    blurRadius: 24 + 40 * glow,
+                                    spreadRadius: 2 + 14 * glow,
+                                  ),
+                                  BoxShadow(
+                                    color: Colors.purple.withValues(
+                                      alpha: 0.10 + 0.25 * glow,
+                                    ),
+                                    blurRadius: 32 + 20 * glow,
+                                    spreadRadius: 1 + 6 * glow,
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                        // White inner circle (creates the ring illusion)
+                        Container(
+                          width: 298,
+                          height: 298,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                          ),
+                        ),
+                        AnimatedBuilder(
+                          animation: _celebrationController,
+                          builder: (context, child) => child!,
+                          child: RotationTransition(
+                            turns: _turnsAnimation,
+                            child: CustomPaint(
+                              painter: SpinWheelPainter(_prizes),
+                              size: const Size(288, 288),
+                            ),
+                          ),
+                        ),
+                        IgnorePointer(
+                          child: _WinBurst(
+                            progress: _celebrationController,
+                          ),
+                        ),
+                        Positioned(
+                          top: -2,
+                          child: SizedBox(
+                            width: 44,
+                            height: 48,
+                            child: CustomPaint(
+                              painter: PointerPainter(),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  // Pointer at top
-                  Center(
-                    child: CustomPaint(
-                      painter: PointerPainter(),
-                      size: const Size(40, 40),
-                    ),
+                  const SizedBox(height: 14),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: _isSpinning
+                        ? const SizedBox.shrink()
+                        : (_lastResult != null
+                            ? Text(
+                                'Last win: $_lastResult',
+                                key: const ValueKey('last_reward'),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF2E7D32),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              )
+                            : const SizedBox.shrink()),
                   ),
                   const SizedBox(height: 40),
                   // Spin Button
@@ -381,129 +499,333 @@ class _StatItem extends StatelessWidget {
   }
 }
 
+/// Custom spin curve: fast burst → settle with a tiny back-tick for realism.
+class _SpinCurve extends Curve {
+  const _SpinCurve();
+
+  @override
+  double transformInternal(double t) {
+    // Fast acceleration then elastic slow-down
+    if (t < 0.6) {
+      // Accelerate phase
+      return Curves.easeIn.transform(t / 0.6) * 0.75;
+    } else {
+      // Decelerate with slight elastic overshoot then snap
+      final u = (t - 0.6) / 0.4;
+      final base = Curves.easeOutCubic.transform(u);
+      // Tiny wobble: add a damped sine
+      final wobble = math.sin(u * math.pi * 2.5) * 0.012 * (1 - u);
+      return 0.75 + (base + wobble) * 0.25;
+    }
+  }
+}
+
 class SpinWheelPainter extends CustomPainter {
   final List<String> prizes;
 
   SpinWheelPainter(this.prizes);
 
+  // Rich gradient colour pairs [dark, light] for each segment
+  static const List<List<Color>> _segmentColors = [
+    [Color(0xFFE53935), Color(0xFFFF8A80)],   // red
+    [Color(0xFFE65100), Color(0xFFFFAB40)],   // deep orange
+    [Color(0xFFF9A825), Color(0xFFFFEE58)],   // amber
+    [Color(0xFF2E7D32), Color(0xFF69F0AE)],   // green
+    [Color(0xFF1565C0), Color(0xFF82B1FF)],   // blue
+    [Color(0xFF4527A0), Color(0xFFB388FF)],   // deep purple
+    [Color(0xFFAD1457), Color(0xFFF48FB1)],   // pink
+    [Color(0xFF00838F), Color(0xFF84FFFF)],   // cyan
+  ];
+
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
+    final segCount = prizes.length;
+    final sweepAngle = (2 * math.pi) / segCount;
 
-    final paint = Paint();
-    final colors = [
-      Colors.red.shade400,
-      Colors.orange.shade400,
-      Colors.yellow.shade600,
-      Colors.green.shade400,
-      Colors.blue.shade400,
-      Colors.indigo.shade400,
-      Colors.purple.shade400,
-      Colors.pink.shade400,
-    ];
+    // ── Outer metallic rim ──────────────────────────────────────────────────
+    final rimPaint = Paint()
+      ..shader = RadialGradient(
+        colors: [Colors.white, const Color(0xFFE0E0E0), const Color(0xFFBDBDBD)],
+        stops: const [0.82, 0.93, 1.0],
+      ).createShader(Rect.fromCircle(center: center, radius: radius))
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, radius, rimPaint);
 
-    final strokePaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke;
+    // ── Segments ────────────────────────────────────────────────────────────
+    for (int i = 0; i < segCount; i++) {
+      final startAngle = (i * 2 * math.pi) / segCount - math.pi / 2;
+      final colors = _segmentColors[i % _segmentColors.length];
 
-    // Draw segments
-    for (int i = 0; i < prizes.length; i++) {
-      final startAngle = (i * 2 * math.pi) / prizes.length - math.pi / 2;
-      final sweepAngle = (2 * math.pi) / prizes.length;
-
-      paint.color = colors[i % colors.length];
+      // Gradient fill
+      final segPaint = Paint()
+        ..shader = ui.Gradient.sweep(
+          center,
+          [colors[0], colors[1], colors[0]],
+          [0.0, 0.5, 1.0],
+          TileMode.clamp,
+          startAngle,
+          startAngle + sweepAngle,
+        )
+        ..style = PaintingStyle.fill;
 
       canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
+        Rect.fromCircle(center: center, radius: radius - 6),
         startAngle,
         sweepAngle,
         true,
-        paint,
+        segPaint,
       );
 
-      // Draw segment border
+      // White divider lines
+      final dividerPaint = Paint()
+        ..color = Colors.white.withValues(alpha: 0.9)
+        ..strokeWidth = 2.5
+        ..style = PaintingStyle.stroke;
       canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
+        Rect.fromCircle(center: center, radius: radius - 6),
         startAngle,
         sweepAngle,
         true,
-        strokePaint,
+        dividerPaint,
       );
 
-      // Draw prize text
+      // Decorative dot near rim
+      final dotAngle = startAngle + sweepAngle / 2;
+      final dotPos = Offset(
+        center.dx + (radius - 18) * math.cos(dotAngle),
+        center.dy + (radius - 18) * math.sin(dotAngle),
+      );
+      canvas.drawCircle(dotPos, 5,
+          Paint()..color = Colors.white.withValues(alpha: 0.85));
+      canvas.drawCircle(dotPos, 3, Paint()..color = colors[1]);
+
+      // Prize text (rotated along segment centre)
       final textAngle = startAngle + sweepAngle / 2;
-      final textRadius = radius * 0.7;
+      final textRadius = (radius - 6) * 0.60;
       final textOffset = Offset(
         center.dx + textRadius * math.cos(textAngle),
         center.dy + textRadius * math.sin(textAngle),
       );
 
-      final textPainter = TextPainter(
+      canvas.save();
+      canvas.translate(textOffset.dx, textOffset.dy);
+      canvas.rotate(textAngle + math.pi / 2);
+
+      // Shadow layer
+      final shadowPainter = TextPainter(
+        text: TextSpan(
+          text: prizes[i],
+          style: TextStyle(
+            color: Colors.black.withValues(alpha: 0.35),
+            fontWeight: FontWeight.w900,
+            fontSize: 13,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      shadowPainter.paint(
+        canvas,
+        Offset(-shadowPainter.width / 2 + 1, -shadowPainter.height / 2 + 1),
+      );
+
+      // Main text
+      final tp = TextPainter(
         text: TextSpan(
           text: prizes[i],
           style: const TextStyle(
             color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
+            fontWeight: FontWeight.w900,
+            fontSize: 13,
+            letterSpacing: 0.5,
           ),
         ),
         textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(
-        canvas,
-        textOffset - Offset(textPainter.width / 2, textPainter.height / 2),
-      );
+      )..layout();
+      tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+
+      canvas.restore();
     }
 
-    // Draw center circle
-    final centerCirclePaint = Paint()
-      ..color = const Color(0xFF1565C0)
+    // ── Gloss overlay (top-half shine) ──────────────────────────────────────
+    final glossPaint = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(0, -0.4),
+        radius: 0.75,
+        colors: [
+          Colors.white.withValues(alpha: 0.22),
+          Colors.white.withValues(alpha: 0.0),
+        ],
+      ).createShader(Rect.fromCircle(center: center, radius: radius - 6))
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(center, 30, centerCirclePaint);
+    canvas.drawCircle(center, radius - 6, glossPaint);
 
-    // Draw center circle border
-    canvas.drawCircle(center, 30, strokePaint);
+    // ── Center hub ──────────────────────────────────────────────────────────
+    const hubRadius = 32.0;
 
-    // Draw center icon/text
-    final textPainter = TextPainter(
+    // Hub shadow
+    canvas.drawCircle(
+      center + const Offset(2, 2),
+      hubRadius,
+      Paint()..color = Colors.black.withValues(alpha: 0.3),
+    );
+
+    // Hub gradient
+    final hubPaint = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(-0.3, -0.4),
+        radius: 0.9,
+        colors: [const Color(0xFF42A5F5), const Color(0xFF0D47A1)],
+      ).createShader(Rect.fromCircle(center: center, radius: hubRadius));
+    canvas.drawCircle(center, hubRadius, hubPaint);
+
+    // Hub rim
+    canvas.drawCircle(
+      center,
+      hubRadius,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.8)
+        ..strokeWidth = 2.5
+        ..style = PaintingStyle.stroke,
+    );
+
+    // Hub inner gloss
+    canvas.drawCircle(
+      center + const Offset(-6, -7),
+      10,
+      Paint()..color = Colors.white.withValues(alpha: 0.25),
+    );
+
+    // Hub emoji
+    final hubText = TextPainter(
       text: const TextSpan(
         text: '🎡',
-        style: TextStyle(fontSize: 24),
+        style: TextStyle(fontSize: 26),
       ),
       textDirection: TextDirection.ltr,
-    );
-    textPainter.layout();
-    textPainter.paint(
+    )..layout();
+    hubText.paint(
       canvas,
-      center - Offset(textPainter.width / 2, textPainter.height / 2),
+      center - Offset(hubText.width / 2, hubText.height / 2),
     );
   }
 
   @override
-  bool shouldRepaint(SpinWheelPainter oldDelegate) {
-    return oldDelegate.prizes != prizes;
-  }
+  bool shouldRepaint(SpinWheelPainter oldDelegate) =>
+      oldDelegate.prizes != prizes;
 }
 
 class PointerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.red
-      ..style = PaintingStyle.fill;
+    final cx = size.width / 2;
 
-    final path = Path();
-    path.moveTo(size.width / 2, 0);
-    path.lineTo(size.width, size.height);
-    path.lineTo(0, size.height);
-    path.close();
+    // Drop shadow
+    final shadowPath = Path()
+      ..moveTo(cx + 1.5, 2)
+      ..lineTo(size.width - 2, size.height - 4)
+      ..quadraticBezierTo(cx + 1.5, size.height + 4, cx + 1.5, size.height - 4)
+      ..lineTo(2, size.height - 4)
+      ..quadraticBezierTo(cx + 1.5, size.height + 4, cx + 1.5, 2)
+      ..close();
+    canvas.drawPath(
+      shadowPath,
+      Paint()..color = Colors.black.withValues(alpha: 0.28),
+    );
 
-    canvas.drawPath(path, paint);
+    // Main arrow body
+    final arrowPath = Path()
+      ..moveTo(cx, 0)
+      ..lineTo(size.width - 2, size.height - 4)
+      ..quadraticBezierTo(cx, size.height + 5, 2, size.height - 4)
+      ..close();
+
+    final arrowPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [const Color(0xFFFF1744), const Color(0xFFB71C1C)],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+    canvas.drawPath(arrowPath, arrowPaint);
+
+    // Gloss highlight on left edge
+    final glossPath = Path()
+      ..moveTo(cx, 0)
+      ..lineTo(cx - 4, size.height * 0.55)
+      ..lineTo(cx, size.height * 0.5)
+      ..close();
+    canvas.drawPath(
+      glossPath,
+      Paint()..color = Colors.white.withValues(alpha: 0.30),
+    );
+
+    // White outline
+    canvas.drawPath(
+      arrowPath,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.85)
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke,
+    );
+
+    // Tip dot
+    canvas.drawCircle(
+      Offset(cx, 4),
+      3,
+      Paint()..color = Colors.white.withValues(alpha: 0.7),
+    );
   }
 
   @override
   bool shouldRepaint(PointerPainter oldDelegate) => false;
+}
+
+class _WinBurst extends StatelessWidget {
+  const _WinBurst({required this.progress});
+
+  final Animation<double> progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      builder: (context, _) {
+        final p = progress.value;
+        if (p <= 0 || p >= 1) return const SizedBox.shrink();
+
+        final opacity = (1 - p).clamp(0.0, 1.0);
+        const angles = <double>[0, 45, 90, 135, 180, 225, 270, 315];
+
+        return SizedBox(
+          width: 320,
+          height: 320,
+          child: Stack(
+            children: [
+              for (final angle in angles)
+                Positioned.fill(
+                  child: Transform.rotate(
+                    angle: angle * math.pi / 180,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: Transform.translate(
+                        offset: Offset(0, -(36 + 70 * p)),
+                        child: Opacity(
+                          opacity: opacity,
+                          child: const Icon(
+                            Icons.auto_awesome,
+                            color: Colors.amber,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
