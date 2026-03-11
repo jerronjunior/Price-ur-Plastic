@@ -22,6 +22,7 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
   late TextEditingController _goldPointsController;
   late TextEditingController _maxBottlesPerDayController;
   late TextEditingController _cooldownSecondsController;
+  late TextEditingController _wheelGiftsController;
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -35,6 +36,7 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
     _goldPointsController = TextEditingController();
     _maxBottlesPerDayController = TextEditingController();
     _cooldownSecondsController = TextEditingController();
+    _wheelGiftsController = TextEditingController();
     _loadConfig();
   }
 
@@ -46,6 +48,7 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
     _goldPointsController.dispose();
     _maxBottlesPerDayController.dispose();
     _cooldownSecondsController.dispose();
+    _wheelGiftsController.dispose();
     super.dispose();
   }
 
@@ -59,6 +62,7 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
       _goldPointsController.text = config.goldPoints.toString();
       _maxBottlesPerDayController.text = config.maxBottlesPerDay.toString();
       _cooldownSecondsController.text = config.cooldownSeconds.toString();
+      _wheelGiftsController.text = config.wheelGifts.join('\n');
       setState(() => _isLoading = false);
     } catch (e) {
       setState(() => _isLoading = false);
@@ -85,6 +89,11 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
         goldPoints: int.parse(_goldPointsController.text),
         maxBottlesPerDay: int.parse(_maxBottlesPerDayController.text),
         cooldownSeconds: int.parse(_cooldownSecondsController.text),
+        wheelGifts: _wheelGiftsController.text
+            .split('\n')
+            .map((gift) => gift.trim())
+            .where((gift) => gift.isNotEmpty)
+            .toList(),
       );
 
       await _firestoreService.updateRewardConfig(config);
@@ -146,6 +155,35 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
                           label: 'Cooldown (seconds)',
                           hint: 'Time between scans',
                           icon: Icons.timer,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    _buildSectionCard(
+                      'Wheel Gifts',
+                      Icons.card_giftcard,
+                      [
+                        TextFormField(
+                          controller: _wheelGiftsController,
+                          minLines: 6,
+                          maxLines: 10,
+                          decoration: const InputDecoration(
+                            labelText: 'Reward Gifts',
+                            hintText: 'Enter one gift per line',
+                            prefixIcon: Icon(Icons.redeem),
+                            alignLabelWithHint: true,
+                          ),
+                          validator: (value) {
+                            final gifts = (value ?? '')
+                                .split('\n')
+                                .map((gift) => gift.trim())
+                                .where((gift) => gift.isNotEmpty)
+                                .toList();
+                            if (gifts.isEmpty) {
+                              return 'Add at least one reward gift';
+                            }
+                            return null;
+                          },
                         ),
                       ],
                     ),

@@ -5,6 +5,7 @@ class NotificationModel {
   final String time;
   final String icon; // icon name as string
   final String color; // color hex code
+  final bool isRead;
 
   NotificationModel({
     required this.id,
@@ -13,6 +14,7 @@ class NotificationModel {
     required this.time,
     required this.icon,
     required this.color,
+    this.isRead = false,
   });
 
   factory NotificationModel.fromMap(Map<String, dynamic> map) {
@@ -23,6 +25,7 @@ class NotificationModel {
       time: map['time'] ?? '',
       icon: map['icon'] ?? 'info',
       color: map['color'] ?? '#9E9E9E',
+      isRead: map['isRead'] as bool? ?? false,
     );
   }
 
@@ -34,6 +37,7 @@ class NotificationModel {
       'time': time,
       'icon': icon,
       'color': color,
+      'isRead': isRead,
     };
   }
 }

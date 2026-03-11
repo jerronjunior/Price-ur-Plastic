@@ -194,6 +194,27 @@ class FirestoreService {
     });
   }
 
+  Future<void> addAdminRewardNotification({
+    required String userName,
+    required String reward,
+  }) async {
+    final now = DateTime.now();
+    await _firestore.collection('admin_notifications').add({
+      'title': 'User Won Reward',
+      'subtitle': '$userName won $reward.',
+      'time': '${now.day.toString().padLeft(2, '0')}/'
+          '${now.month.toString().padLeft(2, '0')}/'
+          '${now.year} '
+          '${(now.hour % 12 == 0 ? 12 : now.hour % 12).toString()}:${now.minute.toString().padLeft(2, '0')} '
+          '${now.hour >= 12 ? 'PM' : 'AM'}',
+      'icon': 'reward',
+      'color': '#FF9800',
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'type': 'reward_win',
+    });
+  }
+
   // --- Leaderboard ---
 
   /// Top 10 users by totalPoints, real-time stream (legacy, kept for compat).
@@ -330,5 +351,18 @@ class FirestoreService {
       'totalBins': binsCount.count ?? 0,
       'totalBottlesRecycled': bottlesCount.count ?? 0,
     };
+  }
+
+  Stream<List<UserModel>> allUsersStream() {
+    return _firestore
+        .collection(_usersCollection)
+        .snapshots()
+        .map((snapshot) {
+      final users = snapshot.docs
+          .map((doc) => UserModel.fromMap(doc.id, doc.data()))
+          .toList();
+      users.sort((a, b) => b.totalPoints.compareTo(a.totalPoints));
+      return users;
+    });
   }
 }

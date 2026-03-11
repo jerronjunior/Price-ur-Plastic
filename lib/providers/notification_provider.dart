@@ -7,42 +7,70 @@ import '../models/notification_model.dart';
 class NotificationProvider with ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final List<NotificationModel> _notifications = [];
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
+  final List<NotificationModel> _userNotifications = [];
+  final List<NotificationModel> _adminNotifications = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _userSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _adminSubscription;
   String? _activeUserId;
+  bool _isAdmin = false;
   bool _hasUnread = false;
 
   List<NotificationModel> get notifications => List.unmodifiable(_notifications);
   bool get hasUnread => _hasUnread;
 
-  void bindToUser(String? userId) {
-    if (_activeUserId == userId) return;
+  void bindToUser(String? userId, {required bool isAdmin}) {
+    if (_activeUserId == userId && _isAdmin == isAdmin) return;
 
-    _subscription?.cancel();
-    _subscription = null;
+    _userSubscription?.cancel();
+    _adminSubscription?.cancel();
+    _userSubscription = null;
+    _adminSubscription = null;
     _activeUserId = userId;
+    _isAdmin = isAdmin;
 
     _notifications.clear();
+    _userNotifications.clear();
+    _adminNotifications.clear();
     _hasUnread = false;
     notifyListeners();
 
     if (userId == null) return;
 
-    _subscription = _firestore
+    _userSubscription = _firestore
         .collection('users')
         .doc(userId)
         .collection('notifications')
         .orderBy('createdAt', descending: true)
         .snapshots()
         .listen((snapshot) {
-      _notifications
+      _userNotifications
         ..clear()
         ..addAll(snapshot.docs.map((doc) {
           final map = Map<String, dynamic>.from(doc.data());
           map['id'] = doc.id;
           return NotificationModel.fromMap(map);
         }));
+      _mergeNotifications();
       notifyListeners();
     });
+
+    if (isAdmin) {
+      _adminSubscription = _firestore
+          .collection('admin_notifications')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .listen((snapshot) {
+        _adminNotifications
+          ..clear()
+          ..addAll(snapshot.docs.map((doc) {
+            final map = Map<String, dynamic>.from(doc.data());
+            map['id'] = doc.id;
+            return NotificationModel.fromMap(map);
+          }));
+        _mergeNotifications();
+        notifyListeners();
+      });
+    }
   }
 
   Future<void> addRewardNotification(String reward) async {
@@ -57,11 +85,12 @@ class NotificationProvider with ChangeNotifier {
       time: _formatTime(now),
       icon: 'reward',
       color: '#4CAF50',
+      isRead: false,
     );
 
     // Keep latest items first.
-    _notifications.insert(0, notification);
-    _hasUnread = true;
+    _userNotifications.insert(0, notification);
+    _mergeNotifications();
     notifyListeners();
 
     try {
@@ -79,9 +108,57 @@ class NotificationProvider with ChangeNotifier {
     }
   }
 
-  void markAllAsRead() {
+  Future<void> markAllAsRead() async {
     if (!_hasUnread) return;
-    _hasUnread = false;
+
+    final unreadUserIds = _userNotifications
+        .where((notification) => !notification.isRead)
+        .map((notification) => notification.id)
+        .toList();
+
+    if (_activeUserId != null && unreadUserIds.isNotEmpty) {
+      final batch = _firestore.batch();
+      for (final id in unreadUserIds) {
+        final ref = _firestore
+            .collection('users')
+            .doc(_activeUserId)
+            .collection('notifications')
+            .doc(id);
+        batch.update(ref, {'isRead': true});
+      }
+      try {
+        await batch.commit();
+      } catch (_) {
+        return;
+      }
+    }
+
+    if (_isAdmin) {
+      final unreadAdminIds = _adminNotifications
+          .where((notification) => !notification.isRead)
+          .map((notification) => notification.id)
+          .toList();
+      if (unreadAdminIds.isNotEmpty) {
+        final batch = _firestore.batch();
+        for (final id in unreadAdminIds) {
+          final ref = _firestore.collection('admin_notifications').doc(id);
+          batch.update(ref, {'isRead': true});
+        }
+        try {
+          await batch.commit();
+        } catch (_) {}
+      }
+    }
+
+    _userNotifications.setAll(
+      0,
+      _userNotifications.map(_markReadCopy),
+    );
+    _adminNotifications.setAll(
+      0,
+      _adminNotifications.map(_markReadCopy),
+    );
+    _mergeNotifications();
     notifyListeners();
   }
 
@@ -94,7 +171,28 @@ class NotificationProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    _subscription?.cancel();
+    _userSubscription?.cancel();
+    _adminSubscription?.cancel();
     super.dispose();
+  }
+
+  NotificationModel _markReadCopy(NotificationModel notification) {
+    if (notification.isRead) return notification;
+    return NotificationModel(
+      id: notification.id,
+      title: notification.title,
+      subtitle: notification.subtitle,
+      time: notification.time,
+      icon: notification.icon,
+      color: notification.color,
+      isRead: true,
+    );
+  }
+
+  void _mergeNotifications() {
+    _notifications
+      ..clear()
+      ..addAll([..._userNotifications, ..._adminNotifications]);
+    _hasUnread = _notifications.any((notification) => !notification.isRead);
   }
 }

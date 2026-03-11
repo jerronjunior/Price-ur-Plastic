@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+import '../../models/user_model.dart';
+import '../../providers/notification_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../core/theme.dart';
+import '../../widgets/notification_panel.dart';
 
 /// Admin dashboard home screen with stats and navigation.
 class AdminDashboardScreen extends StatefulWidget {
@@ -15,6 +19,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   Map<String, int>? _stats;
   bool _isLoading = true;
+  bool _showNotificationPanel = false;
 
   @override
   void initState() {
@@ -42,34 +47,87 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasUnread = context.watch<NotificationProvider>().hasUnread;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin Dashboard'),
         actions: [
+          IconButton(
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.notifications),
+                if (hasUnread)
+                  const Positioned(
+                    right: -1,
+                    top: -1,
+                    child: SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            onPressed: () {
+              if (!_showNotificationPanel) {
+                context.read<NotificationProvider>().markAllAsRead();
+              }
+              setState(() => _showNotificationPanel = !_showNotificationPanel);
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadStats,
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadStats,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Stats cards
-                    _buildStatsSection(),
-                    const SizedBox(height: 24),
-                    // Admin actions
-                    _buildAdminActionsSection(),
-                  ],
+      body: Stack(
+        children: [
+          RefreshIndicator(
+            onRefresh: _loadStats,
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildStatsSection(),
+                        const SizedBox(height: 24),
+                        _buildAdminActionsSection(),
+                        const SizedBox(height: 24),
+                        _buildUsersSection(),
+                      ],
+                    ),
+                  ),
+          ),
+          if (_showNotificationPanel)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => setState(() => _showNotificationPanel = false),
+                child: Container(
+                  color: Colors.black38,
+                  alignment: Alignment.centerRight,
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: NotificationPanel(
+                      notifications:
+                          context.watch<NotificationProvider>().notifications,
+                      onClose: () =>
+                          setState(() => _showNotificationPanel = false),
+                    ),
+                  ),
                 ),
               ),
+            ),
+        ],
       ),
     );
   }
@@ -249,6 +307,70 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildUsersSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'User Points And Bottles',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        StreamBuilder<List<UserModel>>(
+          stream: _firestoreService.allUsersStream(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('Failed to load users: ${snapshot.error}'),
+                ),
+              );
+            }
+            final users = snapshot.data ?? const <UserModel>[];
+            if (users.isEmpty) {
+              return const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('No users available'),
+                ),
+              );
+            }
+            return Column(
+              children: users.map((user) {
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
+                      child: Text(
+                        user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
+                        style: const TextStyle(color: AppTheme.primaryBlue),
+                      ),
+                    ),
+                    title: Text(user.name),
+                    subtitle: Text(user.email),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('${user.totalPoints} pts'),
+                        Text('${user.totalBottles} bottles'),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ],
     );
   }
 }

@@ -1,5 +1,16 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+const List<String> kDefaultWheelGifts = [
+  '50 pts',
+  'Badge',
+  '100 pts',
+  'Star ⭐',
+  '200 pts',
+  'Crown 👑',
+  '500 pts',
+  'Gift 🎁',
+];
+
 /// Configurable reward settings stored in Firestore.
 class RewardConfigModel {
   final String id;
@@ -9,6 +20,7 @@ class RewardConfigModel {
   final int goldPoints;
   final int maxBottlesPerDay;
   final int cooldownSeconds;
+  final List<String> wheelGifts;
   final DateTime? updatedAt;
 
   const RewardConfigModel({
@@ -19,6 +31,7 @@ class RewardConfigModel {
     this.goldPoints = 500,
     this.maxBottlesPerDay = 25,
     this.cooldownSeconds = 20,
+    this.wheelGifts = kDefaultWheelGifts,
     this.updatedAt,
   });
 
@@ -31,6 +44,11 @@ class RewardConfigModel {
       goldPoints: (map['goldPoints'] as num?)?.toInt() ?? 500,
       maxBottlesPerDay: (map['maxBottlesPerDay'] as num?)?.toInt() ?? 25,
       cooldownSeconds: (map['cooldownSeconds'] as num?)?.toInt() ?? 20,
+        wheelGifts: (map['wheelGifts'] as List<dynamic>?)
+            ?.map((gift) => gift.toString())
+            .where((gift) => gift.trim().isNotEmpty)
+            .toList() ??
+          kDefaultWheelGifts,
       updatedAt: map['updatedAt'] is Timestamp
           ? (map['updatedAt'] as Timestamp).toDate()
           : null,
@@ -44,6 +62,7 @@ class RewardConfigModel {
         'goldPoints': goldPoints,
         'maxBottlesPerDay': maxBottlesPerDay,
         'cooldownSeconds': cooldownSeconds,
+        'wheelGifts': wheelGifts,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -54,6 +73,7 @@ class RewardConfigModel {
     int? goldPoints,
     int? maxBottlesPerDay,
     int? cooldownSeconds,
+    List<String>? wheelGifts,
   }) {
     return RewardConfigModel(
       id: id,
@@ -63,6 +83,7 @@ class RewardConfigModel {
       goldPoints: goldPoints ?? this.goldPoints,
       maxBottlesPerDay: maxBottlesPerDay ?? this.maxBottlesPerDay,
       cooldownSeconds: cooldownSeconds ?? this.cooldownSeconds,
+      wheelGifts: wheelGifts ?? this.wheelGifts,
       updatedAt: DateTime.now(),
     );
   }

@@ -37,7 +37,10 @@ class EcoRecycleApp extends StatelessWidget {
           create: (_) => NotificationProvider(),
           update: (_, auth, notifications) {
             final provider = notifications ?? NotificationProvider();
-            provider.bindToUser(auth.userId);
+            provider.bindToUser(
+              auth.userId,
+              isAdmin: auth.user?.isAdmin ?? false,
+            );
             return provider;
           },
         ),
