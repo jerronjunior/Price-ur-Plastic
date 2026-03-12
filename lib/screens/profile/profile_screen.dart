@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import '../../core/theme.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
@@ -101,30 +102,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // Upload to Firebase Storage
       final userId = context.read<AuthProvider>().userId;
-      if (userId == null) return;
+      if (userId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please log in again and try.')),
+          );
+        }
+        return;
+      }
 
       final imageUrl = await _storageService.uploadProfileImage(
         userId,
         File(pickedFile.path),
       );
 
-      if (imageUrl != null && mounted) {
-        // Update user profile with new image URL
-        await context.read<AuthProvider>().updateProfileImage(imageUrl);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile picture updated!')),
-          );
-        }
-      } else if (mounted) {
+      // Save image URL in Firestore user document.
+      await context.read<AuthProvider>().updateProfileImage(imageUrl);
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to upload image')),
+          const SnackBar(content: Text('Profile picture updated!')),
+        );
+      }
+    } on FirebaseException catch (e) {
+      if (mounted) {
+        final errorText = e.message ?? 'Failed to upload profile picture.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorText)),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(content: Text('Failed to upload profile picture: $e')),
         );
       }
     } finally {

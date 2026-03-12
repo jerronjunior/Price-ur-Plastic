@@ -13,5 +13,6 @@ Flutter mobile app to reduce plastic bottle waste. Users scan bottle barcodes, c
 1. `flutter pub get`
 2. **Firebase**: Run `dart run flutterfire_cli:flutterfire configure` (adds Android/iOS and generates `lib/firebase_options.dart`). Replace the placeholder `lib/firebase_options.dart` with the generated file.
 3. **Firestore**: In Firebase Console, deploy rules from `firestore.rules` and indexes from `firestore.indexes.json`.
-4. **Bins**: Create at least one document in the `bins` collection (e.g. `binId`: "BIN001", `locationName`: "Main Lobby") so that scanning a QR with that ID works.
-5. Run `flutter run`
+4. **Storage**: Deploy rules from `storage.rules` so signed-in users can upload profile pictures to `profile_images/{uid}/...`.
+5. **Bins**: Create at least one document in the `bins` collection (e.g. `binId`: "BIN001", `locationName`: "Main Lobby") so that scanning a QR with that ID works.
+6. Run `flutter run`

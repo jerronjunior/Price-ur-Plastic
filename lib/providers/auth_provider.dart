@@ -232,9 +232,15 @@ class AuthProvider with ChangeNotifier {
   /// Update profile image.
   Future<void> updateProfileImage(String? imageUrl) async {
     final uid = userId;
-    if (uid == null || _user == null) return;
+    if (uid == null) return;
     await _firestore.updateProfileImage(uid, imageUrl);
-    _user = _user!.copyWith(profileImageUrl: imageUrl);
+    if (_user != null) {
+      _user = _user!.copyWith(profileImageUrl: imageUrl);
+    } else if (firebaseUser != null) {
+      _user = _fallbackUserFromFirebase(firebaseUser!).copyWith(
+        profileImageUrl: imageUrl,
+      );
+    }
     notifyListeners();
   }
 
