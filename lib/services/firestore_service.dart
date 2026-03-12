@@ -257,8 +257,18 @@ class FirestoreService {
           final bottles = raw['totalBottles'];
           raw['totalBottles'] = bottles is num ? bottles.toInt() : 0;
 
-          raw['name'] ??= 'User';
-          raw['email'] ??= '';
+            final rawEmail = (raw['email'] ?? '').toString().trim();
+            final emailPrefix = rawEmail.contains('@')
+              ? rawEmail.split('@').first
+              : rawEmail;
+            final rawName = (raw['name'] ?? '').toString().trim();
+
+            // Keep leaderboard names non-empty (important for admin users
+            // created from console with blank name fields).
+            raw['name'] = rawName.isNotEmpty
+              ? rawName
+              : (emailPrefix.isNotEmpty ? emailPrefix : 'User');
+            raw['email'] = rawEmail;
 
           all.add(UserModel.fromMap(doc.id, raw));
         } catch (e) {

@@ -9,6 +9,20 @@ import '../../services/firestore_service.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/notification_panel.dart';
 
+String _displayNameFor(UserModel user) {
+  final trimmedName = user.name.trim();
+  if (trimmedName.isNotEmpty) return trimmedName;
+
+  final trimmedEmail = user.email.trim();
+  if (trimmedEmail.contains('@')) {
+    final emailPrefix = trimmedEmail.split('@').first.trim();
+    if (emailPrefix.isNotEmpty) return emailPrefix;
+  }
+
+  if (trimmedEmail.isNotEmpty) return trimmedEmail;
+  return 'User';
+}
+
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
 
@@ -353,6 +367,7 @@ class _PodiumSlot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayName = _displayNameFor(user);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -374,9 +389,7 @@ class _PodiumSlot extends StatelessWidget {
           ),
           child: Center(
             child: Text(
-              user.name.isNotEmpty
-                  ? user.name[0].toUpperCase()
-                  : '?',
+              displayName[0].toUpperCase(),
               style: TextStyle(
                 color: Colors.white,
                 fontSize: rank == 1 ? 26 : 20,
@@ -391,7 +404,7 @@ class _PodiumSlot extends StatelessWidget {
         SizedBox(
           width: 90,
           child: Text(
-            isMe ? '${user.name} (You)' : user.name,
+            isMe ? '$displayName (You)' : displayName,
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -449,6 +462,7 @@ class _MyRankBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayName = _displayNameFor(user);
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -471,7 +485,7 @@ class _MyRankBanner extends StatelessWidget {
                         color: Color(0xFF1565C0),
                         fontSize: 11,
                         fontWeight: FontWeight.w600)),
-                Text(user.name,
+                Text(displayName,
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 14)),
               ],
@@ -547,6 +561,7 @@ class _RankRowState extends State<_RankRow>
     final rank = widget.rank;
     final user = widget.user;
     final isMe = widget.isMe;
+    final displayName = _displayNameFor(user);
 
     // Rank badge color
     Color badgeColor;
@@ -634,9 +649,7 @@ class _RankRowState extends State<_RankRow>
                   ),
                   child: Center(
                     child: Text(
-                      user.name.isNotEmpty
-                          ? user.name[0].toUpperCase()
-                          : '?',
+                      displayName[0].toUpperCase(),
                       style: TextStyle(
                         color: isMe
                             ? const Color(0xFF1565C0)
@@ -658,7 +671,7 @@ class _RankRowState extends State<_RankRow>
                         children: [
                           Flexible(
                             child: Text(
-                              user.name,
+                              displayName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
