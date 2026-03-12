@@ -17,7 +17,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
   bool _loading = false;
   String? _error;
 
@@ -26,6 +28,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -133,6 +136,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   validator: (v) {
                     if (v == null || v.isEmpty) return 'Enter password';
                     if (v.length < 6) return 'Password at least 6 characters';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _confirmPasswordController,
+                  obscureText: _obscureConfirmPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Confirm Password',
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(
+                        () => _obscureConfirmPassword = !_obscureConfirmPassword,
+                      ),
+                    ),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.isEmpty) {
+                      return 'Confirm your password';
+                    }
+                    if (v != _passwordController.text) {
+                      return 'Passwords do not match';
+                    }
                     return null;
                   },
                 ),
