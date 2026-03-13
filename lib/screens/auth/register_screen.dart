@@ -53,7 +53,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => _error = msg);
       return;
     }
-    context.go('/');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Registration successful. Please log in.')),
+    );
+    context.go('/login');
   }
 
   @override

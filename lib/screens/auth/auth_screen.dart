@@ -61,7 +61,21 @@ class _AuthScreenState extends State<AuthScreen> {
       setState(() => _error = msg);
       return;
     }
-    context.go('/');
+
+    if (_isLogin) {
+      context.go('/');
+      return;
+    }
+
+    setState(() {
+      _isLogin = true;
+      _passwordController.clear();
+      _error = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Registration successful. Please log in.')),
+    );
+    context.go('/login');
   }
 
   Future<void> _forgotPassword() async {

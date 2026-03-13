@@ -126,8 +126,13 @@ class AuthProvider with ChangeNotifier {
               );
         notifyListeners();
       }
-      // Set flag to show welcome message
-      _justLoggedIn = true;
+
+      // Firebase signs in automatically after registration.
+      // Sign out so the user returns to login and signs in explicitly.
+      await _auth.signOut();
+      _user = null;
+      _justLoggedIn = false;
+      notifyListeners();
       return null;
     } on FirebaseAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Registration failed.');
