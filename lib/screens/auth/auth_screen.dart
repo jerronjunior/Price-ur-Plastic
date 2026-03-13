@@ -64,6 +64,36 @@ class _AuthScreenState extends State<AuthScreen> {
     context.go('/');
   }
 
+  Future<void> _forgotPassword() async {
+    FocusScope.of(context).unfocus();
+    final email = _emailController.text.trim();
+
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() {
+        _error = 'Enter a valid email to reset password.';
+      });
+      return;
+    }
+
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
+
+    final msg = await context.read<AuthProvider>().sendPasswordResetEmail(email);
+    if (!mounted) return;
+
+    setState(() => _loading = false);
+    if (msg != null) {
+      setState(() => _error = msg);
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Password reset email sent to $email')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -283,6 +313,14 @@ class _AuthScreenState extends State<AuthScreen> {
                             return null;
                           },
                         ),
+                        if (_isLogin)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: _loading ? null : _forgotPassword,
+                              child: const Text('Forgot password?'),
+                            ),
+                          ),
                         const SizedBox(height: 32),
 
                         // Submit button
