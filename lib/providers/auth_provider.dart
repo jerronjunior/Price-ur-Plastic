@@ -270,4 +270,19 @@ class AuthProvider with ChangeNotifier {
       return 'Failed to change password. Please try again.';
     }
   }
+
+  /// Sends password reset email.
+  Future<String?> sendPasswordResetEmail(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email);
+      return null;
+    } on FirebaseAuthException catch (e) {
+      return _friendlyAuthMessage(
+        e,
+        fallback: 'Failed to send password reset email.',
+      );
+    } catch (_) {
+      return 'Failed to send password reset email. Please try again.';
+    }
+  }
 }
