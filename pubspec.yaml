@@ -37,6 +37,25 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.1
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: assets/images/logo.jpeg
+    background_color: "#ffffff"
+    theme_color: "#1565C0"
+  windows:
+    generate: true
+    image_path: assets/images/logo.jpeg
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: assets/images/logo.jpeg
+  image_path: assets/images/logo.jpeg
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true
