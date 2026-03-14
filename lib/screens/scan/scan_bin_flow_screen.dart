@@ -46,7 +46,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       // Show success and return after 2 seconds
       await Future.delayed(const Duration(seconds: 2));
       if (mounted) {
-        context.pop();
+        context.go('/');
       }
     } catch (e) {
       if (!mounted) return;
@@ -110,7 +110,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
     return ScanBinScreen(
       onScanned: _onBinScanned,
-      onBack: () => context.pop(),
+      onBack: () => context.go('/'),
     );
   }
 }

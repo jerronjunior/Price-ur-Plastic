@@ -319,7 +319,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Column(
                           children: [
                             Text(
-                              'Help for More bottle Images & Earn Points',
+                              'Scan bin QR and drop bottles to earn points',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 14,

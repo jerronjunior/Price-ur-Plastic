@@ -39,7 +39,9 @@ class AppBottomNavBar extends StatelessWidget {
           _BottomNavItem(
             icon: Icons.qr_code_2,
             label: 'Scan',
-            isActive: currentRoute == '/scan' || currentRoute == '/scan-flow',
+            isActive: currentRoute == '/scan' ||
+                currentRoute == '/scan-flow' ||
+                currentRoute == '/scan-bin',
             onTap: () => context.go('/scan'),
           ),
           _BottomNavItem(

@@ -7,8 +7,6 @@ import '../screens/home/home_screen.dart';
 import '../screens/leaderboard/leaderboard_screen.dart';
 import '../screens/profile/profile_screen.dart';
 import '../screens/rewards/rewards_screen.dart';
-import '../screens/scan/scan_landing_screen.dart';
-import '../screens/scan/scan_flow_screen.dart';
 import '../screens/scan/scan_bin_flow_screen.dart';
 import '../screens/admin/admin_dashboard_screen.dart';
 import '../screens/admin/manage_bins_screen.dart';
@@ -45,11 +43,11 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       ),
       GoRoute(
         path: '/scan',
-        builder: (_, __) => const ScanLandingScreen(),
+        builder: (_, __) => const ScanBinFlowScreen(),
       ),
       GoRoute(
         path: '/scan-flow',
-        builder: (_, __) => const ScanFlowScreen(),
+        builder: (_, __) => const ScanBinFlowScreen(),
       ),
       GoRoute(
         path: '/scan-bin',
