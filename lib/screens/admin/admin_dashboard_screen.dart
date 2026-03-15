@@ -236,34 +236,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () => context.push('/scan-bin'),
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan Bin'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor: AppTheme.primaryGreen,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => context.push('/admin/bins'),
-                icon: const Icon(Icons.add),
-                label: const Text('Add Bin'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
         _buildActionCard(
           'Manage Bins',
           'Add, edit, or remove recycling bins',

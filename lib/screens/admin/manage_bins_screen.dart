@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/firestore_service.dart';
 import '../../models/bin_model.dart';
 import '../../core/theme.dart';
@@ -13,6 +14,94 @@ class ManageBinsScreen extends StatefulWidget {
 
 class _ManageBinsScreenState extends State<ManageBinsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
+
+  void _showAddOptionsSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.qr_code_scanner),
+                  title: const Text('Scan QR and Add Bin'),
+                  subtitle: const Text('Scan a bin QR code, then save location'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _openScanAndAddFlow();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.add),
+                  title: const Text('Add Bin Manually'),
+                  subtitle: const Text('Type QR value and location manually'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showAddBinDialog();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openScanAndAddFlow() async {
+    final scannedValue = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        bool detected = false;
+        return SizedBox(
+          height: MediaQuery.of(sheetContext).size.height * 0.8,
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Scan Bin QR',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: MobileScanner(
+                  onDetect: (capture) {
+                    if (detected || capture.barcodes.isEmpty) return;
+                    final value = capture.barcodes.first.rawValue?.trim();
+                    if (value == null || value.isEmpty) return;
+                    detected = true;
+                    Navigator.pop(sheetContext, value);
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || scannedValue == null || scannedValue.isEmpty) return;
+    _showAddBinDialog(prefilledQrValue: scannedValue);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +163,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
+                  isThreeLine: true,
                   leading: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -92,7 +182,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
                     ),
                   ),
                   subtitle: Text(
-                    'Bin ID: ${bin.binId}',
+                    'Bin ID: ${bin.binId}\nQR: ${bin.qrCode}',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey[600],
@@ -118,7 +208,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddBinDialog,
+        onPressed: _showAddOptionsSheet,
         backgroundColor: AppTheme.primaryGreen,
         icon: const Icon(Icons.add),
         label: const Text('Add Bin'),
@@ -126,8 +216,8 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
     );
   }
 
-  void _showAddBinDialog() {
-    final binIdController = TextEditingController();
+  void _showAddBinDialog({String? prefilledQrValue}) {
+    final binIdController = TextEditingController(text: prefilledQrValue ?? '');
     final locationController = TextEditingController();
 
     showDialog(
@@ -140,8 +230,8 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
             TextField(
               controller: binIdController,
               decoration: const InputDecoration(
-                labelText: 'Bin ID / QR Code',
-                hintText: 'e.g., BIN001',
+                labelText: 'QR Code Value',
+                hintText: 'e.g., BIN001 or full QR text',
                 prefixIcon: Icon(Icons.qr_code),
               ),
             ),
@@ -178,7 +268,9 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
                 if (context.mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Bin added successfully')),
+                    const SnackBar(
+                      content: Text('Bin and QR saved to Firebase successfully'),
+                    ),
                   );
                 }
               } catch (e) {

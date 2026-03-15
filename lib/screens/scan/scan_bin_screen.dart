@@ -77,6 +77,7 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
         await firestore.setBin(
           BinModel(
             binId: code,
+            qrCode: code,
             locationName: 'User Added Bin',
           ),
         );

@@ -299,7 +299,11 @@ class _BinScannerState extends State<_BinScanner> {
         // Bin not registered yet — create it with a clean sanitised ID.
         // Sanitise: replace spaces/special chars so Firestore path is valid.
         final safeId = code.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
-        final newBin = BinModel(binId: safeId, locationName: 'Bin $safeId');
+        final newBin = BinModel(
+          binId: safeId,
+          qrCode: code,
+          locationName: 'Bin $safeId',
+        );
         try {
           await firestore.setBin(newBin).timeout(const Duration(seconds: 6));
         } catch (writeErr) {

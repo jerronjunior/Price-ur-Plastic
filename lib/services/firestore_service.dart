@@ -14,6 +14,12 @@ class FirestoreService {
   static const String _binsCollection = 'bins';
   static const String _rewardConfigCollection = 'reward_config';
 
+  String _safeBinDocId(String raw) {
+    final trimmed = raw.trim();
+    final cleaned = trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+    return cleaned.isEmpty ? 'bin_${DateTime.now().millisecondsSinceEpoch}' : cleaned;
+  }
+
   // --- Users ---
 
   /// Create or overwrite user document after registration.
@@ -158,20 +164,38 @@ class FirestoreService {
 
   /// Get bin by ID (for QR scan).
   Future<BinModel?> getBin(String binId) async {
-    final doc =
-        await _firestore.collection(_binsCollection).doc(binId).get();
-    if (doc.exists && doc.data() != null) {
-      return BinModel.fromMap(doc.id, doc.data()!);
+    final idCandidate = binId.trim();
+    if (idCandidate.isNotEmpty && !idCandidate.contains('/')) {
+      final byIdDoc = await _firestore.collection(_binsCollection).doc(idCandidate).get();
+      if (byIdDoc.exists && byIdDoc.data() != null) {
+        return BinModel.fromMap(byIdDoc.id, byIdDoc.data()!);
+      }
+    }
+
+    // Backstop lookup for bins where QR is stored in field instead of doc id.
+    final byQr = await _firestore
+        .collection(_binsCollection)
+        .where('qrCode', isEqualTo: binId)
+        .limit(1)
+        .get();
+    if (byQr.docs.isNotEmpty) {
+      final doc = byQr.docs.first;
+      return BinModel.fromMap(doc.id, doc.data());
     }
     return null;
   }
 
   /// Create bin (admin/seed use).
   Future<void> setBin(BinModel bin) async {
+    final docId = _safeBinDocId(bin.binId);
     await _firestore
         .collection(_binsCollection)
-        .doc(bin.binId)
-        .set(bin.toMap(), SetOptions(merge: true));
+        .doc(docId)
+        .set({
+          ...bin.toMap(),
+          'binId': docId,
+          'qrCode': bin.qrCode,
+        }, SetOptions(merge: true));
   }
 
   /// Increment user points by a specific amount (for bin scans, etc).
@@ -296,21 +320,28 @@ class FirestoreService {
 
   /// Add a new bin (admin).
   Future<void> addBin(String binId, String locationName) async {
-    await _firestore.collection(_binsCollection).doc(binId).set({
+    final qrCode = binId.trim();
+    final docId = _safeBinDocId(qrCode);
+    await _firestore.collection(_binsCollection).doc(docId).set({
+      'binId': docId,
+      'qrCode': qrCode,
       'locationName': locationName,
+      'createdAt': FieldValue.serverTimestamp(),
     });
   }
 
   /// Update bin location (admin).
   Future<void> updateBin(String binId, String locationName) async {
-    await _firestore.collection(_binsCollection).doc(binId).update({
+    final docId = _safeBinDocId(binId);
+    await _firestore.collection(_binsCollection).doc(docId).update({
       'locationName': locationName,
     });
   }
 
   /// Delete bin (admin).
   Future<void> deleteBin(String binId) async {
-    await _firestore.collection(_binsCollection).doc(binId).delete();
+    final docId = _safeBinDocId(binId);
+    await _firestore.collection(_binsCollection).doc(docId).delete();
   }
 
   // --- Admin: Reward Configuration ---
