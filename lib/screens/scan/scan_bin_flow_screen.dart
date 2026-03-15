@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
 import 'camera_confirm_screen.dart';
@@ -18,7 +19,10 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
   bool _cameraConfirming = false;
   bool _processing = false;
   bool _showSuccess = false;
+  bool _showSummary = false;
   int _bottleCount = 0;
+  int _totalPoints = 0;
+  int _totalBottles = 0;
   String? _lastBinId;
 
   Future<void> _onBinScanned(String binId) async {
@@ -33,6 +37,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     setState(() {
       _cameraConfirming = false;
       _processing = true;
+      _showSummary = false;
     });
 
     try {
@@ -68,6 +73,41 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     }
   }
 
+  Future<void> _finishSession() async {
+    setState(() {
+      _processing = true;
+    });
+
+    try {
+      final auth = context.read<AuthProvider>();
+      final userId = auth.userId;
+      if (userId == null) {
+        if (mounted) context.go('/login');
+        return;
+      }
+
+      final firestore = context.read<FirestoreService>();
+      final latestUser = await firestore.getUser(userId);
+
+      if (!mounted) return;
+      setState(() {
+        _totalPoints = latestUser?.totalPoints ?? auth.user?.totalPoints ?? 0;
+        _totalBottles = latestUser?.totalBottles ?? auth.user?.totalBottles ?? 0;
+        _showSummary = true;
+        _showSuccess = false;
+        _processing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _processing = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading points summary: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_cameraConfirming && _lastBinId != null) {
@@ -93,6 +133,84 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
         },
         countdownSeconds: 15,
         autoSaveBottleRecord: false,
+      );
+    }
+
+    if (_showSummary) {
+      final sessionPoints = _bottleCount * AppConstants.pointsPerBottle;
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.emoji_events,
+                  size: 88,
+                  color: Color(0xFFFFA000),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Recycling Complete',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'You added $_bottleCount bottle${_bottleCount == 1 ? '' : 's'} in this session.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 28),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F8FF),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFD7E3FF)),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Session Points: +$sessionPoints',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: const Color(0xFF1565C0),
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Total Points: $_totalPoints',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Total Bottles: $_totalBottles',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.home),
+                    label: const Text('Go Home'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    onPressed: () => context.go('/'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
@@ -153,7 +271,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
                           backgroundColor: const Color(0xFF4CAF50),
                           foregroundColor: Colors.white,
                         ),
-                        onPressed: () => context.go('/'),
+                        onPressed: _processing ? null : _finishSession,
                       ),
                     ),
                   ],
