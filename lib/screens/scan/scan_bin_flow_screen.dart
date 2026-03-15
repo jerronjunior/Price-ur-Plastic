@@ -15,9 +15,16 @@ class ScanBinFlowScreen extends StatefulWidget {
 
 class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
   bool _processing = false;
-  String? _successMessage;
+  bool _showSuccess = false;
+  int _bottleCount = 0;
+  String? _lastBinId;
 
   Future<void> _onBinScanned(String binId) async {
+    _lastBinId = binId;
+    await _recordBottle(binId);
+  }
+
+  Future<void> _recordBottle(String binId) async {
     setState(() {
       _processing = true;
     });
@@ -30,40 +37,34 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       }
 
       final firestore = context.read<FirestoreService>();
-      
+
       // Keep points and bottle count in sync: +1 point and +1 bottle.
       await firestore.incrementUserPointsAndBottles(userId);
-      
+
       // Log the bin scan
       await firestore.logBinScan(userId, binId);
 
       if (!mounted) return;
       setState(() {
-        _successMessage = 'Bottle recorded successfully!\n+1 point and +1 bottle';
+        _bottleCount++;
+        _showSuccess = true;
         _processing = false;
       });
-
-      // Show success and return after 2 seconds
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) {
-        context.go('/');
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _processing = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_successMessage != null) {
+    if (_showSuccess) {
+      final pts = _bottleCount;
       return Scaffold(
         body: Center(
           child: Padding(
@@ -78,9 +79,48 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  _successMessage!,
+                  'Bottle${pts > 1 ? 's' : ''} recorded successfully!',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '+$pts point${pts > 1 ? 's' : ''} and +$pts bottle${pts > 1 ? 's' : ''}',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(color: const Color(0xFF4CAF50), fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 48),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        onPressed: _processing
+                            ? null
+                            : () => _recordBottle(_lastBinId!),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.check),
+                        label: const Text('Finished'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          backgroundColor: const Color(0xFF4CAF50),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () => context.go('/'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
