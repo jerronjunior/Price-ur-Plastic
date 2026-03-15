@@ -11,20 +11,33 @@ import '../screens/scan/scan_bin_flow_screen.dart';
 import '../screens/admin/admin_dashboard_screen.dart';
 import '../screens/admin/manage_bins_screen.dart';
 import '../screens/admin/manage_rewards_screen.dart';
+import '../screens/startup/splash_screen.dart';
+import '../screens/startup/welcome_screen.dart';
 
 /// App routing with auth redirect.
 GoRouter createAppRouter(AuthProvider authProvider) {
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: '/splash',
     refreshListenable: GoRouterRefreshStream(authProvider.authStateChanges),
     redirect: (context, state) {
       final loggedIn = authProvider.isLoggedIn;
-      final onAuth = state.matchedLocation == '/login' || state.matchedLocation == '/register';
+      final location = state.matchedLocation;
+      final onAuth = location == '/login' || location == '/register';
+      final onStartup = location == '/splash' || location == '/welcome';
+      if (onStartup) return null;
       if (!loggedIn && !onAuth) return '/login';
       if (loggedIn && onAuth) return '/';
       return null;
     },
     routes: [
+      GoRoute(
+        path: '/splash',
+        builder: (_, __) => const SplashScreen(),
+      ),
+      GoRoute(
+        path: '/welcome',
+        builder: (_, __) => const WelcomeScreen(),
+      ),
       GoRoute(
         path: '/',
         builder: (_, __) => const HomeScreen(),

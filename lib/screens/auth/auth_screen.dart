@@ -135,7 +135,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   children: [
                     // App Logo
                     Image.asset(
-                      'assets/images/logo.png',
+                      'assets/images/logo.jpeg',
                       width: 100,
                       height: 100,
                       errorBuilder: (context, error, stackTrace) {

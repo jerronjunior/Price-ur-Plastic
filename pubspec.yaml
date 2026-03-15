@@ -61,6 +61,5 @@ flutter:
   uses-material-design: true
 
   # Assets
-  # Uncomment after placing logo.png in assets/images/ folder
-  # assets:
-  #   - assets/images/logo.png
+  assets:
+    - assets/images/logo.jpeg
