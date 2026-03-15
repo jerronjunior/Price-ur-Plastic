@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
+import 'camera_confirm_screen.dart';
 import 'scan_bin_screen.dart';
 
 /// Orchestrates bin barcode scanning flow.
@@ -14,18 +15,23 @@ class ScanBinFlowScreen extends StatefulWidget {
 }
 
 class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
+  bool _cameraConfirming = false;
   bool _processing = false;
   bool _showSuccess = false;
   int _bottleCount = 0;
   String? _lastBinId;
 
   Future<void> _onBinScanned(String binId) async {
-    _lastBinId = binId;
-    await _recordBottle(binId);
+    setState(() {
+      _lastBinId = binId;
+      _cameraConfirming = true;
+      _showSuccess = false;
+    });
   }
 
   Future<void> _recordBottle(String binId) async {
     setState(() {
+      _cameraConfirming = false;
       _processing = true;
     });
 
@@ -48,6 +54,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       setState(() {
         _bottleCount++;
         _showSuccess = true;
+        _cameraConfirming = false;
         _processing = false;
       });
     } catch (e) {
@@ -63,6 +70,32 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_cameraConfirming && _lastBinId != null) {
+      return CameraConfirmScreen(
+        binId: _lastBinId!,
+        onSuccess: () => _recordBottle(_lastBinId!),
+        onTimeout: () {
+          if (!mounted) return;
+          setState(() {
+            _cameraConfirming = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No bottle detected within 15 seconds. Please scan the bin again.'),
+            ),
+          );
+        },
+        onBack: () {
+          if (!mounted) return;
+          setState(() {
+            _cameraConfirming = false;
+          });
+        },
+        countdownSeconds: 15,
+        autoSaveBottleRecord: false,
+      );
+    }
+
     if (_showSuccess) {
       final pts = _bottleCount;
       return Scaffold(
@@ -104,7 +137,10 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
                         ),
                         onPressed: _processing
                             ? null
-                            : () => _recordBottle(_lastBinId!),
+                            : () => setState(() {
+                                  _cameraConfirming = true;
+                                  _showSuccess = false;
+                                }),
                       ),
                     ),
                     const SizedBox(width: 16),

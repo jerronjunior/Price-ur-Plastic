@@ -6,10 +6,10 @@ import 'package:camera/camera.dart';
 /// - Debounces trigger to avoid false positives from single noisy frames.
 /// - Handles variable bytesPerRow safely on all devices.
 class ArrowDetectionImpl {
-  ArrowDetectionImpl({required void Function() onArrowDisappeared})
-      : _onArrowDisappeared = onArrowDisappeared;
+  ArrowDetectionImpl({required void Function() onInsertDetected})
+      : _onInsertDetected = onInsertDetected;
 
-  final void Function() _onArrowDisappeared;
+  final void Function() _onInsertDetected;
 
   List<int>? _referencePixels;
   bool _triggered = false;
@@ -24,11 +24,14 @@ class ArrowDetectionImpl {
   /// Prevents false positives from a single noisy frame.
   static const int _consecutiveRequired = 3;
   int _consecutiveCount = 0;
+  bool _wasOccluded = false;
+  int _visibleAgainCount = 0;
 
   static const int _sampleStep = 6;
 
   /// Lower threshold = more sensitive. 0.25 works well for arrow occlusion.
   static const double _differenceThreshold = 0.25;
+  static const double _visibleThreshold = 0.12;
 
   void processImage(CameraImage image) {
     if (_triggered || _disposed) return;
@@ -56,15 +59,26 @@ class ArrowDetectionImpl {
 
       final diff = _computeDifference(_referencePixels!, pixels);
 
-      if (diff >= _differenceThreshold) {
-        _consecutiveCount++;
-        if (_consecutiveCount >= _consecutiveRequired) {
-          _triggered = true;
-          _onArrowDisappeared();
+      if (!_wasOccluded) {
+        if (diff >= _differenceThreshold) {
+          _consecutiveCount++;
+          if (_consecutiveCount >= _consecutiveRequired) {
+            _wasOccluded = true;
+            _consecutiveCount = 0;
+          }
+        } else {
+          _consecutiveCount = 0;
         }
       } else {
-        // Reset consecutive count on a clean frame
-        _consecutiveCount = 0;
+        if (diff <= _visibleThreshold) {
+          _visibleAgainCount++;
+          if (_visibleAgainCount >= _consecutiveRequired) {
+            _triggered = true;
+            _onInsertDetected();
+          }
+        } else {
+          _visibleAgainCount = 0;
+        }
       }
     } catch (_) {
       // Silently ignore any platform-specific image processing errors
@@ -85,8 +99,6 @@ class ArrowDetectionImpl {
     final top = (h * 0.35).round();
     final rw = (w * 0.30).round().clamp(1, w - left);
     final rh = (h * 0.25).round().clamp(1, h - top);
-
-    final List<int> out = [];
 
     if (Platform.isAndroid) {
       // YUV420: luminance is the Y plane (plane 0)
@@ -159,5 +171,7 @@ class ArrowDetectionImpl {
     _disposed = true;
     _triggered = true;
     _referencePixels = null;
+    _wasOccluded = false;
+    _visibleAgainCount = 0;
   }
 }

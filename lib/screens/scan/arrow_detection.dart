@@ -1,10 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'arrow_detection_impl.dart';
 
 /// Overlay showing the "arrow region" and running frame-difference detection.
-/// When pixel change in region exceeds threshold, calls [onArrowDisappeared].
+/// When the icon region is hidden and then visible again, calls [onInsertDetected].
 ///
 /// IMPORTANT: This widget manages its own image stream lifecycle.
 /// The [controller] must be fully initialized before passing it here,
@@ -13,13 +12,13 @@ class ArrowRegionOverlay extends StatefulWidget {
   const ArrowRegionOverlay({
     super.key,
     required this.controller,
-    required this.onArrowDisappeared,
+    required this.onInsertDetected,
     required this.countdown,
     required this.disabled,
   });
 
   final CameraController controller;
-  final VoidCallback onArrowDisappeared;
+  final VoidCallback onInsertDetected;
   final int countdown;
   final bool disabled;
 
@@ -42,9 +41,9 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
     if (_disposed) return;
 
     _detector = ArrowDetectionImpl(
-      onArrowDisappeared: () {
+      onInsertDetected: () {
         if (!_disposed && !widget.disabled) {
-          widget.onArrowDisappeared();
+          widget.onInsertDetected();
         }
       },
     );
@@ -112,7 +111,7 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
             ),
             const SizedBox(height: 6),
             Text(
-              widget.disabled ? 'Detected!' : 'Insert bottle here',
+              widget.disabled ? 'Detected!' : 'Hide and show icon',
               style: TextStyle(
                 color: widget.disabled ? Colors.grey : Colors.white,
                 fontSize: 14,

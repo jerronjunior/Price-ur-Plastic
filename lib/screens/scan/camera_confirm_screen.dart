@@ -21,10 +21,12 @@ class CameraConfirmScreen extends StatefulWidget {
   const CameraConfirmScreen({
     super.key,
     this.binId = '',
-    required this.barcode,
+    this.barcode = '',
     required this.onSuccess,
     this.onTimeout,
     required this.onBack,
+    this.countdownSeconds = AppConstants.scanCountdownSeconds,
+    this.autoSaveBottleRecord = true,
   });
 
   final String binId;
@@ -32,6 +34,8 @@ class CameraConfirmScreen extends StatefulWidget {
   final VoidCallback onSuccess;
   final VoidCallback? onTimeout;
   final VoidCallback onBack;
+  final int countdownSeconds;
+  final bool autoSaveBottleRecord;
 
   @override
   State<CameraConfirmScreen> createState() => _CameraConfirmScreenState();
@@ -42,7 +46,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   CameraController? _controller;
   bool _initialized = false;
   String? _error;
-  int _countdown = AppConstants.scanCountdownSeconds;
+  late int _countdown;
   Timer? _countdownTimer;
   bool _confirmed = false;
   bool _saving = false;
@@ -58,6 +62,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   @override
   void initState() {
     super.initState();
+    _countdown = widget.countdownSeconds;
     WidgetsBinding.instance.addObserver(this);
     _initCamera();
   }
@@ -206,11 +211,17 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
     });
   }
 
-  void _onArrowDisappeared() {
+  void _onInsertDetected() {
     if (_confirmed || _saving || _disposed) return;
     _countdownTimer?.cancel();
     setState(() => _confirmed = true);
-    _saveAndComplete();
+    if (widget.autoSaveBottleRecord) {
+      _saveAndComplete();
+      return;
+    }
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!_disposed && mounted) widget.onSuccess();
+    });
   }
 
   Future<void> _saveAndComplete() async {
@@ -356,7 +367,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                   height: h * _regionHeight,
                   child: ArrowRegionOverlay(
                     controller: _controller!,
-                    onArrowDisappeared: _onArrowDisappeared,
+                    onInsertDetected: _onInsertDetected,
                     countdown: _countdown,
                     disabled: _confirmed || _saving,
                   ),
@@ -387,7 +398,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Text(
-                      'Point camera at the bin\'s arrow mark, then insert the bottle',
+                      'Point camera at the bin head icon, then insert the bottle until the icon hides and shows again',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white,
@@ -419,7 +430,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
               // Confirmed flash overlay
               if (_confirmed && !_saving)
                 Container(
-                  color: Colors.green.withOpacity(0.3),
+                  color: Colors.green.withValues(alpha: 0.3),
                   child: const Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -461,9 +472,9 @@ class _CountdownBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       decoration: BoxDecoration(
         color: confirmed
-            ? Colors.green.withOpacity(0.85)
+            ? Colors.green.withValues(alpha: 0.85)
             : isUrgent
-                ? Colors.red.withOpacity(0.85)
+                ? Colors.red.withValues(alpha: 0.85)
                 : Colors.black54,
         borderRadius: BorderRadius.circular(24),
       ),
