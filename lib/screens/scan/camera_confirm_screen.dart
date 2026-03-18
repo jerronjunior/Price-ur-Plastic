@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants.dart';
@@ -52,6 +53,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   bool _saving = false;
   bool _disposed = false;
   bool _overlayVisible = false;
+  bool _bottleReady = false;
 
   /// Fraction of preview used for arrow detection region
   static const double _regionLeft = 0.25;
@@ -224,6 +226,18 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
     });
   }
 
+  void _onReadyChanged(bool ready) {
+    if (_disposed || !mounted) return;
+    if (_bottleReady == ready) return;
+    setState(() => _bottleReady = ready);
+
+    if (ready) {
+      // Short tactile/audio cue when bottle alignment is confirmed.
+      HapticFeedback.lightImpact();
+      SystemSound.play(SystemSoundType.click);
+    }
+  }
+
   Future<void> _saveAndComplete() async {
     if (_disposed) return;
     setState(() => _saving = true);
@@ -368,8 +382,47 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                   child: ArrowRegionOverlay(
                     controller: _controller!,
                     onInsertDetected: _onInsertDetected,
+                    onReadyChanged: _onReadyChanged,
                     countdown: _countdown,
                     disabled: _confirmed || _saving,
+                    regionLeft: _regionLeft,
+                    regionTop: _regionTop,
+                    regionWidth: _regionWidth,
+                    regionHeight: _regionHeight,
+                  ),
+                ),
+
+              // Top ready status badge
+              if (!_confirmed && !_saving)
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _bottleReady ? Colors.green : Colors.black45,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _bottleReady ? Icons.check_circle : Icons.radio_button_unchecked,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _bottleReady ? 'Bottle Ready' : 'Align Bottle',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
 
@@ -397,10 +450,12 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                       color: Colors.black54,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Text(
-                      'Point camera at the bin head icon, then insert the bottle until the icon hides and shows again',
+                    child: Text(
+                      _bottleReady
+                          ? 'Great. Now insert the bottle to recycle and get +1 point.'
+                          : 'Place bottle inside the outline. Wait for the green check before inserting.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                       ),

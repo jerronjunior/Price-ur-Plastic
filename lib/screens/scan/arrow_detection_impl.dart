@@ -6,10 +6,26 @@ import 'package:camera/camera.dart';
 /// - Debounces trigger to avoid false positives from single noisy frames.
 /// - Handles variable bytesPerRow safely on all devices.
 class ArrowDetectionImpl {
-  ArrowDetectionImpl({required void Function() onInsertDetected})
-      : _onInsertDetected = onInsertDetected;
+  ArrowDetectionImpl({
+    required void Function() onInsertDetected,
+    required void Function(bool isReady) onReadyChanged,
+    required double regionLeft,
+    required double regionTop,
+    required double regionWidth,
+    required double regionHeight,
+  })  : _onInsertDetected = onInsertDetected,
+        _onReadyChanged = onReadyChanged,
+        _regionLeft = regionLeft,
+        _regionTop = regionTop,
+        _regionWidth = regionWidth,
+        _regionHeight = regionHeight;
 
   final void Function() _onInsertDetected;
+  final void Function(bool isReady) _onReadyChanged;
+  final double _regionLeft;
+  final double _regionTop;
+  final double _regionWidth;
+  final double _regionHeight;
 
   List<int>? _referencePixels;
   bool _triggered = false;
@@ -20,18 +36,20 @@ class ArrowDetectionImpl {
   static const int _warmupFrames = 10;
   int _frameCount = 0;
 
-  /// Consecutive frames above threshold required before triggering.
-  /// Prevents false positives from a single noisy frame.
+  /// Consecutive frame counters used for readiness and insertion checks.
   static const int _consecutiveRequired = 3;
-  int _consecutiveCount = 0;
-  bool _wasOccluded = false;
-  int _visibleAgainCount = 0;
+  int _readyCount = 0;
+  int _unreadyCount = 0;
+  bool _isReady = false;
+  int _insertCount = 0;
 
   static const int _sampleStep = 6;
 
-  /// Lower threshold = more sensitive. 0.25 works well for arrow occlusion.
-  static const double _differenceThreshold = 0.25;
-  static const double _visibleThreshold = 0.12;
+  /// Readiness threshold: bottle appears in the guide before insertion.
+  static const double _readyThreshold = 0.18;
+  /// Drop threshold after ready: insertion typically darkens the region.
+  static const double _insertDarkeningThreshold = 0.12;
+  static const double _readyLostThreshold = 0.10;
 
   void processImage(CameraImage image) {
     if (_triggered || _disposed) return;
@@ -53,31 +71,67 @@ class ArrowDetectionImpl {
       // Lengths can differ if image size changes — reset reference
       if (pixels.length != _referencePixels!.length) {
         _referencePixels = pixels;
-        _consecutiveCount = 0;
+        _readyCount = 0;
+        _insertCount = 0;
         return;
       }
 
       final diff = _computeDifference(_referencePixels!, pixels);
 
-      if (!_wasOccluded) {
-        if (diff >= _differenceThreshold) {
-          _consecutiveCount++;
-          if (_consecutiveCount >= _consecutiveRequired) {
-            _wasOccluded = true;
-            _consecutiveCount = 0;
+      // Stage 1: bottle aligned in front of the outline.
+      if (!_isReady) {
+        if (diff >= _readyThreshold) {
+          _readyCount++;
+          if (_readyCount >= _consecutiveRequired) {
+            _isReady = true;
+            _onReadyChanged(true);
+            // Re-baseline on the ready pose so insertion is detected as next change.
+            _referencePixels = List<int>.from(pixels);
+            _insertCount = 0;
           }
         } else {
-          _consecutiveCount = 0;
+          _readyCount = 0;
+          // Slowly adapt to ambient lighting changes while scene is stable.
+          if (diff <= _readyLostThreshold) {
+            _blendReference(_referencePixels!, pixels);
+          }
+        }
+        return;
+      }
+
+      // If user moves away too much, clear ready state and ask to align again.
+      if (diff >= _readyThreshold * 1.6) {
+        _unreadyCount++;
+        if (_unreadyCount >= _consecutiveRequired + 1) {
+          _isReady = false;
+          _onReadyChanged(false);
+          _referencePixels = List<int>.from(pixels);
+          _readyCount = 0;
+          _insertCount = 0;
+          _unreadyCount = 0;
+          return;
         }
       } else {
-        if (diff <= _visibleThreshold) {
-          _visibleAgainCount++;
-          if (_visibleAgainCount >= _consecutiveRequired) {
-            _triggered = true;
-            _onInsertDetected();
-          }
+        _unreadyCount = 0;
+      }
+
+      // Stage 2: after ready, detect insertion as region darkening.
+      final lumaDrop = _computeLumaDrop(_referencePixels!, pixels);
+      if (lumaDrop >= _insertDarkeningThreshold) {
+        _insertCount++;
+        if (_insertCount >= _consecutiveRequired) {
+          _triggered = true;
+          _onInsertDetected();
+          return;
+        }
+      } else {
+        _insertCount = 0;
+
+        // Keep adapting if scene is mostly unchanged.
+        if (diff <= _readyLostThreshold) {
+          _blendReference(_referencePixels!, pixels);
         } else {
-          _visibleAgainCount = 0;
+          _referencePixels = List<int>.from(pixels);
         }
       }
     } catch (_) {
@@ -95,10 +149,15 @@ class ArrowDetectionImpl {
     if (w <= 0 || h <= 0) return null;
 
     // Center region: 30% wide, 25% tall, centered in frame
-    final left = (w * 0.35).round();
-    final top = (h * 0.35).round();
-    final rw = (w * 0.30).round().clamp(1, w - left);
-    final rh = (h * 0.25).round().clamp(1, h - top);
+    final safeLeft = _regionLeft.clamp(0.0, 0.95);
+    final safeTop = _regionTop.clamp(0.0, 0.95);
+    final safeWidth = _regionWidth.clamp(0.05, 1.0 - safeLeft);
+    final safeHeight = _regionHeight.clamp(0.05, 1.0 - safeTop);
+
+    final left = (w * safeLeft).round();
+    final top = (h * safeTop).round();
+    final rw = (w * safeWidth).round().clamp(1, w - left);
+    final rh = (h * safeHeight).round().clamp(1, h - top);
 
     if (Platform.isAndroid) {
       // YUV420: luminance is the Y plane (plane 0)
@@ -167,11 +226,33 @@ class ArrowDetectionImpl {
     return sum / (a.length * 255.0);
   }
 
+  double _computeLumaDrop(List<int> reference, List<int> current) {
+    if (reference.length != current.length || reference.isEmpty) return 0;
+    var refSum = 0;
+    var currentSum = 0;
+    for (var i = 0; i < reference.length; i++) {
+      refSum += reference[i];
+      currentSum += current[i];
+    }
+    final refMean = refSum / reference.length;
+    final currentMean = currentSum / current.length;
+    return (refMean - currentMean) / 255.0;
+  }
+
+  void _blendReference(List<int> reference, List<int> current) {
+    if (reference.length != current.length) return;
+    const alpha = 0.08;
+    for (var i = 0; i < reference.length; i++) {
+      reference[i] = (reference[i] * (1 - alpha) + current[i] * alpha).round();
+    }
+  }
+
   void dispose() {
     _disposed = true;
     _triggered = true;
     _referencePixels = null;
-    _wasOccluded = false;
-    _visibleAgainCount = 0;
+    _readyCount = 0;
+    _insertCount = 0;
+    _isReady = false;
   }
 }
