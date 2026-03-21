@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/firestore_service.dart';
@@ -14,6 +16,10 @@ class ManageBinsScreen extends StatefulWidget {
 
 class _ManageBinsScreenState extends State<ManageBinsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
+
+  static bool get _isDesktopPlatform =>
+      !kIsWeb &&
+      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
   void _showAddOptionsSheet() {
     showModalBottomSheet(
@@ -55,6 +61,15 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
   }
 
   Future<void> _openScanAndAddFlow() async {
+    final scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: _isDesktopPlatform ? CameraFacing.front : CameraFacing.back,
+      torchEnabled: false,
+    );
+
+    bool attemptedDesktopFallback = false;
+    bool fallbackInProgress = false;
+
     final scannedValue = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -84,12 +99,41 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               const SizedBox(height: 12),
               Expanded(
                 child: MobileScanner(
+                  controller: scannerController,
                   onDetect: (capture) {
                     if (detected || capture.barcodes.isEmpty) return;
                     final value = capture.barcodes.first.rawValue?.trim();
                     if (value == null || value.isEmpty) return;
                     detected = true;
                     Navigator.pop(sheetContext, value);
+                  },
+                  errorBuilder: (context, error, child) {
+                    if (_isDesktopPlatform &&
+                        !attemptedDesktopFallback &&
+                        !fallbackInProgress) {
+                      fallbackInProgress = true;
+                      WidgetsBinding.instance.addPostFrameCallback((_) async {
+                        try {
+                          await scannerController.switchCamera();
+                        } catch (_) {
+                          // Let the error message guide the user.
+                        } finally {
+                          attemptedDesktopFallback = true;
+                          fallbackInProgress = false;
+                        }
+                      });
+                    }
+
+                    return Container(
+                      color: Colors.black,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: const Text(
+                        'Camera unavailable. We auto-tried another camera once.\nIf it is still black, close other camera apps and reopen this scanner.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    );
                   },
                 ),
               ),
@@ -98,6 +142,8 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
         );
       },
     );
+
+    scannerController.dispose();
 
     if (!mounted || scannedValue == null || scannedValue.isEmpty) return;
     _showAddBinDialog(prefilledQrValue: scannedValue);
