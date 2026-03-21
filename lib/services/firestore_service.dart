@@ -20,6 +20,56 @@ class FirestoreService {
     return cleaned.isEmpty ? 'bin_${DateTime.now().millisecondsSinceEpoch}' : cleaned;
   }
 
+  List<String> _binLookupCandidates(String rawValue) {
+    final seed = rawValue.trim();
+    if (seed.isEmpty) return const [];
+
+    final candidates = <String>{seed};
+
+    // Decode URL-encoded QR payloads.
+    try {
+      final decoded = Uri.decodeFull(seed).trim();
+      if (decoded.isNotEmpty) candidates.add(decoded);
+    } catch (_) {}
+
+    // Parse URL payloads and extract common ID fields.
+    try {
+      final uri = Uri.parse(seed);
+      if ((uri.scheme == 'http' || uri.scheme == 'https') &&
+          uri.pathSegments.isNotEmpty) {
+        candidates.add(uri.pathSegments.last.trim());
+      }
+
+      const keys = ['bin', 'binId', 'bin_id', 'id', 'code', 'qr'];
+      for (final key in keys) {
+        final value = uri.queryParameters[key]?.trim();
+        if (value != null && value.isNotEmpty) {
+          candidates.add(value);
+        }
+      }
+    } catch (_) {}
+
+    // Handle prefixed payload formats: BIN:123, bin=123, id|123, etc.
+    final separators = [':', '=', '|', ';', ','];
+    for (final sep in separators) {
+      if (seed.contains(sep)) {
+        final tail = seed.split(sep).last.trim();
+        if (tail.isNotEmpty) candidates.add(tail);
+      }
+    }
+
+    // Add sanitized doc ID variants used by Firestore doc IDs.
+    final expanded = <String>{};
+    for (final c in candidates) {
+      final t = c.trim();
+      if (t.isEmpty) continue;
+      expanded.add(t);
+      expanded.add(_safeBinDocId(t));
+    }
+
+    return expanded.where((e) => e.isNotEmpty).toList(growable: false);
+  }
+
   // --- Users ---
 
   /// Create or overwrite user document after registration.
@@ -164,24 +214,29 @@ class FirestoreService {
 
   /// Get bin by ID (for QR scan).
   Future<BinModel?> getBin(String binId) async {
-    final idCandidate = binId.trim();
-    if (idCandidate.isNotEmpty && !idCandidate.contains('/')) {
-      final byIdDoc = await _firestore.collection(_binsCollection).doc(idCandidate).get();
+    final candidates = _binLookupCandidates(binId);
+
+    for (final candidate in candidates) {
+      if (candidate.contains('/')) continue;
+      final byIdDoc = await _firestore.collection(_binsCollection).doc(candidate).get();
       if (byIdDoc.exists && byIdDoc.data() != null) {
         return BinModel.fromMap(byIdDoc.id, byIdDoc.data()!);
       }
     }
 
     // Backstop lookup for bins where QR is stored in field instead of doc id.
-    final byQr = await _firestore
-        .collection(_binsCollection)
-        .where('qrCode', isEqualTo: binId)
-        .limit(1)
-        .get();
-    if (byQr.docs.isNotEmpty) {
-      final doc = byQr.docs.first;
-      return BinModel.fromMap(doc.id, doc.data());
+    for (final candidate in candidates) {
+      final byQr = await _firestore
+          .collection(_binsCollection)
+          .where('qrCode', isEqualTo: candidate)
+          .limit(1)
+          .get();
+      if (byQr.docs.isNotEmpty) {
+        final doc = byQr.docs.first;
+        return BinModel.fromMap(doc.id, doc.data());
+      }
     }
+
     return null;
   }
 

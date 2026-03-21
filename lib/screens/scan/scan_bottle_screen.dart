@@ -26,6 +26,14 @@ class ScanBottleScreen extends StatefulWidget {
 }
 
 class _ScanBottleScreenState extends State<ScanBottleScreen> {
+  double _getScanOutlineSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    // Use 75% of the smallest dimension, capped at reasonable limits
+    final size = (screenWidth < screenHeight ? screenWidth : screenHeight) * 0.75;
+    return size.clamp(280.0, 500.0); // min 280, max 500
+  }
+
   CameraController? _cameraController;
   MobileScannerController? _desktopScannerController;
   BarcodeScanner? _barcodeScanner;
@@ -429,23 +437,33 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
                 // Animated scan frame — changes color by state
                 Center(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    width: 300,
-                    height: 300,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: frameColor, width: 4),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
+                  child: Builder(
+                    builder: (context) {
+                      final outlineSize = _getScanOutlineSize(context);
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: outlineSize,
+                        height: outlineSize,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: frameColor, width: 4),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      );
+                    },
                   ),
                 ),
 
                 // Scan line
                 Center(
-                  child: Container(
-                    width: 300,
-                    height: 2,
-                    color: frameColor.withValues(alpha: 0.5),
+                  child: Builder(
+                    builder: (context) {
+                      final outlineSize = _getScanOutlineSize(context);
+                      return Container(
+                        width: outlineSize,
+                        height: 2,
+                        color: frameColor.withValues(alpha: 0.5),
+                      );
+                    },
                   ),
                 ),
 

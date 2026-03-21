@@ -1,4 +1,5 @@
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
+import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
 import 'package:flutter/foundation.dart';
 
 class BottleRecognitionResult {
@@ -46,7 +47,7 @@ class BottleCondition {
 }
 
 class BottleAIService {
-  // Keywords indicating there is a bottle in frame.
+  // Keywords for strict bottle detection - only exact bottle types
   static const _bottleKeywords = [
     'bottle',
     'plastic bottle',
@@ -54,10 +55,45 @@ class BottleAIService {
     'water bottle',
     'beverage bottle',
     'drink bottle',
-    'container',
-    'flask',
-    'jug',
+    'soft drink',
+    'soda',
+    'mineral water',
+    'pet bottle',
+    'coca-cola',
+    'coca cola',
+    'sprite',
+    'aquafina',
+    'pepsi',
+    'fanta',
   ];
+
+  // Negative keywords - things that are NOT bottles
+  static const _nonBottleKeywords = [
+    'jar',
+    'can',
+    'cup',
+    'glass',
+    'bowl',
+    'dish',
+    'pot',
+    'pan',
+    'vase',
+    'container',
+    'box',
+    'bag',
+    'plastic bag',
+    'backpack',
+    'handbag',
+    'purse',
+    'tote',
+    'sack',
+    'bucket',
+    'barrel',
+  ];
+
+  // Minimum confidence thresholds
+  static const minimumBottleConfidence = 0.60; // require 60%+ confidence
+  static const minimumVerticalAspectRatio = 1.15; // bottle-like silhouette
 
   // Keywords indicating bottle damage / dropped state
   static const _damageKeywords = [
@@ -115,10 +151,19 @@ class BottleAIService {
   ];
 
   final ImageLabeler _imageLabeler;
+  final ObjectDetector _objectDetector;
 
-  BottleAIService({ImageLabeler? imageLabeler})
+  BottleAIService({ImageLabeler? imageLabeler, ObjectDetector? objectDetector})
       : _imageLabeler = imageLabeler ??
-            ImageLabeler(options: ImageLabelerOptions(confidenceThreshold: 0.3));
+            ImageLabeler(options: ImageLabelerOptions(confidenceThreshold: 0.3)),
+        _objectDetector = objectDetector ??
+            ObjectDetector(
+              options: ObjectDetectorOptions(
+                mode: DetectionMode.stream,
+                classifyObjects: true,
+                multipleObjects: true,
+              ),
+            );
 
   /// Analyzes bottle condition from an InputImage
   /// Returns BottleCondition with status ('dropped', 'non-dropped', 'unknown')
@@ -141,7 +186,8 @@ class BottleAIService {
   Future<BottleRecognitionResult> recognizeBottle(InputImage image) async {
     try {
       final labels = await _imageLabeler.processImage(image);
-      return _recognizeBottleFromLabels(labels);
+      final objects = await _objectDetector.processImage(image);
+      return _recognizeBottleFromSignals(labels, objects);
     } catch (e) {
       debugPrint('❌ Bottle recognition error: $e');
       return const BottleRecognitionResult(
@@ -156,7 +202,8 @@ class BottleAIService {
   Future<BottleScanAnalysis> analyzeBottle(InputImage image) async {
     try {
       final labels = await _imageLabeler.processImage(image);
-      final recognition = _recognizeBottleFromLabels(labels);
+      final objects = await _objectDetector.processImage(image);
+      final recognition = _recognizeBottleFromSignals(labels, objects);
       final condition = _analyzeBottleConditionFromLabels(labels);
       return BottleScanAnalysis(recognition: recognition, condition: condition);
     } catch (e) {
@@ -179,23 +226,84 @@ class BottleAIService {
     }
   }
 
-  BottleRecognitionResult _recognizeBottleFromLabels(List<ImageLabel> labels) {
+  BottleRecognitionResult _recognizeBottleFromSignals(
+    List<ImageLabel> labels,
+    List<DetectedObject> objects,
+  ) {
     final matched = <String>[];
-    var bestConfidence = 0.0;
+    final nonBottleDetected = <String>[];
+    var bestBottleConfidence = 0.0;
 
     for (final label in labels) {
       final text = label.label.toLowerCase();
+
+      // Check for non-bottle items first
+      if (_nonBottleKeywords.any((kw) => text.contains(kw))) {
+        nonBottleDetected.add(label.label);
+      }
+
+      // Check for bottle keywords with confidence threshold
       if (_bottleKeywords.any((kw) => text.contains(kw))) {
-        matched.add(label.label);
-        if (label.confidence > bestConfidence) {
-          bestConfidence = label.confidence;
+        if (label.confidence >= minimumBottleConfidence) {
+          matched.add(label.label);
+          if (label.confidence > bestBottleConfidence) {
+            bestBottleConfidence = label.confidence;
+          }
         }
       }
     }
 
+    // Object-level rejection for fashion items (bags are often classified here).
+    final objectLevelNonBottle = <String>[];
+    for (final obj in objects) {
+      for (final cls in obj.labels) {
+        final clsText = cls.text.toLowerCase();
+        if (clsText.contains('fashion') ||
+            clsText.contains('bag') ||
+            clsText.contains('backpack') ||
+            clsText.contains('handbag') ||
+            clsText.contains('purse')) {
+          objectLevelNonBottle.add(cls.text);
+        }
+      }
+    }
+
+    // Shape check: bottles are usually taller than wide.
+    double dominantAspectRatio = 0.0;
+    if (objects.isNotEmpty) {
+      DetectedObject? largest;
+      var largestArea = 0.0;
+      for (final obj in objects) {
+        final area = obj.boundingBox.width * obj.boundingBox.height;
+        if (area > largestArea) {
+          largestArea = area;
+          largest = obj;
+        }
+      }
+      if (largest != null && largest.boundingBox.width > 0) {
+        dominantAspectRatio =
+            largest.boundingBox.height / largest.boundingBox.width;
+      }
+    }
+
+    final isVerticalEnough =
+        dominantAspectRatio == 0.0 || dominantAspectRatio >= minimumVerticalAspectRatio;
+
+    debugPrint(
+      '🍾 Bottle AI: matched=$matched, nonBottle=$nonBottleDetected, objNonBottle=$objectLevelNonBottle, ratio=${dominantAspectRatio.toStringAsFixed(2)}, confidence=${(bestBottleConfidence * 100).toStringAsFixed(1)}%',
+    );
+
     final rawLabels = labels.map((l) => l.label).toList();
-    final isBottle = matched.isNotEmpty;
-    final confidence = isBottle ? bestConfidence.clamp(0.0, 1.0) : 0.0;
+    
+    // Bottle is detected only if:
+    // 1. At least one bottle keyword matched with high confidence
+    // 2. No negative keywords (like 'bag', 'jar', 'can', etc.) detected
+    // 3. Detected object shape is bottle-like (taller than wide)
+    final isBottle = matched.isNotEmpty &&
+        nonBottleDetected.isEmpty &&
+        objectLevelNonBottle.isEmpty &&
+        isVerticalEnough;
+    final confidence = isBottle ? bestBottleConfidence.clamp(0.0, 1.0) : 0.0;
 
     return BottleRecognitionResult(
       isBottle: isBottle,
@@ -280,6 +388,9 @@ class BottleAIService {
   void dispose() {
     try {
       _imageLabeler.close();
+    } catch (_) {}
+    try {
+      _objectDetector.close();
     } catch (_) {}
   }
 }

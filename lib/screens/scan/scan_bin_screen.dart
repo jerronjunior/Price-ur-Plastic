@@ -30,11 +30,12 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
       (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
   static CameraFacing get _defaultFacing =>
-      _isDesktopPlatform ? CameraFacing.front : CameraFacing.back;
+      CameraFacing.back;
 
   final MobileScannerController _controller = MobileScannerController(
     autoStart: false,
-    detectionSpeed: DetectionSpeed.normal,
+    detectionSpeed: DetectionSpeed.noDuplicates,
+    formats: const [BarcodeFormat.qrCode],
     facing: _defaultFacing,
     torchEnabled: false,
   );
@@ -199,15 +200,15 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
       if (forcedIndex != null) {
         _desktopCameraIndex = forcedIndex % _desktopCameras.length;
       } else {
-        final front = _desktopCameras.indexWhere(
-          (c) => c.lensDirection == CameraLensDirection.front,
+        final back = _desktopCameras.indexWhere(
+          (c) => c.lensDirection == CameraLensDirection.back,
         );
-        _desktopCameraIndex = front >= 0 ? front : 0;
+        _desktopCameraIndex = back >= 0 ? back : 0;
       }
 
       final controller = CameraController(
         _desktopCameras[_desktopCameraIndex],
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
       );
 
@@ -243,7 +244,7 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
 
   void _startDesktopScanLoop() {
     _desktopScanTimer?.cancel();
-    _desktopScanTimer = Timer.periodic(const Duration(milliseconds: 900), (_) {
+    _desktopScanTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       _captureAndAnalyzeDesktopFrame();
     });
   }
@@ -304,8 +305,11 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
     if (_processing) return;
     final barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
-    final code = barcodes.first.rawValue?.trim();
+    final first = barcodes.first;
+    final code = (first.rawValue ?? first.displayValue)?.trim();
     if (code == null || code.isEmpty) return;
+
+    debugPrint('🧾 Bin QR scanned value: $code');
 
     setState(() {
       _processing = true;
