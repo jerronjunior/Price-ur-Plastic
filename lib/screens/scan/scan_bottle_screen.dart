@@ -45,6 +45,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
   bool _processing = false;        // firestore validation in progress
   bool _isProcessingDesktopScan = false;
   bool _isBottleConfirmed = false;
+  int _bottleDetectionStreak = 0;
   String? _error;
   String? _scannedResult;
   BottleCondition? _bottleCondition; // ← new: track bottle condition
@@ -131,6 +132,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       _error = null;
       _scannedResult = null;
       _isBottleConfirmed = false;
+      _bottleDetectionStreak = 0;
       _bottleCondition = null;
       _isProcessingFrame = false;
       _isProcessingDesktopScan = false;
@@ -234,6 +236,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       if (!mounted) return;
 
       if (!isBottle) {
+        _bottleDetectionStreak = 0;
         setState(() {
           _isBottleConfirmed = false;
           _bottleCondition = null;
@@ -248,7 +251,19 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       final bottleCondition = scanAnalysis.condition;
       debugPrint('🍾 Bottle AI Result: $bottleCondition');
 
+      _bottleDetectionStreak += 1;
+
       if (!mounted) return;
+
+      // Require stable bottle detection across multiple frames.
+      if (_bottleDetectionStreak < 3) {
+        setState(() {
+          _isBottleConfirmed = false;
+          _bottleCondition = bottleCondition;
+          _error = 'Bottle candidate detected. Hold steady...';
+        });
+        return;
+      }
 
       // ── STEP 2: Bottle confirmed — read barcode from same frame ───────
       if (!_isBottleConfirmed) {
@@ -280,6 +295,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       if (!mounted) return;
 
       if (err != null) {
+        _bottleDetectionStreak = 0;
         setState(() {
           _error = err;
           _processing = false;

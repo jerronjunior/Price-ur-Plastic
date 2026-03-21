@@ -87,13 +87,22 @@ class BottleAIService {
     'purse',
     'tote',
     'sack',
+    'person',
+    'human',
+    'face',
+    'shoe',
+    'clothing',
+    'shirt',
+    'pants',
+    'fabric',
     'bucket',
     'barrel',
   ];
 
   // Minimum confidence thresholds
-  static const minimumBottleConfidence = 0.60; // require 60%+ confidence
-  static const minimumVerticalAspectRatio = 1.15; // bottle-like silhouette
+  static const minimumBottleConfidence = 0.72; // require 72%+ confidence
+  static const minimumVerticalAspectRatio = 1.35; // bottle-like silhouette
+  static const maximumVerticalAspectRatio = 5.50;
 
   // Keywords indicating bottle damage / dropped state
   static const _damageKeywords = [
@@ -255,6 +264,7 @@ class BottleAIService {
 
     // Object-level rejection for fashion items (bags are often classified here).
     final objectLevelNonBottle = <String>[];
+    final objectLevelBottleHints = <String>[];
     for (final obj in objects) {
       for (final cls in obj.labels) {
         final clsText = cls.text.toLowerCase();
@@ -264,6 +274,14 @@ class BottleAIService {
             clsText.contains('handbag') ||
             clsText.contains('purse')) {
           objectLevelNonBottle.add(cls.text);
+        }
+
+        // Keep only object classes that are likely bottle-adjacent.
+        if (clsText.contains('food') ||
+            clsText.contains('beverage') ||
+            clsText.contains('home good') ||
+            clsText.contains('kitchen')) {
+          objectLevelBottleHints.add(cls.text);
         }
       }
     }
@@ -286,11 +304,14 @@ class BottleAIService {
       }
     }
 
-    final isVerticalEnough =
-        dominantAspectRatio == 0.0 || dominantAspectRatio >= minimumVerticalAspectRatio;
+    final isVerticalEnough = dominantAspectRatio == 0.0 ||
+      (dominantAspectRatio >= minimumVerticalAspectRatio &&
+        dominantAspectRatio <= maximumVerticalAspectRatio);
+
+    final hasObjectEvidence = objects.isEmpty || objectLevelBottleHints.isNotEmpty;
 
     debugPrint(
-      '🍾 Bottle AI: matched=$matched, nonBottle=$nonBottleDetected, objNonBottle=$objectLevelNonBottle, ratio=${dominantAspectRatio.toStringAsFixed(2)}, confidence=${(bestBottleConfidence * 100).toStringAsFixed(1)}%',
+      '🍾 Bottle AI: matched=$matched, nonBottle=$nonBottleDetected, objNonBottle=$objectLevelNonBottle, objHints=$objectLevelBottleHints, ratio=${dominantAspectRatio.toStringAsFixed(2)}, confidence=${(bestBottleConfidence * 100).toStringAsFixed(1)}%',
     );
 
     final rawLabels = labels.map((l) => l.label).toList();
@@ -302,6 +323,7 @@ class BottleAIService {
     final isBottle = matched.isNotEmpty &&
         nonBottleDetected.isEmpty &&
         objectLevelNonBottle.isEmpty &&
+      hasObjectEvidence &&
         isVerticalEnough;
     final confidence = isBottle ? bestBottleConfidence.clamp(0.0, 1.0) : 0.0;
 
