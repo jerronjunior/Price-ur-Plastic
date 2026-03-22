@@ -305,8 +305,14 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
     if (_processing) return;
     final barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
-    final first = barcodes.first;
-    final code = (first.rawValue ?? first.displayValue)?.trim();
+    String? code;
+    for (final b in barcodes) {
+      final value = (b.rawValue ?? b.displayValue)?.trim();
+      if (value != null && value.isNotEmpty) {
+        code = value;
+        break;
+      }
+    }
     if (code == null || code.isEmpty) return;
 
     debugPrint('🧾 Bin QR scanned value: $code');
@@ -317,12 +323,15 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
       _cameraInfo = null;
     });
 
-    final firestore = context.read<FirestoreService>();
-    final bin = await firestore.getBin(code);
-    if (!mounted) return;
-    if (bin != null) {
-      widget.onScanned(bin.binId);
-    } else {
+    try {
+      final firestore = context.read<FirestoreService>();
+      final bin = await firestore.getBin(code);
+      if (!mounted) return;
+      if (bin != null) {
+        widget.onScanned(bin.binId);
+        return;
+      }
+
       final shouldAdd = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
@@ -359,6 +368,13 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
           _processing = false;
         });
       }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to validate bin QR. Please try again.';
+        _processing = false;
+      });
+      debugPrint('⚠️ Bin QR validation error: $e');
     }
   }
 

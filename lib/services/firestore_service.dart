@@ -58,13 +58,29 @@ class FirestoreService {
       }
     }
 
+    // Handle JSON-like payloads: {"binId":"BIN001"}, {'id':'BIN001'}.
+    final jsonLike = RegExp(
+      r'"?(binId|bin_id|id|code|qr)"?\s*[:=]\s*"?([^",}\s]+)"?',
+      caseSensitive: false,
+    );
+    for (final match in jsonLike.allMatches(seed)) {
+      final value = match.group(2)?.trim();
+      if (value != null && value.isNotEmpty) {
+        candidates.add(value);
+      }
+    }
+
     // Add sanitized doc ID variants used by Firestore doc IDs.
     final expanded = <String>{};
     for (final c in candidates) {
       final t = c.trim();
       if (t.isEmpty) continue;
       expanded.add(t);
+      expanded.add(t.toLowerCase());
+      expanded.add(t.toUpperCase());
       expanded.add(_safeBinDocId(t));
+      expanded.add(_safeBinDocId(t.toLowerCase()));
+      expanded.add(_safeBinDocId(t.toUpperCase()));
     }
 
     return expanded.where((e) => e.isNotEmpty).toList(growable: false);
@@ -234,6 +250,25 @@ class FirestoreService {
       if (byQr.docs.isNotEmpty) {
         final doc = byQr.docs.first;
         return BinModel.fromMap(doc.id, doc.data());
+      }
+    }
+
+    // Final fuzzy fallback for mixed legacy data/casing/formatting differences.
+    final allBins = await _firestore.collection(_binsCollection).limit(300).get();
+    final normalizedCandidates = candidates
+        .map((e) => _safeBinDocId(e).toLowerCase())
+        .toSet();
+
+    for (final doc in allBins.docs) {
+      final data = doc.data();
+      final docIdNorm = _safeBinDocId(doc.id).toLowerCase();
+      final binIdNorm = _safeBinDocId((data['binId'] ?? '').toString()).toLowerCase();
+      final qrNorm = _safeBinDocId((data['qrCode'] ?? '').toString()).toLowerCase();
+
+      if (normalizedCandidates.contains(docIdNorm) ||
+          normalizedCandidates.contains(binIdNorm) ||
+          normalizedCandidates.contains(qrNorm)) {
+        return BinModel.fromMap(doc.id, data);
       }
     }
 
