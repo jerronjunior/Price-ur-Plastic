@@ -256,7 +256,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       if (!mounted) return;
 
       // Require stable bottle detection across multiple frames.
-      if (_bottleDetectionStreak < 3) {
+      if (_bottleDetectionStreak < 2) {
         setState(() {
           _isBottleConfirmed = false;
           _bottleCondition = bottleCondition;
@@ -285,12 +285,12 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       // ── STEP 3: Firestore validation ──────────────────────────────────
       if (!mounted || _processing) return;
       setState(() => _processing = true);
+      final firestore = context.read<FirestoreService>();
+      final validation = ScanValidationService(firestore);
 
       // Pause stream during async Firestore call
       await _cameraController?.stopImageStream();
 
-      final firestore = context.read<FirestoreService>();
-      final validation = ScanValidationService(firestore);
       final err = await validation.validateBarcode(code);
       if (!mounted) return;
 
@@ -366,7 +366,10 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final frameColor = (!_isBottleConfirmed && _error == 'This is not a bottle')
+    final isNonBottleError =
+      (_error ?? '').toLowerCase().contains('no bottle detected') ||
+      (_error ?? '').toLowerCase().contains('not a bottle');
+    final frameColor = (!_isBottleConfirmed && isNonBottleError)
         ? Colors.red
         : _isBottleConfirmed
             ? Colors.green
@@ -493,13 +496,13 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Row(
+                          const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.check_circle,
+                              Icon(Icons.check_circle,
                                   color: Colors.greenAccent, size: 16),
-                              const SizedBox(width: 6),
-                              const Text(
+                              SizedBox(width: 6),
+                              Text(
                                 'Bottle detected',
                                 style: TextStyle(
                                   color: Colors.white,
@@ -635,10 +638,10 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                       if (_error != null) ...[
                         const SizedBox(height: 24),
                         _StatusBanner(
-                          color: _error == 'This is not a bottle'
+                          color: isNonBottleError
                               ? Colors.orange.shade800
                               : Colors.red.shade700,
-                          icon: _error == 'This is not a bottle'
+                          icon: isNonBottleError
                               ? Icons.no_drinks
                               : Icons.error,
                           message: _error!,
