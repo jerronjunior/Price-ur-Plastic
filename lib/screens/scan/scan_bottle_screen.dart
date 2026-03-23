@@ -84,7 +84,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
       _cameraController = CameraController(
         back,
-        ResolutionPreset.medium,
+        ResolutionPreset.low,
         enableAudio: false,
       );
 
@@ -95,7 +95,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
       _mobileScanTimer?.cancel();
       _mobileScanTimer = Timer.periodic(
-        const Duration(milliseconds: 1000),
+        const Duration(milliseconds: 1500),
         (_) => _scanMobileFrame(),
       );
     } catch (e) {
@@ -119,9 +119,10 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
     _isScanningFrame = true;
 
+    String? imagePath;
     try {
       final shot = await _cameraController!.takePicture();
-      final imagePath = shot.path;
+      imagePath = shot.path;
 
       if (!_tfliteReady) {
         setState(() {
@@ -170,6 +171,14 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     } catch (e) {
       debugPrint('Mobile scan frame error: $e');
     } finally {
+      if (imagePath != null) {
+        try {
+          final temp = File(imagePath);
+          if (await temp.exists()) {
+            await temp.delete();
+          }
+        } catch (_) {}
+      }
       _isScanningFrame = false;
     }
   }

@@ -9,3 +9,4 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+-dontwarn org.tensorflow.lite.gpu.GpuDelegateFactory$Options
