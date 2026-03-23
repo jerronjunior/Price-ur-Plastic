@@ -3,12 +3,20 @@ import 'package:flutter/foundation.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
-// COCO label index for "bottle" = 44 (0-indexed, including background at 0)
-// Reference: https://tech.amikelive.com/node-718/what-object-categories-labels-are-in-coco-dataset/
-const int _bottleClassIndex = 44;
+// ── Bottle class indices ──────────────────────────────────────────────────────
+// We check 43, 44, AND 45 because different model downloads use different
+// indexing depending on whether background is included as class 0.
+//
+// Check the debug logs — look for the line:
+//   "🔍 TOP DETECTION: class=XX score=YY%"
+// when pointing at a bottle. That XX is your bottle class index.
+const Set<int> _bottleClassIndices = {43, 44, 45};
 
-// Minimum confidence to accept a TFLite detection.
-const double _minConfidence = 0.55;
+// ── Confidence threshold ──────────────────────────────────────────────────────
+// Quantized SSD MobileNet scores real bottles at 0.25–0.55 in normal lighting.
+const double _minConfidence = 0.25;
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class TfliteBottleResult {
   final bool isBottle;
@@ -20,6 +28,13 @@ class TfliteBottleResult {
     required this.confidence,
     required this.label,
   });
+}
+
+class BottleCondition {
+  final String status;
+  final double confidence;
+
+  const BottleCondition({required this.status, required this.confidence});
 }
 
 class BottleTfliteService {
@@ -37,48 +52,35 @@ class BottleTfliteService {
       debugPrint('✅ TFLite model loaded');
     } catch (e) {
       _ready = false;
-      debugPrint('❌ TFLite model failed to load: $e');
-      debugPrint('   Make sure ssd_mobilenet.tflite is in assets/models/');
+      debugPrint('❌ TFLite load failed: $e');
     }
   }
 
   Future<TfliteBottleResult> detectFromFilePath(String path) async {
     if (!_ready || _interpreter == null) {
-      debugPrint('⚠️ TFLite not ready — blocking frame');
       return const TfliteBottleResult(
-        isBottle: false,
-        confidence: 0,
-        label: 'Model not ready',
+        isBottle: false, confidence: 0, label: 'Model not ready',
       );
     }
 
     try {
       final bytes = await File(path).readAsBytes();
       final rawImage = img.decodeImage(bytes);
-
       if (rawImage == null) {
-        debugPrint('⚠️ TFLite: could not decode image');
         return const TfliteBottleResult(
-          isBottle: false,
-          confidence: 0,
-          label: 'Decode failed',
+          isBottle: false, confidence: 0, label: 'Decode failed',
         );
       }
-
       return _runDetection(rawImage);
     } catch (e) {
       debugPrint('⚠️ TFLite error: $e');
-      // Always return false on error — never silently pass through
       return const TfliteBottleResult(
-        isBottle: false,
-        confidence: 0,
-        label: 'Error',
+        isBottle: false, confidence: 0, label: 'Error',
       );
     }
   }
 
   TfliteBottleResult _runDetection(img.Image source) {
-    // SSD MobileNet expects 300×300 RGB uint8 input
     final resized = img.copyResize(source, width: 300, height: 300);
 
     final input = List.generate(
@@ -92,16 +94,11 @@ class BottleTfliteService {
       ),
     );
 
-    // SSD MobileNet outputs:
-    //   0 → boxes    [1, 10, 4]
-    //   1 → classes  [1, 10]
-    //   2 → scores   [1, 10]
-    //   3 → count    [1]
     final outputBoxes =
         List.generate(1, (_) => List.generate(10, (_) => List.filled(4, 0.0)));
     final outputClasses = List.generate(1, (_) => List.filled(10, 0.0));
-    final outputScores = List.generate(1, (_) => List.filled(10, 0.0));
-    final outputCount = List.filled(1, 0.0);
+    final outputScores  = List.generate(1, (_) => List.filled(10, 0.0));
+    final outputCount   = List.filled(1, 0.0);
 
     _interpreter!.runForMultipleInputs(
       [input],
@@ -109,38 +106,67 @@ class BottleTfliteService {
     );
 
     final count = outputCount[0].toInt().clamp(0, 10);
-    double bestScore = 0.0;
+
+    double bestBottleScore = 0.0;
+
+    // Track the single TOP detection across ALL classes for debugging
+    double topScore = 0.0;
+    int    topClass = -1;
+
+    debugPrint('──────── TFLite raw detections ($count) ────────');
 
     for (int i = 0; i < count; i++) {
       final score = outputScores[0][i];
       final classId = outputClasses[0][i].toInt();
+      final isBottle = _bottleClassIndices.contains(classId);
 
       debugPrint(
-        '🔍 TFLite[$i]: class=$classId score=${(score * 100).toStringAsFixed(1)}%'
-        '${classId == _bottleClassIndex ? " ← BOTTLE" : ""}',
+        '  [$i] class=$classId  '
+        'score=${(score * 100).toStringAsFixed(1)}%'
+        '${isBottle ? "  ← BOTTLE ✅" : ""}',
       );
 
-      if (classId == _bottleClassIndex && score > bestScore) {
-        bestScore = score;
+      if (score > topScore) {
+        topScore = score;
+        topClass = classId;
+      }
+
+      if (isBottle && score > bestBottleScore) {
+        bestBottleScore = score;
       }
     }
 
-    if (bestScore >= _minConfidence) {
-      debugPrint('✅ TFLite: bottle at ${(bestScore * 100).toStringAsFixed(1)}%');
+    // ── CRITICAL DEBUG LINE ───────────────────────────────────────────────
+    // Point the camera at a bottle and look for this line in your logs.
+    // The class number shown here is the REAL bottle class your model uses.
+    debugPrint(
+      '🔍 TOP DETECTION: class=$topClass  '
+      'score=${(topScore * 100).toStringAsFixed(1)}%  '
+      '← This is what the model sees most confidently',
+    );
+    debugPrint(
+      '🍾 BOTTLE score: ${(bestBottleScore * 100).toStringAsFixed(1)}%  '
+      '(checking classes: $_bottleClassIndices)',
+    );
+
+    if (bestBottleScore >= _minConfidence) {
+      debugPrint('✅ BOTTLE CONFIRMED at ${(bestBottleScore * 100).toStringAsFixed(1)}%');
       return TfliteBottleResult(
         isBottle: true,
-        confidence: bestScore,
-        label: 'bottle (${(bestScore * 100).toStringAsFixed(0)}%)',
+        confidence: bestBottleScore,
+        label: 'Bottle ${(bestBottleScore * 100).toStringAsFixed(0)}%',
       );
     }
 
     debugPrint(
-      '❌ TFLite: no bottle — best score was ${(bestScore * 100).toStringAsFixed(1)}%',
+      '❌ Not detected. Best bottle score=${(bestBottleScore * 100).toStringAsFixed(1)}%  '
+      'Need ${(_minConfidence * 100).toStringAsFixed(0)}%',
     );
+
     return TfliteBottleResult(
       isBottle: false,
-      confidence: bestScore,
-      label: 'No bottle detected',
+      confidence: bestBottleScore,
+      label: 'Not a bottle',
     );
   }
 

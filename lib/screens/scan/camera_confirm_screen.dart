@@ -379,49 +379,21 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                   top: h * _regionTop,
                   width: w * _regionWidth,
                   height: h * _regionHeight,
-                  child: ArrowRegionOverlay(
-                    controller: _controller!,
-                    onInsertDetected: _onInsertDetected,
-                    onReadyChanged: _onReadyChanged,
-                    countdown: _countdown,
-                    disabled: _confirmed || _saving,
-                    regionLeft: _regionLeft,
-                    regionTop: _regionTop,
-                    regionWidth: _regionWidth,
-                    regionHeight: _regionHeight,
-                  ),
-                ),
-
-              // Top ready status badge
-              if (!_confirmed && !_saving)
-                Positioned(
-                  top: 16,
-                  right: 16,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: _bottleReady ? Colors.green : Colors.black45,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _bottleReady ? Icons.check_circle : Icons.radio_button_unchecked,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _bottleReady ? 'Bottle Ready' : 'Align Bottle',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                  child: IgnorePointer(
+                    ignoring: true,
+                    child: Opacity(
+                      opacity: 0,
+                      child: ArrowRegionOverlay(
+                        controller: _controller!,
+                        onInsertDetected: _onInsertDetected,
+                        onReadyChanged: _onReadyChanged,
+                        countdown: _countdown,
+                        disabled: _confirmed || _saving,
+                        regionLeft: _regionLeft,
+                        regionTop: _regionTop,
+                        regionWidth: _regionWidth,
+                        regionHeight: _regionHeight,
+                      ),
                     ),
                   ),
                 ),
@@ -446,16 +418,14 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                       horizontal: 20,
                       vertical: 12,
                     ),
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       color: Colors.black54,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.all(Radius.circular(12)),
                     ),
-                    child: Text(
-                      _bottleReady
-                          ? 'Great. Now insert the bottle to recycle and get +1 point.'
-                          : 'Place bottle inside the outline. Wait for the green check before inserting.',
+                    child: const Text(
+                      'Insert the bottle into the bin before countdown ends.',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                       ),

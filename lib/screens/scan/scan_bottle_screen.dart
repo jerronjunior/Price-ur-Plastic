@@ -5,13 +5,9 @@ import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:mobile_scanner/mobile_scanner.dart' hide BarcodeFormat;
-import 'package:provider/provider.dart';
 
 import '../../services/bottle_tflite_service.dart';
-import '../../services/firestore_service.dart';
-import '../../services/scan_validation_service.dart';
 
 class ScanBottleScreen extends StatefulWidget {
   const ScanBottleScreen({
@@ -30,7 +26,6 @@ class ScanBottleScreen extends StatefulWidget {
 class _ScanBottleScreenState extends State<ScanBottleScreen> {
   CameraController? _cameraController;
   MobileScannerController? _desktopScannerController;
-  BarcodeScanner? _barcodeScanner;
   Timer? _mobileScanTimer;
 
   final BottleTfliteService _tflite = BottleTfliteService();
@@ -41,15 +36,14 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
   bool _isProcessingDesktopScan = false;
   bool _isBottleConfirmed = false;
   bool _tfliteReady = false;
+  bool _navigating = false;
 
   int _bottleDetectionStreak = 0;
   String? _error;
-  String? _scannedResult;
   String _detectedLabel = '';
 
   bool get _isDesktopPlatform =>
-      !kIsWeb &&
-      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+      !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
   @override
   void initState() {
@@ -94,7 +88,6 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         enableAudio: false,
       );
 
-      _barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.all]);
       await _cameraController!.initialize();
 
       if (!mounted) return;
@@ -110,7 +103,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       setState(() {
         _error = 'Camera init failed. Please retry.';
       });
-      debugPrint('❌ Mobile camera init error: $e');
+      debugPrint('Mobile camera init error: $e');
     }
   }
 
@@ -118,7 +111,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     if (_isDesktopPlatform ||
         _isScanningFrame ||
         _processing ||
-        _scannedResult != null ||
+        _navigating ||
         _cameraController == null ||
         !_cameraController!.value.isInitialized) {
       return;
@@ -127,93 +120,75 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     _isScanningFrame = true;
 
     try {
-      if (!_tfliteReady) {
-        if (mounted) {
-          setState(() {
-            _isBottleConfirmed = false;
-            _error = 'Model not ready. Add assets/models/ssd_mobilenet.tflite';
-          });
-        }
-        return;
-      }
-
       final shot = await _cameraController!.takePicture();
       final imagePath = shot.path;
 
-      final tflite = await _tflite.detectFromFilePath(imagePath);
-
-      if (!mounted) return;
-
-      if (!tflite.isBottle) {
-        _bottleDetectionStreak = 0;
+      if (!_tfliteReady) {
         setState(() {
-          _isBottleConfirmed = false;
+          // Fallback mode: keep scan flow usable even if model file is missing.
+          _isBottleConfirmed = true;
+          _error = 'AI model missing. Skipping to insertion check.';
+          _detectedLabel = 'Model missing';
+        });
+        await _goToInsertionCheck();
+        return;
+      } else {
+        final tflite = await _tflite.detectFromFilePath(imagePath);
+
+        if (!mounted) return;
+
+        if (!tflite.isBottle) {
+          _bottleDetectionStreak = 0;
+          setState(() {
+            _isBottleConfirmed = false;
+            _detectedLabel = tflite.label;
+            _error = 'No bottle detected (${tflite.label}).';
+          });
+          return;
+        }
+
+        _bottleDetectionStreak += 1;
+        setState(() {
           _detectedLabel = tflite.label;
-          _error = 'No bottle detected (${tflite.label}).';
         });
-        return;
-      }
 
-      _bottleDetectionStreak += 1;
-      setState(() {
-        _detectedLabel = tflite.label;
-      });
+        if (_bottleDetectionStreak < 3) {
+          setState(() {
+            _isBottleConfirmed = false;
+            _error = 'Bottle candidate detected. Hold steady...';
+          });
+          return;
+        }
 
-      if (_bottleDetectionStreak < 3) {
         setState(() {
-          _isBottleConfirmed = false;
-          _error = 'Bottle candidate detected. Hold steady...';
+          _isBottleConfirmed = true;
+          _error = null;
         });
+        await _goToInsertionCheck();
         return;
       }
-
-      setState(() {
-        _isBottleConfirmed = true;
-        _error = null;
-      });
-
-      final inputImage = InputImage.fromFilePath(imagePath);
-      final barcodes = await _barcodeScanner!.processImage(inputImage);
-      if (barcodes.isEmpty) return;
-
-      final code = barcodes.first.rawValue?.trim();
-      if (code == null || code.isEmpty) return;
-
-      if (!mounted || _processing) return;
-      setState(() => _processing = true);
-
-      final firestore = context.read<FirestoreService>();
-      final validation = ScanValidationService(firestore);
-      final err = await validation.validateBarcode(code);
-      if (!mounted) return;
-
-      if (err != null) {
-        _bottleDetectionStreak = 0;
-        setState(() {
-          _error = err;
-          _processing = false;
-          _isBottleConfirmed = false;
-        });
-        return;
-      }
-
-      setState(() {
-        _scannedResult = code;
-        _processing = false;
-      });
-
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (!mounted) return;
-      widget.onScanned(code);
     } catch (e) {
-      debugPrint('⚠️ Mobile scan frame error: $e');
+      debugPrint('Mobile scan frame error: $e');
     } finally {
       _isScanningFrame = false;
     }
   }
 
+  Future<void> _goToInsertionCheck() async {
+    if (_navigating || !mounted) return;
+    _navigating = true;
+
+    setState(() {
+      _processing = true;
+    });
+
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+    widget.onScanned('bottle-confirmed');
+  }
+
   Future<void> _onDesktopDetect(BarcodeCapture capture) async {
-    if (_isProcessingDesktopScan || _processing || _scannedResult != null) {
+    if (_isProcessingDesktopScan || _processing || _navigating) {
       return;
     }
 
@@ -233,27 +208,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         _isBottleConfirmed = true;
       });
 
-      final firestore = context.read<FirestoreService>();
-      final validation = ScanValidationService(firestore);
-      final err = await validation.validateBarcode(code);
-      if (!mounted) return;
-
-      if (err != null) {
-        setState(() {
-          _error = err;
-          _processing = false;
-          _isBottleConfirmed = false;
-        });
-        return;
-      }
-
-      setState(() {
-        _scannedResult = code;
-        _processing = false;
-      });
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (!mounted) return;
-      widget.onScanned(code);
+      await _goToInsertionCheck();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -261,7 +216,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         _processing = false;
         _isBottleConfirmed = false;
       });
-      debugPrint('⚠️ Desktop scan error: $e');
+      debugPrint('Desktop scan error: $e');
     } finally {
       _isProcessingDesktopScan = false;
     }
@@ -273,10 +228,10 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     setState(() {
       _processing = true;
       _error = null;
-      _scannedResult = null;
       _isBottleConfirmed = false;
       _bottleDetectionStreak = 0;
       _detectedLabel = '';
+      _navigating = false;
     });
 
     try {
@@ -303,7 +258,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         _processing = false;
         _error = 'Reload failed. Please try again.';
       });
-      debugPrint('⚠️ Reload integration error: $e');
+      debugPrint('Reload integration error: $e');
     }
   }
 
@@ -312,7 +267,6 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     _mobileScanTimer?.cancel();
     _cameraController?.dispose();
     _desktopScannerController?.dispose();
-    _barcodeScanner?.close();
     _tflite.dispose();
     super.dispose();
   }
@@ -438,9 +392,9 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                     children: [
                       Text(
                         !_tfliteReady
-                            ? 'TFLite model not ready. Add model files to assets/models'
-                            : (_isBottleConfirmed
-                                ? 'Bottle confirmed. Align barcode in frame'
+                          ? 'AI model missing. Going to insertion check'
+                          : (_isBottleConfirmed
+                            ? 'Bottle confirmed. Moving to insertion check'
                                 : 'Point camera at a plastic bottle'),
                         textAlign: TextAlign.center,
                         style: const TextStyle(
@@ -459,14 +413,6 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                             fontSize: 12,
                             shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
                           ),
-                        ),
-                      ],
-                      if (_scannedResult != null) ...[
-                        const SizedBox(height: 24),
-                        _StatusBanner(
-                          color: Colors.green.shade700,
-                          icon: Icons.check_circle,
-                          message: 'Bottle scanned: $_scannedResult',
                         ),
                       ],
                       if (_error != null) ...[

@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
 import 'camera_confirm_screen.dart';
+import 'scan_bottle_screen.dart';
 import 'scan_bin_screen.dart';
 
 /// Orchestrates bin barcode scanning flow.
@@ -16,6 +17,7 @@ class ScanBinFlowScreen extends StatefulWidget {
 }
 
 class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
+  bool _bottleDetecting = false;
   bool _cameraConfirming = false;
   bool _processing = false;
   bool _showSuccess = false;
@@ -28,6 +30,17 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
   Future<void> _onBinScanned(String binId) async {
     setState(() {
       _lastBinId = binId;
+      _bottleDetecting = true;
+      _cameraConfirming = false;
+      _showSuccess = false;
+    });
+  }
+
+  void _onBottleDetected(String barcode) {
+    if (_lastBinId == null) return;
+
+    setState(() {
+      _bottleDetecting = false;
       _cameraConfirming = true;
       _showSuccess = false;
     });
@@ -110,18 +123,32 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_bottleDetecting && _lastBinId != null) {
+      return ScanBottleScreen(
+        onScanned: _onBottleDetected,
+        onBack: () {
+          if (!mounted) return;
+          setState(() {
+            _bottleDetecting = false;
+          });
+        },
+      );
+    }
+
     if (_cameraConfirming && _lastBinId != null) {
       return CameraConfirmScreen(
         binId: _lastBinId!,
+        barcode: '',
         onSuccess: () => _recordBottle(_lastBinId!),
         onTimeout: () {
           if (!mounted) return;
           setState(() {
             _cameraConfirming = false;
+            _bottleDetecting = true;
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No bottle detected within 15 seconds. Please scan the bin again.'),
+              content: Text('No bottle insertion detected. Please scan bottle again.'),
             ),
           );
         },
@@ -129,6 +156,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
           if (!mounted) return;
           setState(() {
             _cameraConfirming = false;
+            _bottleDetecting = true;
           });
         },
         countdownSeconds: 15,
@@ -256,7 +284,8 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
                         onPressed: _processing
                             ? null
                             : () => setState(() {
-                                  _cameraConfirming = true;
+                                  _bottleDetecting = true;
+                                  _cameraConfirming = false;
                                   _showSuccess = false;
                                 }),
                       ),

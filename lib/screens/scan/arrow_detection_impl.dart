@@ -3,7 +3,7 @@ import 'package:camera/camera.dart';
 
 /// Robust frame-difference detection supporting both Android (YUV420) and iOS (BGRA8888).
 /// - Skips warmup frames before setting reference to avoid dark/uninitialized frames.
-/// - Debounces trigger to avoid false positives from single noisy frames.
+/// - Triggers insertion on either small motion or luminance drop (bottle hides/enters bin).
 /// - Handles variable bytesPerRow safely on all devices.
 class ArrowDetectionImpl {
   ArrowDetectionImpl({
@@ -36,20 +36,18 @@ class ArrowDetectionImpl {
   static const int _warmupFrames = 10;
   int _frameCount = 0;
 
-  /// Consecutive frame counters used for readiness and insertion checks.
-  static const int _consecutiveRequired = 3;
-  int _readyCount = 0;
-  int _unreadyCount = 0;
-  bool _isReady = false;
+  /// Consecutive frame counter for insertion checks.
+  static const int _consecutiveRequired = 2;
   int _insertCount = 0;
 
   static const int _sampleStep = 6;
 
-  /// Readiness threshold: bottle appears in the guide before insertion.
-  static const double _readyThreshold = 0.18;
-  /// Drop threshold after ready: insertion typically darkens the region.
-  static const double _insertDarkeningThreshold = 0.12;
-  static const double _readyLostThreshold = 0.10;
+  /// Small movement threshold in region (normalized absolute difference).
+  static const double _smallMoveThreshold = 0.06;
+  /// Luminance drop threshold: bottle hides/enters bin and region darkens.
+  static const double _hideDropThreshold = 0.06;
+  /// Stable-scene threshold for gradual reference adaptation.
+  static const double _stableThreshold = 0.04;
 
   void processImage(CameraImage image) {
     if (_triggered || _disposed) return;
@@ -71,53 +69,16 @@ class ArrowDetectionImpl {
       // Lengths can differ if image size changes — reset reference
       if (pixels.length != _referencePixels!.length) {
         _referencePixels = pixels;
-        _readyCount = 0;
         _insertCount = 0;
         return;
       }
 
       final diff = _computeDifference(_referencePixels!, pixels);
-
-      // Stage 1: bottle aligned in front of the outline.
-      if (!_isReady) {
-        if (diff >= _readyThreshold) {
-          _readyCount++;
-          if (_readyCount >= _consecutiveRequired) {
-            _isReady = true;
-            _onReadyChanged(true);
-            // Re-baseline on the ready pose so insertion is detected as next change.
-            _referencePixels = List<int>.from(pixels);
-            _insertCount = 0;
-          }
-        } else {
-          _readyCount = 0;
-          // Slowly adapt to ambient lighting changes while scene is stable.
-          if (diff <= _readyLostThreshold) {
-            _blendReference(_referencePixels!, pixels);
-          }
-        }
-        return;
-      }
-
-      // If user moves away too much, clear ready state and ask to align again.
-      if (diff >= _readyThreshold * 1.6) {
-        _unreadyCount++;
-        if (_unreadyCount >= _consecutiveRequired + 1) {
-          _isReady = false;
-          _onReadyChanged(false);
-          _referencePixels = List<int>.from(pixels);
-          _readyCount = 0;
-          _insertCount = 0;
-          _unreadyCount = 0;
-          return;
-        }
-      } else {
-        _unreadyCount = 0;
-      }
-
-      // Stage 2: after ready, detect insertion as region darkening.
       final lumaDrop = _computeLumaDrop(_referencePixels!, pixels);
-      if (lumaDrop >= _insertDarkeningThreshold) {
+      final smallMoveDetected = diff >= _smallMoveThreshold;
+      final bottleHideDetected = lumaDrop >= _hideDropThreshold;
+
+      if (smallMoveDetected || bottleHideDetected) {
         _insertCount++;
         if (_insertCount >= _consecutiveRequired) {
           _triggered = true;
@@ -128,12 +89,15 @@ class ArrowDetectionImpl {
         _insertCount = 0;
 
         // Keep adapting if scene is mostly unchanged.
-        if (diff <= _readyLostThreshold) {
+        if (diff <= _stableThreshold) {
           _blendReference(_referencePixels!, pixels);
         } else {
           _referencePixels = List<int>.from(pixels);
         }
       }
+
+      // Keep callback active for compatibility, even though outline UI is hidden.
+      _onReadyChanged(smallMoveDetected || bottleHideDetected);
     } catch (_) {
       // Silently ignore any platform-specific image processing errors
     }
@@ -251,8 +215,6 @@ class ArrowDetectionImpl {
     _disposed = true;
     _triggered = true;
     _referencePixels = null;
-    _readyCount = 0;
     _insertCount = 0;
-    _isReady = false;
   }
 }
