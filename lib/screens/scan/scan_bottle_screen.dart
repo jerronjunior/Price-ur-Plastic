@@ -1,15 +1,17 @@
+import 'dart:async';
 import 'dart:io';
+
+import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
-import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:mobile_scanner/mobile_scanner.dart' hide BarcodeFormat;
 import 'package:provider/provider.dart';
-import 'package:go_router/go_router.dart';
+
+import '../../services/bottle_tflite_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scan_validation_service.dart';
-import '../../services/bottle_ai_service.dart';
 
 class ScanBottleScreen extends StatefulWidget {
   const ScanBottleScreen({
@@ -26,61 +28,57 @@ class ScanBottleScreen extends StatefulWidget {
 }
 
 class _ScanBottleScreenState extends State<ScanBottleScreen> {
-  double _getScanOutlineSize(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    // Use 75% of the smallest dimension, capped at reasonable limits
-    final size = (screenWidth < screenHeight ? screenWidth : screenHeight) * 0.75;
-    return size.clamp(280.0, 500.0); // min 280, max 500
-  }
-
   CameraController? _cameraController;
   MobileScannerController? _desktopScannerController;
   BarcodeScanner? _barcodeScanner;
-  ImageLabeler? _imageLabeler;
-  BottleAIService? _bottleAI;
+  Timer? _mobileScanTimer;
+
+  final BottleTfliteService _tflite = BottleTfliteService();
 
   bool _cameraReady = false;
-  bool _isProcessingFrame = false; // prevents concurrent ML Kit calls
-  bool _processing = false;        // firestore validation in progress
+  bool _isScanningFrame = false;
+  bool _processing = false;
   bool _isProcessingDesktopScan = false;
   bool _isBottleConfirmed = false;
+  bool _tfliteReady = false;
+
   int _bottleDetectionStreak = 0;
   String? _error;
   String? _scannedResult;
-  BottleCondition? _bottleCondition; // ← new: track bottle condition
+  String _detectedLabel = '';
+
+  bool get _isDesktopPlatform =>
+      !kIsWeb &&
+      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
   @override
   void initState() {
     super.initState();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await _tflite.init();
+    if (!mounted) return;
+
+    setState(() {
+      _tfliteReady = _tflite.isReady;
+    });
+
     if (_isDesktopPlatform) {
       _desktopScannerController = MobileScannerController(
         detectionSpeed: DetectionSpeed.noDuplicates,
         facing: CameraFacing.back,
         torchEnabled: false,
       );
-      _cameraReady = true;
-    } else {
-      _initCamera();
+      setState(() => _cameraReady = true);
+      return;
     }
+
+    await _initMobileCamera();
   }
 
-  @override
-  void dispose() {
-    _cameraController?.stopImageStream();
-    _cameraController?.dispose();
-    _desktopScannerController?.dispose();
-    _barcodeScanner?.close();
-    _imageLabeler?.close();
-    _bottleAI?.dispose();
-    super.dispose();
-  }
-
-  bool get _isDesktopPlatform =>
-      !kIsWeb &&
-      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
-
-  Future<void> _initCamera() async {
+  Future<void> _initMobileCamera() async {
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) return;
@@ -90,76 +88,127 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         orElse: () => cameras.first,
       );
 
-      // Request the native format ML Kit expects per platform
       _cameraController = CameraController(
         back,
-        ResolutionPreset.medium, // medium = best ML Kit performance balance
+        ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: Platform.isAndroid
-            ? ImageFormatGroup.nv21    // ML Kit Android expects NV21
-            : ImageFormatGroup.bgra8888, // ML Kit iOS expects BGRA8888
       );
 
       _barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.all]);
-      _imageLabeler = ImageLabeler(
-        options: ImageLabelerOptions(confidenceThreshold: 0.45),
-      );
-      _bottleAI = BottleAIService(imageLabeler: _imageLabeler);
-
       await _cameraController!.initialize();
-      if (!mounted) return;
 
+      if (!mounted) return;
       setState(() => _cameraReady = true);
 
-      // Every frame from this stream goes to _onCameraFrame
-      await _cameraController!.startImageStream(_onCameraFrame);
-    } catch (e) {
-      debugPrint('❌ Camera init error: $e');
-    }
-  }
-
-  Future<void> _releaseCamera() async {
-    try { await _cameraController?.stopImageStream(); } catch (_) {}
-    try { await _cameraController?.dispose(); } catch (_) {}
-    _cameraController = null;
-  }
-
-  Future<void> _reloadApiIntegration() async {
-    if (_processing || !mounted) return;
-
-    setState(() {
-      _processing = true;
-      _error = null;
-      _scannedResult = null;
-      _isBottleConfirmed = false;
-      _bottleDetectionStreak = 0;
-      _bottleCondition = null;
-      _isProcessingFrame = false;
-      _isProcessingDesktopScan = false;
-    });
-
-    try {
-      if (_isDesktopPlatform) {
-        try { await _desktopScannerController?.stop(); } catch (_) {}
-        await Future.delayed(const Duration(milliseconds: 120));
-        try { await _desktopScannerController?.start(); } catch (_) {}
-      } else {
-        await _releaseCamera();
-        await _initCamera();
-      }
-
-      if (!mounted) return;
-      setState(() => _processing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('API integration reloaded. Ready to scan.')),
+      _mobileScanTimer?.cancel();
+      _mobileScanTimer = Timer.periodic(
+        const Duration(milliseconds: 1000),
+        (_) => _scanMobileFrame(),
       );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _processing = false;
-        _error = 'Reload failed. Please try again.';
+        _error = 'Camera init failed. Please retry.';
       });
-      debugPrint('⚠️ Reload integration error: $e');
+      debugPrint('❌ Mobile camera init error: $e');
+    }
+  }
+
+  Future<void> _scanMobileFrame() async {
+    if (_isDesktopPlatform ||
+        _isScanningFrame ||
+        _processing ||
+        _scannedResult != null ||
+        _cameraController == null ||
+        !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    _isScanningFrame = true;
+
+    try {
+      if (!_tfliteReady) {
+        if (mounted) {
+          setState(() {
+            _isBottleConfirmed = false;
+            _error = 'Model not ready. Add assets/models/ssd_mobilenet.tflite';
+          });
+        }
+        return;
+      }
+
+      final shot = await _cameraController!.takePicture();
+      final imagePath = shot.path;
+
+      final tflite = await _tflite.detectFromFilePath(imagePath);
+
+      if (!mounted) return;
+
+      if (!tflite.isBottle) {
+        _bottleDetectionStreak = 0;
+        setState(() {
+          _isBottleConfirmed = false;
+          _detectedLabel = tflite.label;
+          _error = 'No bottle detected (${tflite.label}).';
+        });
+        return;
+      }
+
+      _bottleDetectionStreak += 1;
+      setState(() {
+        _detectedLabel = tflite.label;
+      });
+
+      if (_bottleDetectionStreak < 3) {
+        setState(() {
+          _isBottleConfirmed = false;
+          _error = 'Bottle candidate detected. Hold steady...';
+        });
+        return;
+      }
+
+      setState(() {
+        _isBottleConfirmed = true;
+        _error = null;
+      });
+
+      final inputImage = InputImage.fromFilePath(imagePath);
+      final barcodes = await _barcodeScanner!.processImage(inputImage);
+      if (barcodes.isEmpty) return;
+
+      final code = barcodes.first.rawValue?.trim();
+      if (code == null || code.isEmpty) return;
+
+      if (!mounted || _processing) return;
+      setState(() => _processing = true);
+
+      final firestore = context.read<FirestoreService>();
+      final validation = ScanValidationService(firestore);
+      final err = await validation.validateBarcode(code);
+      if (!mounted) return;
+
+      if (err != null) {
+        _bottleDetectionStreak = 0;
+        setState(() {
+          _error = err;
+          _processing = false;
+          _isBottleConfirmed = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _scannedResult = code;
+        _processing = false;
+      });
+
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
+      widget.onScanned(code);
+    } catch (e) {
+      debugPrint('⚠️ Mobile scan frame error: $e');
+    } finally {
+      _isScanningFrame = false;
     }
   }
 
@@ -218,157 +267,66 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     }
   }
 
-  // ── Runs on EVERY camera frame ──────────────────────────────────────────
-  Future<void> _onCameraFrame(CameraImage image) async {
-    // Guard: skip if busy or done
-    if (_isProcessingFrame || _processing || _scannedResult != null) return;
-    _isProcessingFrame = true;
+  Future<void> _reloadApiIntegration() async {
+    if (_processing || !mounted) return;
+
+    setState(() {
+      _processing = true;
+      _error = null;
+      _scannedResult = null;
+      _isBottleConfirmed = false;
+      _bottleDetectionStreak = 0;
+      _detectedLabel = '';
+    });
 
     try {
-      // Convert raw camera frame to ML Kit InputImage
-      final inputImage = _toInputImage(image);
-      if (inputImage == null) return;
+      await _tflite.init();
 
-      // ── STEP 1: Bottle AI recognition (is this a bottle?) ─────────────
-      final scanAnalysis = await _bottleAI!.analyzeBottle(inputImage);
-      final isBottle = scanAnalysis.recognition.isBottle;
-
-      if (!mounted) return;
-
-      if (!isBottle) {
-        _bottleDetectionStreak = 0;
-        setState(() {
-          _isBottleConfirmed = false;
-          _bottleCondition = null;
-          if (!_processing) {
-            _error = 'No bottle detected. Point camera at a bottle.';
-          }
-        });
-        return;
+      if (_isDesktopPlatform) {
+        try {
+          await _desktopScannerController?.stop();
+        } catch (_) {}
+        await Future.delayed(const Duration(milliseconds: 100));
+        try {
+          await _desktopScannerController?.start();
+        } catch (_) {}
       }
 
-      // ── STEP 1B: Bottle condition (dropped vs non-dropped) ───────────
-      final bottleCondition = scanAnalysis.condition;
-      debugPrint('🍾 Bottle AI Result: $bottleCondition');
-
-      _bottleDetectionStreak += 1;
-
       if (!mounted) return;
-
-      // Require stable bottle detection across multiple frames.
-      if (_bottleDetectionStreak < 2) {
-        setState(() {
-          _isBottleConfirmed = false;
-          _bottleCondition = bottleCondition;
-          _error = 'Bottle candidate detected. Hold steady...';
-        });
-        return;
-      }
-
-      // ── STEP 2: Bottle confirmed — read barcode from same frame ───────
-      if (!_isBottleConfirmed) {
-        setState(() {
-          _isBottleConfirmed = true;
-          _bottleCondition = bottleCondition;
-          _error = null;
-        });
-      } else {
-        setState(() => _bottleCondition = bottleCondition);
-      }
-
-      final barcodes = await _barcodeScanner!.processImage(inputImage);
-      if (barcodes.isEmpty) return; // bottle present but barcode not in frame yet
-
-      final code = barcodes.first.rawValue?.trim();
-      if (code == null || code.isEmpty) return;
-
-      // ── STEP 3: Firestore validation ──────────────────────────────────
-      if (!mounted || _processing) return;
-      setState(() => _processing = true);
-      final firestore = context.read<FirestoreService>();
-      final validation = ScanValidationService(firestore);
-
-      // Pause stream during async Firestore call
-      await _cameraController?.stopImageStream();
-
-      final err = await validation.validateBarcode(code);
-      if (!mounted) return;
-
-      if (err != null) {
-        _bottleDetectionStreak = 0;
-        setState(() {
-          _error = err;
-          _processing = false;
-          _isBottleConfirmed = false;
-          _bottleCondition = null;
-        });
-        // Resume stream so user can retry
-        await _cameraController?.startImageStream(_onCameraFrame);
-        return;
-      }
-
-      // ── STEP 4: All good — success ────────────────────────────────────
-      setState(() => _scannedResult = code);
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (!mounted) return;
-
-      await _releaseCamera();
-      await Future.delayed(const Duration(milliseconds: 400));
-      if (mounted) widget.onScanned(code);
+      setState(() {
+        _tfliteReady = _tflite.isReady;
+        _processing = false;
+      });
     } catch (e) {
-      debugPrint('⚠️ Frame error: $e');
-    } finally {
-      _isProcessingFrame = false;
-    }
-  }
-
-  // ── THE KEY: Convert CameraImage → InputImage correctly ─────────────────
-  // This is what the previous approach got wrong.
-  // camera package gives raw pixel planes. ML Kit needs those exact bytes
-  // in the right format — NOT JPEG, not a file path.
-  InputImage? _toInputImage(CameraImage image) {
-    try {
-      if (Platform.isIOS) {
-        // iOS always gives BGRA8888 — single plane, direct pass
-        final plane = image.planes.first;
-        return InputImage.fromBytes(
-          bytes: plane.bytes,
-          metadata: InputImageMetadata(
-            size: Size(image.width.toDouble(), image.height.toDouble()),
-            rotation: InputImageRotation.rotation0deg,
-            format: InputImageFormat.bgra8888,
-            bytesPerRow: plane.bytesPerRow,
-          ),
-        );
-      }
-
-      // Android: we requested NV21 via imageFormatGroup.
-      // NV21 has 3 planes (Y, U, V) — concatenate them all.
-      final WriteBuffer buffer = WriteBuffer();
-      for (final plane in image.planes) {
-        buffer.putUint8List(plane.bytes);
-      }
-
-      return InputImage.fromBytes(
-        bytes: buffer.done().buffer.asUint8List(),
-        metadata: InputImageMetadata(
-          size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: InputImageRotation.rotation0deg,
-          format: InputImageFormat.nv21,
-          bytesPerRow: image.planes.first.bytesPerRow,
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ InputImage conversion error: $e');
-      return null;
+      if (!mounted) return;
+      setState(() {
+        _processing = false;
+        _error = 'Reload failed. Please try again.';
+      });
+      debugPrint('⚠️ Reload integration error: $e');
     }
   }
 
   @override
+  void dispose() {
+    _mobileScanTimer?.cancel();
+    _cameraController?.dispose();
+    _desktopScannerController?.dispose();
+    _barcodeScanner?.close();
+    _tflite.dispose();
+    super.dispose();
+  }
+
+  double _getScanOutlineSize(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final height = MediaQuery.of(context).size.height;
+    final size = (width < height ? width : height) * 0.75;
+    return size.clamp(280.0, 500.0);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isNonBottleError =
-      (_error ?? '').toLowerCase().contains('no bottle detected') ||
-      (_error ?? '').toLowerCase().contains('not a bottle');
+    final isNonBottleError = (_error ?? '').toLowerCase().contains('no bottle');
     final frameColor = (!_isBottleConfirmed && isNonBottleError)
         ? Colors.red
         : _isBottleConfirmed
@@ -378,7 +336,6 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     return Scaffold(
       body: Column(
         children: [
-          // ── Blue Header ───────────────────────────────────────────────
           Container(
             width: double.infinity,
             decoration: const BoxDecoration(
@@ -407,19 +364,16 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.refresh, color: Colors.white),
-                    tooltip: 'Reload API integration',
+                    tooltip: 'Reload detection',
                     onPressed: _reloadApiIntegration,
                   ),
                 ],
               ),
             ),
           ),
-
-          // ── Camera + Overlays ─────────────────────────────────────────
           Expanded(
             child: Stack(
               children: [
-                // Camera preview — fills entire area correctly
                 if (_isDesktopPlatform && _desktopScannerController != null)
                   MobileScanner(
                     controller: _desktopScannerController!,
@@ -445,22 +399,18 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                         children: [
                           CircularProgressIndicator(color: Colors.white),
                           SizedBox(height: 12),
-                          Text(
-                            'Starting camera...',
-                            style: TextStyle(color: Colors.white),
-                          ),
+                          Text('Starting camera...', style: TextStyle(color: Colors.white)),
                         ],
                       ),
                     ),
                   ),
 
-                // Animated scan frame — changes color by state
                 Center(
                   child: Builder(
                     builder: (context) {
                       final outlineSize = _getScanOutlineSize(context);
                       return AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
+                        duration: const Duration(milliseconds: 250),
                         width: outlineSize,
                         height: outlineSize,
                         decoration: BoxDecoration(
@@ -472,93 +422,6 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                   ),
                 ),
 
-                // Scan line
-                Center(
-                  child: Builder(
-                    builder: (context) {
-                      final outlineSize = _getScanOutlineSize(context);
-                      return Container(
-                        width: outlineSize,
-                        height: 2,
-                        color: frameColor.withValues(alpha: 0.5),
-                      );
-                    },
-                  ),
-                ),
-
-                // Bottle confirmed badge (above frame)
-                if (_isBottleConfirmed && _scannedResult == null)
-                  Positioned(
-                    top: MediaQuery.of(context).size.height * 0.22,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.check_circle,
-                                  color: Colors.greenAccent, size: 16),
-                              SizedBox(width: 6),
-                              Text(
-                                'Bottle detected',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  shadows: [
-                                    Shadow(color: Colors.black54, blurRadius: 4),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (_bottleCondition != null) ...[
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _bottleCondition!.status == 'dropped'
-                                    ? Colors.orange.shade700
-                                    : Colors.green.shade700,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _bottleCondition!.status == 'dropped'
-                                        ? Icons.warning
-                                        : Icons.check_circle,
-                                    color: Colors.white,
-                                    size: 14,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _bottleCondition!.status == 'dropped'
-                                        ? '⚠️ Dropped/Damaged (${(_bottleCondition!.confidence * 100).toStringAsFixed(0)}%)'
-                                        : '✓ Non-Dropped/Intact (${(_bottleCondition!.confidence * 100).toStringAsFixed(0)}%)',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Firestore validation spinner
                 if (_processing)
                   Container(
                     color: Colors.black38,
@@ -567,66 +430,37 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                     ),
                   ),
 
-                // Bottom status
                 Positioned(
                   bottom: 60,
                   left: 0,
                   right: 0,
                   child: Column(
                     children: [
-                      if (_bottleCondition?.status == 'dropped')
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.shade700,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: Colors.orange.shade900,
-                                width: 2,
-                              ),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.warning, color: Colors.white),
-                                SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    'Bottle appears damaged. Check condition before recycling.',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
                       Text(
-                        _isDesktopPlatform
-                          ? (_isBottleConfirmed
-                            ? 'Barcode detected. Validating...'
-                            : 'Point camera at bottle barcode')
-                          : (_isBottleConfirmed
-                            ? 'Align the barcode within the frame'
-                            : 'Point camera at a bottle'),
+                        !_tfliteReady
+                            ? 'TFLite model not ready. Add model files to assets/models'
+                            : (_isBottleConfirmed
+                                ? 'Bottle confirmed. Align barcode in frame'
+                                : 'Point camera at a plastic bottle'),
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                          fontSize: 16,
                           color: Colors.white,
-                          fontWeight: FontWeight.w500,
-                          shadows: [
-                            Shadow(color: Colors.black54, blurRadius: 4),
-                          ],
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
                         ),
                       ),
+                      if (_detectedLabel.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Detector: $_detectedLabel',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                          ),
+                        ),
+                      ],
                       if (_scannedResult != null) ...[
                         const SizedBox(height: 24),
                         _StatusBanner(
@@ -641,29 +475,8 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                           color: isNonBottleError
                               ? Colors.orange.shade800
                               : Colors.red.shade700,
-                          icon: isNonBottleError
-                              ? Icons.no_drinks
-                              : Icons.error,
+                          icon: isNonBottleError ? Icons.no_drinks : Icons.error,
                           message: _error!,
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: _reloadApiIntegration,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Reload API Integration'),
-                        ),
-                      ],
-                      if (_isDesktopPlatform) ...[
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Desktop mode scans barcode directly.',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            shadows: [
-                              Shadow(color: Colors.black54, blurRadius: 4),
-                            ],
-                          ),
                         ),
                       ],
                     ],
@@ -689,16 +502,36 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            _BottomNavItem(icon: Icons.home, label: 'Home',
-                isActive: false, onTap: () => context.push('/home')),
-            _BottomNavItem(icon: Icons.leaderboard, label: 'Leaderboard',
-                isActive: false, onTap: () => context.push('/leaderboard')),
-            _BottomNavItem(icon: Icons.camera_alt, label: 'Scan',
-                isActive: true, onTap: () {}),
-            _BottomNavItem(icon: Icons.card_giftcard, label: 'Rewards',
-                isActive: false, onTap: () => context.push('/rewards')),
-            _BottomNavItem(icon: Icons.person, label: 'Profile',
-                isActive: false, onTap: () => context.push('/profile')),
+            _BottomNavItem(
+              icon: Icons.home,
+              label: 'Home',
+              isActive: false,
+              onTap: () => context.push('/home'),
+            ),
+            _BottomNavItem(
+              icon: Icons.leaderboard,
+              label: 'Leaderboard',
+              isActive: false,
+              onTap: () => context.push('/leaderboard'),
+            ),
+            _BottomNavItem(
+              icon: Icons.camera_alt,
+              label: 'Scan',
+              isActive: true,
+              onTap: () {},
+            ),
+            _BottomNavItem(
+              icon: Icons.card_giftcard,
+              label: 'Rewards',
+              isActive: false,
+              onTap: () => context.push('/rewards'),
+            ),
+            _BottomNavItem(
+              icon: Icons.person,
+              label: 'Profile',
+              isActive: false,
+              onTap: () => context.push('/profile'),
+            ),
           ],
         ),
       ),
@@ -712,6 +545,7 @@ class _StatusBanner extends StatelessWidget {
     required this.icon,
     required this.message,
   });
+
   final Color color;
   final IconData icon;
   final String message;
@@ -753,6 +587,7 @@ class _BottomNavItem extends StatelessWidget {
     required this.isActive,
     required this.onTap,
   });
+
   final IconData icon;
   final String label;
   final bool isActive;
@@ -766,17 +601,20 @@ class _BottomNavItem extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon,
-              color: isActive ? primaryBlue : Colors.grey.shade700,
-              size: 24),
+          Icon(
+            icon,
+            color: isActive ? primaryBlue : Colors.grey.shade700,
+            size: 24,
+          ),
           const SizedBox(height: 4),
-          Text(label,
-              style: TextStyle(
-                fontSize: 10,
-                color: isActive ? primaryBlue : Colors.grey.shade700,
-                fontWeight:
-                    isActive ? FontWeight.bold : FontWeight.normal,
-              )),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: isActive ? primaryBlue : Colors.grey.shade700,
+              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
         ],
       ),
     );
