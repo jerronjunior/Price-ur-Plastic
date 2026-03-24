@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 
+enum _OcclusionState { idle, hidden }
+
 /// Robust frame-difference detection supporting both Android (YUV420) and iOS (BGRA8888).
 /// - Skips warmup frames before setting reference to avoid dark/uninitialized frames.
-/// - Triggers insertion on either small motion or luminance drop (bottle hides/enters bin).
+/// - Triggers insertion when arrow is hidden long enough, or hidden then visible again.
 /// - Handles variable bytesPerRow safely on all devices.
 class ArrowDetectionImpl {
   ArrowDetectionImpl({
@@ -30,22 +32,35 @@ class ArrowDetectionImpl {
   List<int>? _referencePixels;
   bool _triggered = false;
   bool _disposed = false;
+  _OcclusionState _occlusionState = _OcclusionState.idle;
 
   /// Number of frames to skip before capturing the reference frame.
   /// Prevents capturing a dark/uninitialized frame on camera startup.
   static const int _warmupFrames = 10;
   int _frameCount = 0;
 
-  /// Consecutive frame counter for insertion checks.
-  static const int _consecutiveRequired = 2;
-  int _insertCount = 0;
+  /// Hidden state must hold for a few frames to filter out noise.
+  static const int _hideConsecutiveRequired = 2;
+  int _hideCount = 0;
+
+  /// If arrow remains hidden for this many frames, confirm insertion directly.
+  static const int _minHiddenHoldFrames = 8;
+
+  /// After hidden, arrow must be visible again for a few frames to confirm insert.
+  static const int _recoveryConsecutiveRequired = 2;
+  int _recoveryCount = 0;
+
+  /// Hidden phase timeout in frames (~1.5s at around 30 FPS).
+  static const int _maxHiddenFrames = 45;
+  int _hiddenSinceFrame = 0;
 
   static const int _sampleStep = 6;
 
-  /// Small movement threshold in region (normalized absolute difference).
-  static const double _smallMoveThreshold = 0.06;
-  /// Luminance drop threshold: bottle hides/enters bin and region darkens.
-  static const double _hideDropThreshold = 0.06;
+  /// Luminance drop threshold: arrow region becomes dark when bottle occludes it.
+  /// Balanced profile: slightly more sensitive to real arrow occlusion.
+  static const double _hideDropThreshold = 0.065;
+  /// Recovery threshold: arrow visible again after occlusion.
+  static const double _recoverDropThreshold = 0.04;
   /// Stable-scene threshold for gradual reference adaptation.
   static const double _stableThreshold = 0.04;
 
@@ -69,35 +84,65 @@ class ArrowDetectionImpl {
       // Lengths can differ if image size changes — reset reference
       if (pixels.length != _referencePixels!.length) {
         _referencePixels = pixels;
-        _insertCount = 0;
+        _occlusionState = _OcclusionState.idle;
+        _hideCount = 0;
+        _recoveryCount = 0;
         return;
       }
 
       final diff = _computeDifference(_referencePixels!, pixels);
       final lumaDrop = _computeLumaDrop(_referencePixels!, pixels);
-      final smallMoveDetected = diff >= _smallMoveThreshold;
       final bottleHideDetected = lumaDrop >= _hideDropThreshold;
+      final arrowVisibleAgain = lumaDrop <= _recoverDropThreshold;
 
-      if (smallMoveDetected || bottleHideDetected) {
-        _insertCount++;
-        if (_insertCount >= _consecutiveRequired) {
+      if (_occlusionState == _OcclusionState.idle) {
+        if (bottleHideDetected) {
+          _hideCount++;
+          if (_hideCount >= _hideConsecutiveRequired) {
+            _occlusionState = _OcclusionState.hidden;
+            _hiddenSinceFrame = _frameCount;
+            _recoveryCount = 0;
+          }
+        } else {
+          _hideCount = 0;
+          if (diff <= _stableThreshold) {
+            _blendReference(_referencePixels!, pixels);
+          }
+        }
+      } else {
+        final hiddenFor = _frameCount - _hiddenSinceFrame;
+
+        // Common real flow: arrow stays hidden while bottle passes in front.
+        if (hiddenFor >= _minHiddenHoldFrames) {
           _triggered = true;
           _onInsertDetected();
           return;
         }
-      } else {
-        _insertCount = 0;
 
-        // Keep adapting if scene is mostly unchanged.
-        if (diff <= _stableThreshold) {
-          _blendReference(_referencePixels!, pixels);
-        } else {
+        if (hiddenFor > _maxHiddenFrames) {
+          // Timeout: reset and reacquire baseline to avoid stale hidden state.
+          _occlusionState = _OcclusionState.idle;
+          _hideCount = 0;
+          _recoveryCount = 0;
           _referencePixels = List<int>.from(pixels);
+          _onReadyChanged(false);
+          return;
+        }
+
+        if (arrowVisibleAgain) {
+          _recoveryCount++;
+          if (_recoveryCount >= _recoveryConsecutiveRequired) {
+            _triggered = true;
+            _onInsertDetected();
+            return;
+          }
+        } else {
+          _recoveryCount = 0;
         }
       }
 
       // Keep callback active for compatibility, even though outline UI is hidden.
-      _onReadyChanged(smallMoveDetected || bottleHideDetected);
+      _onReadyChanged(_occlusionState == _OcclusionState.idle && !bottleHideDetected);
     } catch (_) {
       // Silently ignore any platform-specific image processing errors
     }
@@ -215,6 +260,8 @@ class ArrowDetectionImpl {
     _disposed = true;
     _triggered = true;
     _referencePixels = null;
-    _insertCount = 0;
+    _occlusionState = _OcclusionState.idle;
+    _hideCount = 0;
+    _recoveryCount = 0;
   }
 }
