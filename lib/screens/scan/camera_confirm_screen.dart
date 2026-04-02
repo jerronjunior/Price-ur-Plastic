@@ -407,13 +407,6 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                 ),
               ),
 
-              // Small augmented arrow at top-center (upside down)
-              if (!_confirmed && !_saving)
-                Positioned(
-                  top: 72,
-                  child: _AugmentedArrowHint(isReady: _bottleReady),
-                ),
-
               // Instruction text at bottom
               if (!_confirmed && !_saving)
                 Positioned(
@@ -516,67 +509,6 @@ class _CountdownBadge extends StatelessWidget {
           color: Colors.white,
           fontSize: confirmed ? 28 : 36,
           fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-}
-
-class _AugmentedArrowHint extends StatefulWidget {
-  const _AugmentedArrowHint({required this.isReady});
-
-  final bool isReady;
-
-  @override
-  State<_AugmentedArrowHint> createState() => _AugmentedArrowHintState();
-}
-
-class _AugmentedArrowHintState extends State<_AugmentedArrowHint>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulseController;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _pulseController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = widget.isReady
-        ? Colors.greenAccent
-        : Colors.cyanAccent.withValues(alpha: 0.95);
-
-    return FadeTransition(
-      opacity: Tween<double>(begin: 0.65, end: 1.0).animate(_pulseController),
-      child: Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withValues(alpha: 0.35),
-          border: Border.all(color: accent.withValues(alpha: 0.9), width: 1.4),
-          boxShadow: [
-            BoxShadow(
-              color: accent.withValues(alpha: 0.55),
-              blurRadius: 12,
-              spreadRadius: 1,
-            ),
-          ],
-        ),
-        child: Icon(
-          Icons.keyboard_double_arrow_down_rounded,
-          color: accent,
-          size: 20,
         ),
       ),
     );
