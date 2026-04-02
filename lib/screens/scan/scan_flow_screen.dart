@@ -156,7 +156,7 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
       );
     }
 
-    // ── Step 2: Camera confirm (10s countdown + arrow detection)
+    // ── Step 2: Camera confirm (10s countdown + slot-motion detection)
     return CameraConfirmScreen(
       barcode: _barcode!,
       binId: '',

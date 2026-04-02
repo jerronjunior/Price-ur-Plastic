@@ -8,9 +8,9 @@ import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/recycled_bottle_model.dart';
 import '../../services/firestore_service.dart';
-import 'arrow_detection.dart';
+import 'slot_motion_detection.dart';
 
-/// Camera confirm screen: 10s countdown, arrow region overlay, detect bottle insertion.
+/// Camera confirm screen: 10s countdown, slot-motion overlay, detect bottle insertion.
 ///
 /// Camera fixes applied:
 /// - Uses platform-correct ImageFormatGroup (yuv420 on Android, bgra8888 on iOS)
@@ -55,11 +55,11 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   bool _overlayVisible = false;
   bool _bottleReady = false;
 
-  /// Fraction of preview used for arrow detection region
-  static const double _regionLeft = 0.25;
-  static const double _regionTop = 0.30;
-  static const double _regionWidth = 0.50;
-  static const double _regionHeight = 0.35;
+  /// Fraction of preview used for the bin opening slot region.
+  static const double _regionLeft = 0.21;
+  static const double _regionTop = 0.18;
+  static const double _regionWidth = 0.58;
+  static const double _regionHeight = 0.28;
 
   @override
   void initState() {
@@ -372,7 +372,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                 child: CameraPreview(_controller!),
               ),
 
-              // Arrow region overlay (detection box)
+              // Slot-motion detector region
               if (_overlayVisible)
                 Positioned(
                   left: w * _regionLeft,
@@ -382,12 +382,11 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                   child: IgnorePointer(
                     ignoring: true,
                     child: Opacity(
-                      opacity: 0,
-                      child: ArrowRegionOverlay(
+                      opacity: 0.92,
+                      child: SlotMotionOverlay(
                         controller: _controller!,
-                        onInsertDetected: _onInsertDetected,
+                        onMotionDetected: _onInsertDetected,
                         onReadyChanged: _onReadyChanged,
-                        countdown: _countdown,
                         disabled: _confirmed || _saving,
                         regionLeft: _regionLeft,
                         regionTop: _regionTop,
@@ -423,7 +422,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                       borderRadius: BorderRadius.all(Radius.circular(12)),
                     ),
                     child: const Text(
-                      'Insert the bottle into the bin before countdown ends.',
+                      'Pass the bottle through the slot before countdown ends.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white,

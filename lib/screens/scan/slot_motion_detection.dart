@@ -1,20 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'arrow_detection_impl.dart';
+import 'slot_motion_detection_impl.dart';
 
-/// Overlay showing the "arrow region" and running frame-difference detection.
-/// When the icon region is hidden and then visible again, calls [onInsertDetected].
-///
-/// IMPORTANT: This widget manages its own image stream lifecycle.
-/// The [controller] must be fully initialized before passing it here,
-/// and must NOT already have an active image stream.
-class ArrowRegionOverlay extends StatefulWidget {
-  const ArrowRegionOverlay({
+/// Overlay that keeps the camera stream alive and watches the bin opening slot.
+/// When movement passes through the slot region, it calls [onMotionDetected].
+class SlotMotionOverlay extends StatefulWidget {
+  const SlotMotionOverlay({
     super.key,
     required this.controller,
-    required this.onInsertDetected,
+    required this.onMotionDetected,
     required this.onReadyChanged,
-    required this.countdown,
     required this.disabled,
     required this.regionLeft,
     required this.regionTop,
@@ -23,9 +18,8 @@ class ArrowRegionOverlay extends StatefulWidget {
   });
 
   final CameraController controller;
-  final VoidCallback onInsertDetected;
+  final VoidCallback onMotionDetected;
   final ValueChanged<bool> onReadyChanged;
-  final int countdown;
   final bool disabled;
   final double regionLeft;
   final double regionTop;
@@ -33,11 +27,11 @@ class ArrowRegionOverlay extends StatefulWidget {
   final double regionHeight;
 
   @override
-  State<ArrowRegionOverlay> createState() => _ArrowRegionOverlayState();
+  State<SlotMotionOverlay> createState() => _SlotMotionOverlayState();
 }
 
-class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
-  ArrowDetectionImpl? _detector;
+class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
+  SlotMotionDetectionImpl? _detector;
   bool _disposed = false;
   bool _streamStarted = false;
   bool _isReady = false;
@@ -51,7 +45,7 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
   Future<void> _startDetection() async {
     if (_disposed) return;
 
-    _detector = ArrowDetectionImpl(
+    _detector = SlotMotionDetectionImpl(
       regionLeft: widget.regionLeft,
       regionTop: widget.regionTop,
       regionWidth: widget.regionWidth,
@@ -62,14 +56,13 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
         setState(() => _isReady = ready);
         widget.onReadyChanged(ready);
       },
-      onInsertDetected: () {
+      onMotionDetected: () {
         if (!_disposed && !widget.disabled) {
-          widget.onInsertDetected();
+          widget.onMotionDetected();
         }
       },
     );
 
-    // Guard: only start stream if controller is ready and not already streaming
     if (!widget.controller.value.isInitialized) return;
     if (widget.controller.value.isStreamingImages) return;
 
@@ -79,7 +72,7 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
         setState(() => _streamStarted = true);
       }
     } catch (e) {
-      debugPrint('ArrowRegionOverlay: Failed to start image stream: $e');
+      debugPrint('SlotMotionOverlay: Failed to start image stream: $e');
     }
   }
 
@@ -94,16 +87,16 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
     _disposed = true;
     _detector?.dispose();
 
-    // Only stop stream if we started it and it's still running
     if (_streamStarted && widget.controller.value.isInitialized) {
       try {
         if (widget.controller.value.isStreamingImages) {
           widget.controller.stopImageStream();
         }
       } catch (e) {
-        debugPrint('ArrowRegionOverlay: Error stopping image stream: $e');
+        debugPrint('SlotMotionOverlay: Error stopping image stream: $e');
       }
     }
+
     super.dispose();
   }
 
@@ -123,13 +116,13 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
         borderRadius: BorderRadius.circular(12),
         color: _isReady
             ? Colors.green.withValues(alpha: 0.08)
-            : Colors.black.withValues(alpha: 0.08),
+            : Colors.black.withValues(alpha: 0.06),
       ),
       child: Stack(
         children: [
           Positioned.fill(
             child: CustomPaint(
-              painter: _BottleOutlinePainter(
+              painter: _SlotGuidePainter(
                 color: widget.disabled
                     ? Colors.grey
                     : _isReady
@@ -150,7 +143,7 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
                   color: _isReady ? Colors.green : Colors.black45,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.check, color: Colors.white, size: 18),
+                child: const Icon(Icons.motion_photos_on, color: Colors.white, size: 18),
               ),
             ),
           ),
@@ -162,8 +155,8 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
                 widget.disabled
                     ? 'Detected!'
                     : _isReady
-                        ? 'Ready - insert bottle now'
-                        : 'Align bottle inside outline',
+                        ? 'Ready - pass bottle through the slot'
+                        : 'Watch the bin opening slot',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: widget.disabled
@@ -184,8 +177,8 @@ class _ArrowRegionOverlayState extends State<ArrowRegionOverlay> {
   }
 }
 
-class _BottleOutlinePainter extends CustomPainter {
-  const _BottleOutlinePainter({required this.color});
+class _SlotGuidePainter extends CustomPainter {
+  const _SlotGuidePainter({required this.color});
 
   final Color color;
 
@@ -196,37 +189,36 @@ class _BottleOutlinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
 
-    final bottleWidth = size.width * 0.42;
-    final neckWidth = bottleWidth * 0.40;
-    final neckHeight = size.height * 0.16;
-    final bodyHeight = size.height * 0.55;
-    final startY = size.height * 0.14;
+    final openingWidth = size.width * 0.58;
+    final openingHeight = size.height * 0.22;
     final centerX = size.width / 2;
+    final centerY = size.height * 0.28;
 
-    final neckRect = RRect.fromRectAndRadius(
+    final slotRect = RRect.fromRectAndRadius(
       Rect.fromCenter(
-        center: Offset(centerX, startY + neckHeight / 2),
-        width: neckWidth,
-        height: neckHeight,
+        center: Offset(centerX, centerY),
+        width: openingWidth,
+        height: openingHeight,
       ),
-      const Radius.circular(8),
+      const Radius.circular(16),
     );
 
-    final bodyRect = RRect.fromRectAndRadius(
-      Rect.fromCenter(
-        center: Offset(centerX, startY + neckHeight + bodyHeight / 2),
-        width: bottleWidth,
-        height: bodyHeight,
-      ),
-      const Radius.circular(20),
-    );
+    canvas.drawRRect(slotRect, paint);
 
-    canvas.drawRRect(neckRect, paint);
-    canvas.drawRRect(bodyRect, paint);
+    final linePaint = Paint()
+      ..color = color.withValues(alpha: 0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    canvas.drawLine(
+      Offset(centerX - openingWidth * 0.25, centerY),
+      Offset(centerX + openingWidth * 0.25, centerY),
+      linePaint,
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _BottleOutlinePainter oldDelegate) {
+  bool shouldRepaint(covariant _SlotGuidePainter oldDelegate) {
     return oldDelegate.color != color;
   }
 }

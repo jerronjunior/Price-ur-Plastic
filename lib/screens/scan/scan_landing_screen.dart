@@ -968,8 +968,8 @@ class _FailedScreen extends StatelessWidget {
                         fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 Text(
-                  'The arrow wasn\'t covered in time.\n'
-                  'Insert the bottle while the camera countdown is active.',
+                  'No movement was detected at the slot in time.\n'
+                  'Pass the bottle through the bin opening while the camera countdown is active.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 15, color: Colors.grey.shade600),
                 ),
