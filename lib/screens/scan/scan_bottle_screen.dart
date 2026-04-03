@@ -117,7 +117,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Camera init failed. Please retry.');
+      setState(() => _error = '.');
       debugPrint('Mobile camera init error: $e');
     }
   }
