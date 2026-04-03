@@ -61,7 +61,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
   /// Minimum brightness std-dev across streak frames to pass.
   /// Real hand-held: ~2–8.  Flat photo/screen: ~0–1.2.
-  static const double _livenessMinStdDev = 1.5;
+  static const double _livenessMinStdDev = 2;
 
   final List<double> _brightnessHistory = [];
   bool _livenessRejected = false;
