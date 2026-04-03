@@ -1,7 +1,12 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 
-enum _InsertPhase { idle, topSeen, midSeen }
+enum _PassState {
+  idle,
+  entering,
+  inside,
+  exiting,
+}
 
 class _LumaSample {
   const _LumaSample({
@@ -17,8 +22,9 @@ class _LumaSample {
 
 /// Motion-based detector for the bin opening slot.
 ///
-/// It watches a small preview region and fires when a bottle causes a short
-/// burst of consistent movement through that slot area.
+/// 5-filter pipeline adapted for this app:
+/// 1) zone filter, 2) motion size, 3) downward direction,
+/// 4) entry->inside->exit state machine, 5) cooldown.
 class SlotMotionDetectionImpl {
   SlotMotionDetectionImpl({
     required void Function() onMotionDetected,
@@ -42,30 +48,32 @@ class SlotMotionDetectionImpl {
   final double _regionHeight;
 
   _LumaSample? _previousSample;
-  bool _triggered = false;
   bool _disposed = false;
   bool _readyNotified = false;
-  bool _armed = false;
 
   static const int _warmupFrames = 8;
-  static const int _calmConsecutiveRequired = 3;
-  static const int _armCalmFramesRequired = 4;
-  static const double _motionThreshold = 0.05;
-  static const double _readyThreshold = 0.025;
-  static const double _bandMotionThreshold = 0.07;
-  static const double _strongDiffThreshold = 0.10;
-  static const int _phaseTimeoutFrames = 9;
-  static const int _sampleStep = 5;
-  static const double _diffSmoothingAlpha = 0.35;
+  static const int _sampleStep = 2;
+
+  // Filter 2: min changed fraction in zone
+  static const double _minChangeFraction = 0.12;
+  // Filter 3: downward dominance score threshold
+  static const double _minDownwardScore = 0.56;
+  // Filter 5: cooldown after each count
+  static const int _cooldownMs = 2200;
+  // Pixel diff threshold for per-pixel motion map
+  static const int _pixelDiffThreshold = 28;
+  static const int _bands = 20;
 
   int _frameCount = 0;
-  int _calmCount = 0;
-  double _smoothedDiff = 0;
-  _InsertPhase _phase = _InsertPhase.idle;
-  int _phaseStartedAtFrame = 0;
+  _PassState _state = _PassState.idle;
+  DateTime? _lastCount;
+  final List<double> _rowHistory = List<double>.filled(_bands, 0.0);
+
+  double _changedFraction = 0;
+  double _downwardScore = 0;
 
   void processImage(CameraImage image) {
-    if (_triggered || _disposed) return;
+    if (_disposed) return;
 
     try {
       _frameCount++;
@@ -83,88 +91,137 @@ class SlotMotionDetectionImpl {
           _previousSample!.rows != sample.rows ||
           _previousSample!.cols != sample.cols) {
         _previousSample = sample;
-        _calmCount = 0;
-        _armed = false;
-        _phase = _InsertPhase.idle;
+        _state = _PassState.idle;
+        _resetRows();
         _notifyReady(false);
         return;
       }
 
       final previous = _previousSample!;
-      final diff = _computeDifference(previous.pixels, sample.pixels);
-        _smoothedDiff = _smoothedDiff == 0
-          ? diff
-          : (_smoothedDiff * (1 - _diffSmoothingAlpha)) + (diff * _diffSmoothingAlpha);
-
-        final isMotion = _smoothedDiff >= _motionThreshold;
-        final isCalm = _smoothedDiff <= _readyThreshold;
-      final topDiff = _computeBandDifference(previous, sample, 0, 0.34);
-      final midDiff = _computeBandDifference(previous, sample, 0.34, 0.67);
-      final bottomDiff = _computeBandDifference(previous, sample, 0.67, 1.0);
-
-      final topActive = topDiff >= _bandMotionThreshold;
-      final midActive = midDiff >= _bandMotionThreshold;
-      final bottomActive = bottomDiff >= _bandMotionThreshold;
-
-      final bandSpread = [topDiff, midDiff, bottomDiff]
-          .reduce((a, b) => a > b ? a : b) -
-          [topDiff, midDiff, bottomDiff].reduce((a, b) => a < b ? a : b);
-      final looksLikeGlobalShake =
-          topActive && midActive && bottomActive && diff >= _strongDiffThreshold && bandSpread < 0.03;
-
-      if (isCalm) {
-        _calmCount++;
-        if (_calmCount >= _armCalmFramesRequired) {
-          _armed = true;
-          _notifyReady(true);
-        }
-      } else {
-        _calmCount = 0;
-        _notifyReady(false);
+      final zoneLen = sample.pixels.length;
+      if (zoneLen == 0) {
+        _previousSample = sample;
+        return;
       }
 
-      if (_armed && isMotion) {
-        if (looksLikeGlobalShake) {
-          _phase = _InsertPhase.idle;
-          _armed = false;
-        } else {
-          final phaseAge = _frameCount - _phaseStartedAtFrame;
+      if (_inCooldown()) {
+        _notifyReady(false);
+        _previousSample = sample;
+        return;
+      }
 
-          switch (_phase) {
-            case _InsertPhase.idle:
-              if (topActive && !bottomActive) {
-                _phase = _InsertPhase.topSeen;
-                _phaseStartedAtFrame = _frameCount;
-              }
-              break;
-            case _InsertPhase.topSeen:
-              if (phaseAge > _phaseTimeoutFrames) {
-                _phase = _InsertPhase.idle;
-              } else if (midActive) {
-                _phase = _InsertPhase.midSeen;
-                _phaseStartedAtFrame = _frameCount;
-              } else if (bottomActive && !midActive) {
-                _phase = _InsertPhase.idle;
-              }
-              break;
-            case _InsertPhase.midSeen:
-              if (phaseAge > _phaseTimeoutFrames) {
-                _phase = _InsertPhase.idle;
-              } else if (bottomActive) {
-                _triggered = true;
-                _onMotionDetected();
-                return;
-              }
-              break;
-          }
+      final bandMotion = List<double>.filled(_bands, 0.0);
+      var totalChanged = 0;
+
+      final zoneW = sample.cols;
+      final zoneH = sample.rows;
+
+      for (var i = 0; i < zoneLen; i++) {
+        final diff = (sample.pixels[i] - previous.pixels[i]).abs();
+        if (diff > _pixelDiffThreshold) {
+          totalChanged++;
+          final row = i ~/ zoneW;
+          final band = ((row / zoneH) * _bands).clamp(0, _bands - 1).toInt();
+          bandMotion[band] += 1.0;
         }
-      } else {
-        _phase = _InsertPhase.idle;
+      }
+
+      // Filter 2: motion must be significant enough in slot zone.
+      _changedFraction = totalChanged / zoneLen;
+
+      if (_changedFraction < _minChangeFraction) {
+        final shouldCount = _state == _PassState.inside || _state == _PassState.exiting;
+        _state = _PassState.idle;
+        _resetRows();
+        _notifyReady(true);
+
+        if (shouldCount) {
+          _lastCount = DateTime.now();
+          _notifyReady(false);
+          _onMotionDetected();
+          _previousSample = sample;
+          return;
+        }
+
+        _previousSample = sample;
+        return;
+      }
+
+      _notifyReady(false);
+
+      // Smooth band motion and compute direction bias.
+      final bandMax = bandMotion.reduce((a, b) => a > b ? a : b);
+      if (bandMax > 0) {
+        for (var b = 0; b < _bands; b++) {
+          _rowHistory[b] = _rowHistory[b] * 0.6 + (bandMotion[b] / bandMax) * 0.4;
+        }
+      }
+
+      var upperSum = 0.0;
+      var lowerSum = 0.0;
+      for (var b = 0; b < _bands ~/ 2; b++) {
+        upperSum += _rowHistory[b];
+      }
+      for (var b = _bands ~/ 2; b < _bands; b++) {
+        lowerSum += _rowHistory[b];
+      }
+
+      final total = upperSum + lowerSum;
+      _downwardScore = total > 0 ? lowerSum / total : 0;
+
+      // Filter 3: ignore sideways/upward jitter.
+      if (_downwardScore < _minDownwardScore) {
+        _previousSample = sample;
+        return;
+      }
+
+      // Filter 4: entry -> inside -> exiting progression.
+      double weightedBand = 0;
+      double weightSum = 0;
+      for (var b = 0; b < _bands; b++) {
+        weightedBand += b * bandMotion[b];
+        weightSum += bandMotion[b];
+      }
+
+      final centroid = weightSum > 0 ? weightedBand / weightSum : 0;
+      final relPos = centroid / _bands;
+
+      switch (_state) {
+        case _PassState.idle:
+          if (relPos < 0.45 && _changedFraction > _minChangeFraction) {
+            _state = _PassState.entering;
+          }
+          break;
+        case _PassState.entering:
+          if (relPos >= 0.30) {
+            _state = _PassState.inside;
+          }
+          break;
+        case _PassState.inside:
+          if (relPos > 0.60) {
+            _state = _PassState.exiting;
+          }
+          break;
+        case _PassState.exiting:
+          // Count on the next low-motion frame.
+          break;
       }
 
       _previousSample = sample;
     } catch (_) {
       // Ignore platform-specific image processing failures and keep streaming.
+    }
+  }
+
+  bool _inCooldown() {
+    final lastCount = _lastCount;
+    if (lastCount == null) return false;
+    return DateTime.now().difference(lastCount).inMilliseconds < _cooldownMs;
+  }
+
+  void _resetRows() {
+    for (var i = 0; i < _rowHistory.length; i++) {
+      _rowHistory[i] = 0;
     }
   }
 
@@ -264,52 +321,6 @@ class SlotMotionDetectionImpl {
 
     if (out.isEmpty || rows == 0 || cols == 0) return null;
     return _LumaSample(pixels: out, rows: rows, cols: cols);
-  }
-
-  double _computeDifference(List<int> previous, List<int> current) {
-    if (previous.length != current.length || previous.isEmpty) return 0;
-
-    var sum = 0;
-    for (var i = 0; i < previous.length; i++) {
-      sum += (previous[i] - current[i]).abs();
-    }
-
-    return sum / (previous.length * 255.0);
-  }
-
-  double _computeBandDifference(
-    _LumaSample previous,
-    _LumaSample current,
-    double startRatio,
-    double endRatio,
-  ) {
-    if (previous.rows != current.rows ||
-        previous.cols != current.cols ||
-        previous.pixels.length != current.pixels.length ||
-        previous.rows <= 0 ||
-        previous.cols <= 0) {
-      return 0;
-    }
-
-    final startRow = (previous.rows * startRatio).floor().clamp(0, previous.rows - 1);
-    final endRowExclusive = (previous.rows * endRatio).ceil().clamp(startRow + 1, previous.rows);
-
-    var sum = 0;
-    var count = 0;
-
-    for (var row = startRow; row < endRowExclusive; row++) {
-      final base = row * previous.cols;
-      for (var col = 0; col < previous.cols; col++) {
-        final idx = base + col;
-        if (idx >= 0 && idx < previous.pixels.length && idx < current.pixels.length) {
-          sum += (previous.pixels[idx] - current.pixels[idx]).abs();
-          count++;
-        }
-      }
-    }
-
-    if (count == 0) return 0;
-    return sum / (count * 255.0);
   }
 
   void _notifyReady(bool ready) {
