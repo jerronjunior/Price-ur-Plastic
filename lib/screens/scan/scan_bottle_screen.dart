@@ -468,8 +468,8 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                           children: [
                             const Icon(Icons.verified_user, color: Colors.white70, size: 14),
                             const SizedBox(width: 8),
-                            const Text('Liveness check ',
-                                style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            //const Text('Liveness check ',
+                                //style: TextStyle(color: Colors.white70, fontSize: 12))
                             ...List.generate(
                               _requiredStreak,
                               (i) => Container(
