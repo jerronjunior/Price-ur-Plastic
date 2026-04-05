@@ -5,57 +5,27 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
-// FIXES IN THIS VERSION
-//
-// BUG 1 — Camera shake triggers false count (ROOT CAUSE)
-//   Old: engine watched only ONE zone (flap area). Camera shake shifts the
-//   entire image so flap zone brightness changes → counted as bottle.
-//   Fix: added a REFERENCE zone on the static bin body beside the flap.
-//   A real bottle only darkens the flap zone. Camera shake darkens BOTH zones
-//   at the same time. Engine now rejects any frame where the reference zone
-//   also changes significantly.
-//
-// BUG 2 — No minimum open duration
-//   Camera shakes are very fast (~50ms). Real bottles take 150–700ms to pass.
-//   Added _minFlapOpenMs = 150 — rejects events shorter than 150ms.
-//
-// NEW — Animated augmented AR arrow overlay
-//   Shows a bouncing downward arrow so the user knows which direction to
-//   insert the bottle. Arrow fades out when a bottle is being detected.
+// Flap Detection Engine (unchanged from previous version)
 // ══════════════════════════════════════════════════════════════════════════════
-
 enum _FlapState { idle, open }
 
 class _FlapEngine {
-  // ── Detection zone (flap with arrow) ──────────────────────────────────────
   Rect zone = const Rect.fromLTRB(0.25, 0.10, 0.75, 0.65);
-
-  // ── Reference zone (static bin body — used to reject camera shake) ────────
-  // Placed on the bin body to the right of the flap. When camera shakes,
-  // this zone changes brightness along with the flap zone → ignored.
-  // When a real bottle goes in, only the flap zone darkens → counted.
   Rect referenceZone = const Rect.fromLTRB(0.78, 0.20, 0.96, 0.55);
 
-  // ── Calibration ───────────────────────────────────────────────────────────
   double baselineBrightness = 0;
-  double baselineReferenceBrightness = 0; // FIX 1: baseline for reference zone
+  double baselineReferenceBrightness = 0;
   bool isCalibrated = false;
-
-  // How much darker than baseline = flap is open (0.25 = 25% drop)
   double darkThresholdFraction = 0.25;
 
-  // FIX 1: Max allowed change in reference zone before rejecting as camera shake.
-  // If reference changes by more than this fraction → camera moved → ignore.
   static const double _shakeRejectFraction = 0.12;
 
-  // ── State ──────────────────────────────────────────────────────────────────
   _FlapState state = _FlapState.idle;
   double currentBrightness = 0;
   double currentReferenceBrightness = 0;
-  bool lastRejectedByShake = false;  // renamed from lastRejectedBySpoof
+  bool lastRejectedByShake = false;
   DateTime? _flapOpenTime;
 
-  // FIX 2: Minimum time flap must stay open to count (rejects fast shakes)
   static const int _minFlapOpenMs = 150;
   static const int _maxFlapOpenMs = 3000;
   static const int _cooldownMs = 2500;
@@ -68,7 +38,6 @@ class _FlapEngine {
 
   double get darkThreshold => baselineBrightness * (1.0 - darkThresholdFraction);
 
-  // ── Main frame processor ───────────────────────────────────────────────────
   bool processFrame(CameraImage image) {
     if (!isCalibrated || inCooldown) return false;
 
@@ -77,14 +46,11 @@ class _FlapEngine {
 
     final bool flapOpen = currentBrightness < darkThreshold;
 
-    // FIX 1: Check reference zone for camera shake.
-    // If the reference (bin body) brightness also changed a lot, the camera
-    // moved — not a bottle insertion. Reject the frame.
     if (baselineReferenceBrightness > 0) {
-      final double refChange = (currentReferenceBrightness - baselineReferenceBrightness).abs()
-          / baselineReferenceBrightness;
+      final double refChange =
+          (currentReferenceBrightness - baselineReferenceBrightness).abs() /
+              baselineReferenceBrightness;
       if (refChange > _shakeRejectFraction) {
-        // Camera shook — reset state and ignore this frame
         lastRejectedByShake = true;
         state = _FlapState.idle;
         _flapOpenTime = null;
@@ -101,51 +67,35 @@ class _FlapEngine {
           _flapOpenTime = DateTime.now();
         }
         break;
-
       case _FlapState.open:
         if (!flapOpen) {
           final int openMs = _flapOpenTime != null
               ? DateTime.now().difference(_flapOpenTime!).inMilliseconds
               : 0;
-
-          // FIX 2: Reject events shorter than minimum — these are shakes/bumps
-          if (openMs < _minFlapOpenMs) {
+          if (openMs < _minFlapOpenMs || openMs > _maxFlapOpenMs) {
             state = _FlapState.idle;
             _flapOpenTime = null;
             return false;
           }
-
-          // Reject events longer than maximum — hand blocking the slot
-          if (openMs > _maxFlapOpenMs) {
-            state = _FlapState.idle;
-            _flapOpenTime = null;
-            return false;
-          }
-
-          // Duration is valid — real bottle insertion ✅
           state = _FlapState.idle;
           _flapOpenTime = null;
           _lastCount = DateTime.now();
           return true;
         }
-
-        // Still open — check for timeout
         if (_flapOpenTime != null &&
-            DateTime.now().difference(_flapOpenTime!).inMilliseconds > _maxFlapOpenMs) {
+            DateTime.now().difference(_flapOpenTime!).inMilliseconds >
+                _maxFlapOpenMs) {
           state = _FlapState.idle;
           _flapOpenTime = null;
         }
         break;
     }
-
     return false;
   }
 
-  // ── Calibration ───────────────────────────────────────────────────────────
   void addCalibrationSample(CameraImage image) {
     final double b = _zoneBrightness(image, zone);
-    final double r = _zoneBrightness(image, referenceZone); // FIX 1: calibrate reference too
-
+    final double r = _zoneBrightness(image, referenceZone);
     if (baselineBrightness == 0) {
       baselineBrightness = b;
       baselineReferenceBrightness = r;
@@ -159,21 +109,17 @@ class _FlapEngine {
     isCalibrated = baselineBrightness > 10;
   }
 
-  // ── Zone brightness helper (Y-plane sampling) ─────────────────────────────
   double _zoneBrightness(CameraImage image, Rect z) {
     final int fw = image.width;
     final int fh = image.height;
     final Uint8List yPlane = image.planes[0].bytes;
-
     final int x0 = (z.left * fw).toInt().clamp(0, fw - 1);
     final int y0 = (z.top * fh).toInt().clamp(0, fh - 1);
     final int x1 = (z.right * fw).toInt().clamp(0, fw - 1);
     final int y1 = (z.bottom * fh).toInt().clamp(0, fh - 1);
-
     double sum = 0;
     int count = 0;
     const int step = 4;
-
     for (int py = y0; py < y1; py += step) {
       for (int px = x0; px < x1; px += step) {
         final int idx = py * fw + px;
@@ -183,7 +129,6 @@ class _FlapEngine {
         }
       }
     }
-
     return count > 0 ? sum / count : 128;
   }
 
@@ -237,11 +182,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   Timer? _timeoutTimer;
   late int _remainingSeconds;
 
-  // ── AR Arrow animation ─────────────────────────────────────────────────────
-  // NEW: Animated downward arrow showing bottle insertion direction
-  late AnimationController _arrowBounceCtrl;
-  late Animation<double> _arrowBounce;
-  late AnimationController _arrowFadeCtrl;
+  // ── Arrow animation ─────────────────────────────────────────────────────────
+  // 3 chevrons animate sequentially top→bottom to show "insert into slot"
+  // Each completes one full cycle in 1200ms, offset by 400ms each
+  late AnimationController _flowCtrl;
+
+  // Flash animation when bottle is counted
+  late AnimationController _flashCtrl;
+  bool _showFlash = false;
 
   @override
   void initState() {
@@ -249,20 +197,16 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     WidgetsBinding.instance.addObserver(this);
     _remainingSeconds = widget.timeoutSeconds;
 
-    // AR arrow — slow gentle bounce up and down
-    _arrowBounceCtrl = AnimationController(
+    // Flowing arrows: 1200ms per full cycle, repeating
+    _flowCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
-    _arrowBounce = Tween<double>(begin: 0, end: 14).animate(
-      CurvedAnimation(parent: _arrowBounceCtrl, curve: Curves.easeInOut),
-    );
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
 
-    // Arrow fades out when flap opens (bottle detected)
-    _arrowFadeCtrl = AnimationController(
+    // White flash on successful count
+    _flashCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
-      value: 1.0,
+      duration: const Duration(milliseconds: 500),
     );
 
     _startTimeout();
@@ -273,8 +217,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timeoutTimer?.cancel();
-    _arrowBounceCtrl.dispose();
-    _arrowFadeCtrl.dispose();
+    _flowCtrl.dispose();
+    _flashCtrl.dispose();
     _cam?.stopImageStream();
     _cam?.dispose();
     super.dispose();
@@ -328,9 +272,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       await _cam!.startImageStream(_onFrame);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Camera error: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Camera error: $e')));
     }
   }
 
@@ -345,36 +288,43 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         _calibrationFrames++;
         if (_calibrationFrames >= _calibrationFrameCount) {
           _engine.finalizeCalibration();
-          if (mounted) setState(() {
-            _calibrating = false;
-            _calibrationFrames = 0;
-          });
+          if (mounted) {
+            setState(() {
+              _calibrating = false;
+              _calibrationFrames = 0;
+            });
+          }
         }
         return;
       }
 
       final bool counted = _engine.processFrame(image);
-
-      if (mounted) {
-        // Fade arrow out when flap is open
-        if (_engine.state == _FlapState.open) {
-          _arrowFadeCtrl.animateTo(0.0);
-        } else {
-          _arrowFadeCtrl.animateTo(1.0);
-        }
-        setState(() {});
-      }
+      if (mounted) setState(() {});
 
       if (counted) {
         _detected = true;
         _timeoutTimer?.cancel();
-        Future.delayed(const Duration(milliseconds: 250), () {
+        // Flash white on count
+        _showFlash = true;
+        _flashCtrl.forward(from: 0).then((_) {
+          if (mounted) setState(() => _showFlash = false);
+        });
+        Future.delayed(const Duration(milliseconds: 350), () {
           if (mounted) widget.onDetected();
         });
       }
     } finally {
       _processingFrame = false;
     }
+  }
+
+  // ── Arrow color based on state ──────────────────────────────────────────────
+  Color get _arrowColor {
+    if (_calibrating) return Colors.white38;
+    if (_engine.lastRejectedByShake) return Colors.redAccent;
+    if (_engine.state == _FlapState.open) return Colors.orangeAccent;
+    if (!_engine.isCalibrated) return Colors.white38;
+    return const Color(0xFF58D68D);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -398,11 +348,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           ),
         ),
       ),
-      body: _buildCamera(),
+      body: _buildBody(),
     );
   }
 
-  Widget _buildCamera() {
+  Widget _buildBody() {
     if (!_cameraReady || _cam == null || !_cam!.value.isInitialized) {
       return const Center(
         child: CircularProgressIndicator(color: Color(0xFF67E8A8)),
@@ -415,7 +365,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       return Stack(
         fit: StackFit.expand,
         children: [
-          // ── Camera preview ───────────────────────────────────────────────
+          // ── Camera preview ─────────────────────────────────────────────
           ClipRect(
             child: OverflowBox(
               alignment: Alignment.center,
@@ -430,10 +380,20 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-          // ── Dim overlay ──────────────────────────────────────────────────
-          Container(color: Colors.black.withValues(alpha: 0.12)),
+          // ── Subtle dim ─────────────────────────────────────────────────
+          Container(color: Colors.black.withValues(alpha: 0.15)),
 
-          // ── Countdown timer ──────────────────────────────────────────────
+          // ── Count flash ────────────────────────────────────────────────
+          if (_showFlash)
+            AnimatedBuilder(
+              animation: _flashCtrl,
+              builder: (_, __) => Opacity(
+                opacity: (1.0 - _flashCtrl.value).clamp(0.0, 1.0),
+                child: Container(color: Colors.white.withValues(alpha: 0.35)),
+              ),
+            ),
+
+          // ── Countdown ──────────────────────────────────────────────────
           Positioned(
             top: 18,
             left: 0,
@@ -450,9 +410,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 child: Text(
                   '$_remainingSeconds',
                   style: TextStyle(
-                    color: _remainingSeconds <= 5
-                        ? Colors.redAccent
-                        : Colors.white,
+                    color:
+                        _remainingSeconds <= 5 ? Colors.redAccent : Colors.white,
                     fontSize: 32,
                     fontWeight: FontWeight.w700,
                   ),
@@ -461,145 +420,32 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-          // ── Scan box ─────────────────────────────────────────────────────
-          Center(
-            child: Container(
-              width: size.width * 0.62,
-              height: size.width * 0.62,
-              decoration: BoxDecoration(
-                color: const Color(0xFF58D68D).withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: _engine.state == _FlapState.open
-                      ? Colors.orangeAccent
-                      : const Color(0xFF58D68D),
-                  width: 4,
-                ),
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Slot indicator
-                  Positioned(
-                    top: 24,
-                    child: Container(
-                      width: size.width * 0.30,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                          color: const Color(0xFF58D68D),
-                          width: 4,
-                        ),
-                      ),
-                      child: Center(
-                        child: Container(
-                          width: size.width * 0.18,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF58D68D).withValues(alpha: 0.8),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Record indicator dot
-                  Positioned(
-                    top: 26,
-                    right: 14,
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF58D68D),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.radio_button_checked,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                    ),
-                  ),
-                  // Status text
-                  Positioned(
-                    bottom: 32,
-                    left: 16,
-                    right: 16,
-                    child: Text(
-                      _calibrating
-                          ? 'Calibrating…'
-                          : _engine.state == _FlapState.open
-                              ? 'Detecting…'
-                              : 'Ready — insert bottle',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: _engine.state == _FlapState.open
-                            ? Colors.orangeAccent
-                            : const Color(0xFF58D68D).withValues(alpha: 0.95),
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        shadows: const [
-                          Shadow(color: Colors.black54, blurRadius: 4),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ── NEW: AR animated downward arrow ──────────────────────────────
-          // Shows the correct insertion direction — fades out when detecting
-          AnimatedBuilder(
-            animation: Listenable.merge([_arrowBounce, _arrowFadeCtrl]),
-            builder: (context, _) {
-              return Positioned(
-                // Positioned just above centre — over the slot opening
-                top: size.height * 0.12 + _arrowBounce.value,
-                left: 0,
-                right: 0,
-                child: Opacity(
-                  opacity: _arrowFadeCtrl.value,
-                  child: Center(
-                    child: _ArrowIndicator(size: size),
-                  ),
-                ),
-              );
-            },
-          ),
-
-          // ── Calibration progress bar ──────────────────────────────────────
+          // ── Calibration bar ────────────────────────────────────────────
           if (_calibrating)
             Positioned(
-              top: 110,
+              top: 108,
               left: 32,
               right: 32,
-              child: Column(
-                children: [
-                  const Text(
-                    'Calibrating flap — keep slot clear',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                    textAlign: TextAlign.center,
+              child: Column(children: [
+                const Text(
+                  'Calibrating — keep slot clear',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: _calibrationFrames / _calibrationFrameCount,
+                    backgroundColor: Colors.white12,
+                    color: const Color(0xFF58D68D),
+                    minHeight: 5,
                   ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: _calibrationFrames / _calibrationFrameCount,
-                      backgroundColor: Colors.white12,
-                      color: const Color(0xFF58D68D),
-                      minHeight: 5,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ]),
             ),
 
-          // ── Shake-rejected indicator ──────────────────────────────────────
+          // ── Shake warning ──────────────────────────────────────────────
           if (_engine.lastRejectedByShake)
             Positioned(
               top: 108,
@@ -618,17 +464,55 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                     children: [
                       Icon(Icons.warning_amber, color: Colors.white, size: 14),
                       SizedBox(width: 6),
-                      Text(
-                        'Camera moved — hold steady',
-                        style: TextStyle(color: Colors.white, fontSize: 12),
-                      ),
+                      Text('Camera moved — hold steady',
+                          style:
+                              TextStyle(color: Colors.white, fontSize: 12)),
                     ],
                   ),
                 ),
               ),
             ),
 
-          // ── Bottom instruction ────────────────────────────────────────────
+          // ── OUTSIDE → INSIDE animated arrow ───────────────────────────
+          // 3 chevrons flow downward sequentially showing insertion direction.
+          // Positioned in the center of the screen over the bin slot.
+          // Each chevron fades in and out in turn: top → mid → bottom,
+          // creating a "flowing into slot" motion cue.
+          Positioned.fill(
+            child: _FlowingArrow(
+              flowCtrl: _flowCtrl,
+              color: _arrowColor,
+              isDetecting: _engine.state == _FlapState.open,
+            ),
+          ),
+
+          // ── Status label ───────────────────────────────────────────────
+          Positioned(
+            // Sits just below the bottom chevron arrow
+            top: size.height * 0.65,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: Text(
+                  _statusText,
+                  key: ValueKey(_statusText),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _arrowColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    shadows: const [
+                      Shadow(color: Colors.black87, blurRadius: 6),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Bottom instruction ─────────────────────────────────────────
           Positioned(
             left: 24,
             right: 24,
@@ -655,71 +539,166 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       );
     });
   }
+
+  String get _statusText {
+    if (_calibrating) return 'Calibrating…';
+    if (_engine.lastRejectedByShake) return 'Hold camera steady';
+    if (!_engine.isCalibrated) return 'Getting ready…';
+    if (_engine.state == _FlapState.open) return 'Detecting…';
+    return 'Insert bottle into slot';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AR Arrow Indicator Widget
-// Draws a downward-pointing arrow with a glowing outline to guide bottle insertion
+// Flowing Arrow Widget
+//
+// Shows 3 chevron arrows stacked vertically in the CENTER of the screen.
+// They animate sequentially top → middle → bottom, each fading in then out,
+// creating the visual illusion of motion flowing FROM OUTSIDE INTO THE SLOT.
+//
+// Layout (screen center):
+//
+//     ∨   ← chevron 1 (appears first)
+//     ∨   ← chevron 2 (appears second)
+//     ∨   ← chevron 3 (appears last — closest to slot)
+//   ─────   ← slot line (static, shows where the slot is)
+//
+// Color changes:
+//   green  = idle, ready
+//   orange = flap is open (bottle going in right now)
+//   red    = shake detected
+//   grey   = calibrating
 // ══════════════════════════════════════════════════════════════════════════════
-class _ArrowIndicator extends StatelessWidget {
-  const _ArrowIndicator({required this.size});
-  final Size size;
+class _FlowingArrow extends StatelessWidget {
+  const _FlowingArrow({
+    required this.flowCtrl,
+    required this.color,
+    required this.isDetecting,
+  });
+
+  final AnimationController flowCtrl;
+  final Color color;
+  final bool isDetecting;
+
+  // Each chevron occupies a phase window within the 0..1 animation cycle.
+  // phase=0.0 → top chevron starts first
+  // phase=0.33 → middle chevron starts 400ms later
+  // phase=0.66 → bottom chevron starts 800ms later
+  double _chevronOpacity(double animValue, double phase) {
+    // Each chevron is fully visible for 0.35 of the cycle, then fades
+    final double t = (animValue - phase + 1.0) % 1.0;
+    if (t < 0.18) return t / 0.18;         // fade in
+    if (t < 0.35) return 1.0;              // hold
+    if (t < 0.50) return 1.0 - (t - 0.35) / 0.15; // fade out
+    return 0.0;                            // off
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: flowCtrl,
+      builder: (context, _) {
+        final double v = flowCtrl.value;
+        final double op1 = _chevronOpacity(v, 0.00);
+        final double op2 = _chevronOpacity(v, 0.33);
+        final double op3 = _chevronOpacity(v, 0.66);
+
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Top chevron — first to appear
+              Opacity(
+                opacity: op1.clamp(0.0, 1.0),
+                child: _Chevron(color: color, size: 48),
+              ),
+              const SizedBox(height: 6),
+
+              // Middle chevron — second
+              Opacity(
+                opacity: op2.clamp(0.0, 1.0),
+                child: _Chevron(color: color, size: 56),
+              ),
+              const SizedBox(height: 6),
+
+              // Bottom chevron — last, closest to slot — slightly larger
+              Opacity(
+                opacity: op3.clamp(0.0, 1.0),
+                child: _Chevron(color: color, size: 64),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Slot entry line — shows where the bottle enters
+              // Glows brighter when detecting
+              Container(
+                width: 120,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(isDetecting ? 1.0 : 0.55),
+                  borderRadius: BorderRadius.circular(99),
+                  boxShadow: isDetecting
+                      ? [BoxShadow(color: color.withOpacity(0.6), blurRadius: 12, spreadRadius: 2)]
+                      : null,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// Single chevron "V" shape — drawn as a thick angled stroke
+class _Chevron extends StatelessWidget {
+  const _Chevron({required this.color, required this.size});
+  final Color color;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      size: Size(size.width * 0.22, size.width * 0.22),
-      painter: _DownArrowPainter(),
+      size: Size(size, size * 0.55),
+      painter: _ChevronPainter(color: color),
     );
   }
 }
 
-class _DownArrowPainter extends CustomPainter {
+class _ChevronPainter extends CustomPainter {
+  const _ChevronPainter({required this.color});
+  final Color color;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final double cx = size.width / 2;
-    final double stemW = size.width * 0.22;
-    final double stemTop = 0;
-    final double stemBottom = size.height * 0.58;
-    final double headTop = size.height * 0.44;
-    final double headBottom = size.height;
-    final double headHalfW = size.width / 2;
+    final Paint paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = size.height * 0.55
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
 
-    // Arrow path (pointing downward)
-    final path = Path()
-      ..moveTo(cx - stemW / 2, stemTop)           // top-left of stem
-      ..lineTo(cx + stemW / 2, stemTop)           // top-right of stem
-      ..lineTo(cx + stemW / 2, headTop)           // right side down to head
-      ..lineTo(cx + headHalfW, headTop)           // right wing
-      ..lineTo(cx, headBottom)                    // bottom point
-      ..lineTo(cx - headHalfW, headTop)           // left wing
-      ..lineTo(cx - stemW / 2, headTop)           // back to stem
-      ..close();
+    // Draw a V-shape (chevron pointing downward)
+    final Path path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..lineTo(size.width, 0);
 
-    // Glow shadow
+    // Subtle glow layer
     canvas.drawPath(
       path,
       Paint()
-        ..color = const Color(0xFF58D68D).withOpacity(0.25)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
-
-    // Fill
-    canvas.drawPath(
-      path,
-      Paint()..color = const Color(0xFF58D68D).withOpacity(0.85),
-    );
-
-    // Outline
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = Colors.white.withOpacity(0.6)
+        ..color = color.withOpacity(0.3)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
+        ..strokeWidth = size.height * 0.9
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
     );
+
+    canvas.drawPath(path, paint);
   }
 
   @override
-  bool shouldRepaint(_DownArrowPainter old) => false;
+  bool shouldRepaint(_ChevronPainter old) => old.color != color;
 }
