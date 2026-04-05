@@ -60,8 +60,11 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
   static const int _requiredStreak = 5;
 
   /// Minimum brightness std-dev across streak frames to pass.
-  /// Real hand-held: ~2–8.  Flat photo/screen: ~0–1.2.
-  static const double _livenessMinStdDev = 2;
+  /// Real hand-held: ~1–8.  Flat photo/screen: ~0–0.8.
+  /// FIX 1: Lowered 2.0 → 1.0. At 1500ms intervals the user holds the bottle
+  /// steady for TFLite, so natural variation is small but still > 1.0.
+  /// At 2.0, real bottles were rejected because they were too still.
+  static const double _livenessMinStdDev = 1.0;
 
   final List<double> _brightnessHistory = [];
   bool _livenessRejected = false;
@@ -104,7 +107,8 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         orElse: () => cameras.first,
       );
 
-      _cameraController = CameraController(back, ResolutionPreset.low, enableAudio: false);
+      // FIX 5: low → medium. TFLite misses bottles on blurry low-res frames.
+      _cameraController = CameraController(back, ResolutionPreset.medium, enableAudio: false);
       await _cameraController!.initialize();
 
       if (!mounted) return;
@@ -201,13 +205,27 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
       // Step 1: Record brightness fingerprint for this frame
       final brightness = await _computeMeanBrightness(imagePath);
+
+      // FIX 2+3: Skip this frame entirely if decode failed (brightness=0).
+      // Adding 0 to history skews stdDev and corrupts the liveness check.
+      if (brightness == 0) {
+        debugPrint('[Liveness] brightness decode failed — skipping frame');
+        setState(() {
+          _error = 'Verifying real bottle… ($_bottleDetectionStreak/$_requiredStreak)';
+        });
+        return;
+      }
+
       _brightnessHistory.add(brightness);
       if (_brightnessHistory.length > _requiredStreak) _brightnessHistory.removeAt(0);
 
       _bottleDetectionStreak += 1;
+
+      // FIX 4: Clear old error message as soon as streak starts building.
       setState(() {
         _detectedLabel = tflite.label;
         _livenessRejected = false;
+        _error = null; // clear "No bottle detected" etc. while verifying
       });
 
       // Step 2: Still collecting — keep scanning
@@ -298,6 +316,12 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
   Future<void> _reloadApiIntegration() async {
     if (_processing || !mounted) return;
+
+    // FIX 6: Cancel the periodic timer before reload so it doesn't fire
+    // during reinitialisation and cause a race condition with new state.
+    _mobileScanTimer?.cancel();
+    _mobileScanTimer = null;
+
     setState(() {
       _processing = true;
       _error = null;
@@ -321,6 +345,14 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         _tfliteReady = _tflite.isReady;
         _processing = false;
       });
+
+      // FIX 6: Restart the scan timer now that reload is complete.
+      if (!_isDesktopPlatform) {
+        _mobileScanTimer = Timer.periodic(
+          const Duration(milliseconds: 1500),
+          (_) => _scanMobileFrame(),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -410,16 +442,26 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
                 if (_isDesktopPlatform && _desktopScannerController != null)
                   MobileScanner(controller: _desktopScannerController!, onDetect: _onDesktopDetect)
                 else if (_cameraReady && _cameraController != null)
-                  SizedBox.expand(
-                    child: FittedBox(
-                      fit: BoxFit.cover,
-                      child: SizedBox(
-                        width: _cameraController!.value.previewSize!.height,
-                        height: _cameraController!.value.previewSize!.width,
-                        child: CameraPreview(_cameraController!),
+                  // FIX 7: previewSize can be null on some Android devices before
+                  // the first frame arrives — guard with null check to avoid crash.
+                  Builder(builder: (context) {
+                    final preview = _cameraController!.value.previewSize;
+                    if (preview == null) {
+                      return const ColoredBox(color: Colors.black, child: Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ));
+                    }
+                    return SizedBox.expand(
+                      child: FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: preview.height,
+                          height: preview.width,
+                          child: CameraPreview(_cameraController!),
+                        ),
                       ),
-                    ),
-                  )
+                    );
+                  })
                 else
                   const ColoredBox(
                     color: Colors.black,
