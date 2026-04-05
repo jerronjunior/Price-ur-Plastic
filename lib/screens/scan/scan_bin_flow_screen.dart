@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
-import 'camera_confirm_screen.dart';
+import 'insertion_detector_screen.dart';
 import 'scan_bottle_screen.dart';
 import 'scan_bin_screen.dart';
 
@@ -136,10 +136,8 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     }
 
     if (_cameraConfirming && _lastBinId != null) {
-      return CameraConfirmScreen(
-        binId: _lastBinId!,
-        barcode: '',
-        onSuccess: () => _recordBottle(_lastBinId!),
+      return InsertionDetectorScreen(
+        onDetected: () => _recordBottle(_lastBinId!),
         onTimeout: () {
           if (!mounted) return;
           setState(() {
@@ -159,8 +157,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
             _bottleDetecting = true;
           });
         },
-        countdownSeconds: 15,
-        autoSaveBottleRecord: false,
+        timeoutSeconds: 20,
       );
     }
 
