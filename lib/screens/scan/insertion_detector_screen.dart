@@ -471,19 +471,15 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               ),
             ),
 
-          // ── 3D AR Arrow — top of screen, outside→inside ────────────────
-          // Red 3D arrow anchored to the top edge of the screen.
-          // ── 3D AR Arrow — small, semi-transparent, outside→inside ─────
-          // Arrow tail is hidden above the screen edge (ClipRect cuts it off).
-          // Only the curved body + arrowhead is visible — entering from outside.
+          // ── 3D AR Arrow — below timer so countdown is never covered ────
           Positioned(
-            top: 0,
+            top: 160,
             left: 0,
             right: 0,
-            height: size.height * 0.38,
-            child: ClipRect(
+            height: size.height * 0.24,
+            child: IgnorePointer(
               child: Opacity(
-                opacity: 0.72,
+                opacity: 0.78,
                 child: _Ar3DArrow(
                   bounceCtrl: _flowCtrl,
                   color: _arrowColor,
@@ -596,15 +592,15 @@ class _Ar3DArrow extends StatelessWidget {
       animation: bounceCtrl,
       builder: (context, _) {
         final double t = Curves.easeInOut.transform(bounceCtrl.value);
-        final double bob = t * 8.0; // subtle 8px bob
+        final double bob = t * 4.0; // compact movement like a small indicator
 
         return Align(
           alignment: Alignment.topCenter,
           child: Padding(
             padding: EdgeInsets.only(top: bob),
             child: CustomPaint(
-              // Small fixed size — 80px wide, 150px tall
-              size: const Size(80, 150),
+              // Smaller fixed size
+              size: const Size(56, 100),
               painter: _Ar3DArrowPainter(
                 color: color,
                 isDetecting: isDetecting,
