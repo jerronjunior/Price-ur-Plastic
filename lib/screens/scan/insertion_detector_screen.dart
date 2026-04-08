@@ -563,24 +563,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               ),
             ),
 
-          // ── 3D AR Arrow — below timer so countdown is never covered ────
-          Positioned(
-            top: 160,
-            left: 0,
-            right: 0,
-            height: size.height * 0.24,
-            child: IgnorePointer(
-              child: Opacity(
-                opacity: 0.78,
-                child: _Ar3DArrow(
-                  bounceCtrl: _flowCtrl,
-                  color: _arrowColor,
-                  isDetecting: _engine.state == _FlapState.open,
-                ),
-              ),
-            ),
-          ),
-
           // ── Status label ───────────────────────────────────────────────
           Positioned(
             // Sits just below the bottom chevron arrow
