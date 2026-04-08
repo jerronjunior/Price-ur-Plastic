@@ -13,16 +13,32 @@ class _FlapEngine {
   Rect zone = const Rect.fromLTRB(0.25, 0.10, 0.75, 0.65);
   Rect referenceZone = const Rect.fromLTRB(0.78, 0.20, 0.96, 0.55);
 
+  // Bottle must pass these zones (top -> bottom) before count is accepted.
+  final List<Rect> pathZones = const [
+    Rect.fromLTRB(0.50, 0.28, 0.64, 0.40),
+    Rect.fromLTRB(0.45, 0.42, 0.59, 0.54),
+    Rect.fromLTRB(0.39, 0.56, 0.53, 0.69),
+  ];
+
   double baselineBrightness = 0;
   double baselineReferenceBrightness = 0;
+  List<double> baselinePathBrightness = [];
   bool isCalibrated = false;
   double darkThresholdFraction = 0.25;
+  double pathDarkThresholdFraction = 0.20;
 
   static const double _shakeRejectFraction = 0.12;
+  static const int _pathTimeoutMs = 1300;
+  static const int _pathReadyWindowMs = 2000;
 
   _FlapState state = _FlapState.idle;
   double currentBrightness = 0;
   double currentReferenceBrightness = 0;
+  List<double> currentPathBrightness = [];
+  int pathProgressStep = 0;
+  bool bottleOnExpectedPathStep = false;
+  DateTime? _lastPathStepTime;
+  DateTime? _pathReadyTime;
   bool lastRejectedByShake = false;
   DateTime? _flapOpenTime;
 
@@ -37,14 +53,25 @@ class _FlapEngine {
   }
 
   double get darkThreshold => baselineBrightness * (1.0 - darkThresholdFraction);
+  double get pathProgressFraction => pathProgressStep / pathZones.length;
+
+  bool get _isPathReady {
+    if (_pathReadyTime == null) return false;
+    return DateTime.now().difference(_pathReadyTime!).inMilliseconds <=
+        _pathReadyWindowMs;
+  }
 
   bool processFrame(CameraImage image) {
     if (!isCalibrated || inCooldown) return false;
 
     currentBrightness = _zoneBrightness(image, zone);
     currentReferenceBrightness = _zoneBrightness(image, referenceZone);
+    currentPathBrightness =
+        pathZones.map((z) => _zoneBrightness(image, z)).toList(growable: false);
 
     final bool flapOpen = currentBrightness < darkThreshold;
+
+    _updatePathProgress();
 
     if (baselineReferenceBrightness > 0) {
       final double refChange =
@@ -79,8 +106,13 @@ class _FlapEngine {
           }
           state = _FlapState.idle;
           _flapOpenTime = null;
-          _lastCount = DateTime.now();
-          return true;
+          if (_isPathReady) {
+            _lastCount = DateTime.now();
+            _clearPathProgress();
+            return true;
+          }
+          _clearPathProgress();
+          return false;
         }
         if (_flapOpenTime != null &&
             DateTime.now().difference(_flapOpenTime!).inMilliseconds >
@@ -96,6 +128,17 @@ class _FlapEngine {
   void addCalibrationSample(CameraImage image) {
     final double b = _zoneBrightness(image, zone);
     final double r = _zoneBrightness(image, referenceZone);
+    final List<double> pb =
+        pathZones.map((z) => _zoneBrightness(image, z)).toList(growable: false);
+
+    if (baselinePathBrightness.isEmpty) {
+      baselinePathBrightness = List<double>.from(pb);
+    } else {
+      for (int i = 0; i < baselinePathBrightness.length; i++) {
+        baselinePathBrightness[i] = baselinePathBrightness[i] * 0.7 + pb[i] * 0.3;
+      }
+    }
+
     if (baselineBrightness == 0) {
       baselineBrightness = b;
       baselineReferenceBrightness = r;
@@ -106,7 +149,42 @@ class _FlapEngine {
   }
 
   void finalizeCalibration() {
-    isCalibrated = baselineBrightness > 10;
+    final bool pathReady = baselinePathBrightness.length == pathZones.length &&
+        baselinePathBrightness.every((v) => v > 10);
+    isCalibrated = baselineBrightness > 10 && pathReady;
+  }
+
+  void _updatePathProgress() {
+    final DateTime now = DateTime.now();
+    bottleOnExpectedPathStep = false;
+
+    if (_lastPathStepTime != null &&
+        now.difference(_lastPathStepTime!).inMilliseconds > _pathTimeoutMs) {
+      _clearPathProgress();
+    }
+
+    final int expected = pathProgressStep;
+    if (expected < pathZones.length &&
+        expected < baselinePathBrightness.length &&
+        expected < currentPathBrightness.length) {
+      final double threshold =
+          baselinePathBrightness[expected] * (1.0 - pathDarkThresholdFraction);
+      if (currentPathBrightness[expected] < threshold) {
+        bottleOnExpectedPathStep = true;
+        pathProgressStep++;
+        _lastPathStepTime = now;
+        if (pathProgressStep >= pathZones.length) {
+          _pathReadyTime = now;
+        }
+      }
+    }
+  }
+
+  void _clearPathProgress() {
+    pathProgressStep = 0;
+    bottleOnExpectedPathStep = false;
+    _lastPathStepTime = null;
+    _pathReadyTime = null;
   }
 
   double _zoneBrightness(CameraImage image, Rect z) {
@@ -136,6 +214,7 @@ class _FlapEngine {
     state = _FlapState.idle;
     _flapOpenTime = null;
     lastRejectedByShake = false;
+    _clearPathProgress();
   }
 }
 
@@ -381,6 +460,18 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           // ── Subtle dim ─────────────────────────────────────────────────
           Container(color: Colors.black.withValues(alpha: 0.15)),
 
+          // ── Guided bottle path overlay ─────────────────────────────────
+          IgnorePointer(
+            child: CustomPaint(
+              painter: _BottlePathGuidePainter(
+                progress: _engine.pathProgressFraction,
+                activeStep: _engine.pathProgressStep,
+                bottleOnStep: _engine.bottleOnExpectedPathStep,
+                isCalibrating: _calibrating,
+              ),
+            ),
+          ),
+
           // ── Count flash ────────────────────────────────────────────────
           if (_showFlash)
             AnimatedBuilder(
@@ -547,8 +638,104 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     if (_calibrating) return 'Calibrating…';
     if (_engine.lastRejectedByShake) return 'Hold camera steady';
     if (!_engine.isCalibrated) return 'Getting ready…';
+    if (_engine.pathProgressStep > 0 && _engine.pathProgressStep < 3) {
+      return 'Follow the path to score';
+    }
     if (_engine.state == _FlapState.open) return 'Detecting…';
-    return 'Insert bottle into slot';
+    return 'Move bottle through the guide path';
+  }
+}
+
+class _BottlePathGuidePainter extends CustomPainter {
+  const _BottlePathGuidePainter({
+    required this.progress,
+    required this.activeStep,
+    required this.bottleOnStep,
+    required this.isCalibrating,
+  });
+
+  final double progress;
+  final int activeStep;
+  final bool bottleOnStep;
+  final bool isCalibrating;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Offset p1 = Offset(size.width * 0.57, size.height * 0.32);
+    final Offset p2 = Offset(size.width * 0.52, size.height * 0.47);
+    final Offset p3 = Offset(size.width * 0.46, size.height * 0.61);
+
+    final Path curve = Path()
+      ..moveTo(p1.dx, p1.dy)
+      ..quadraticBezierTo(size.width * 0.58, size.height * 0.40, p2.dx, p2.dy)
+      ..quadraticBezierTo(size.width * 0.49, size.height * 0.54, p3.dx, p3.dy);
+
+    final Paint base = Paint()
+      ..color = Colors.white.withOpacity(0.22)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 6;
+    canvas.drawPath(curve, base);
+
+    final PathMetric metric = curve.computeMetrics().first;
+    final Path done = metric.extractPath(0, metric.length * progress.clamp(0.0, 1.0));
+    final Paint donePaint = Paint()
+      ..color = bottleOnStep ? const Color(0xFF6AF7A9) : const Color(0xFFE53935)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 7;
+    canvas.drawPath(done, donePaint);
+
+    final List<Offset> checkpoints = [p1, p2, p3];
+    for (int i = 0; i < checkpoints.length; i++) {
+      final bool doneStep = i < activeStep;
+      final bool currentStep = i == activeStep && bottleOnStep;
+      canvas.drawCircle(
+        checkpoints[i],
+        10,
+        Paint()
+          ..color = doneStep || currentStep
+              ? const Color(0xFF6AF7A9).withOpacity(0.85)
+              : Colors.white.withOpacity(0.35),
+      );
+      canvas.drawCircle(
+        checkpoints[i],
+        5,
+        Paint()..color = Colors.black.withOpacity(0.35),
+      );
+    }
+
+    // Draw a small direction arrow at the path end.
+    final Paint tip = Paint()..color = const Color(0xFFE53935).withOpacity(0.85);
+    final Path head = Path()
+      ..moveTo(p3.dx - 10, p3.dy + 6)
+      ..lineTo(p3.dx + 10, p3.dy + 6)
+      ..lineTo(p3.dx, p3.dy + 22)
+      ..close();
+    canvas.drawPath(head, tip);
+
+    if (isCalibrating) {
+      final TextPainter tp = TextPainter(
+        text: const TextSpan(
+          text: 'Guide path calibrating',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(size.width * 0.5 - tp.width / 2, size.height * 0.26));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BottlePathGuidePainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.activeStep != activeStep ||
+        oldDelegate.bottleOnStep != bottleOnStep ||
+        oldDelegate.isCalibrating != isCalibrating;
   }
 }
 
