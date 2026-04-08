@@ -246,6 +246,15 @@ class _BinScannerState extends State<_BinScanner> {
   //        every frame, so onDetect never fired.
   final MobileScannerController _ctrl = MobileScannerController(
     detectionSpeed: DetectionSpeed.normal,
+    formats: const [
+      BarcodeFormat.qrCode,
+      BarcodeFormat.code128,
+      BarcodeFormat.code39,
+      BarcodeFormat.ean13,
+      BarcodeFormat.ean8,
+      BarcodeFormat.upcA,
+      BarcodeFormat.upcE,
+    ],
     facing: CameraFacing.back,
     torchEnabled: false,
   );
@@ -279,7 +288,14 @@ class _BinScannerState extends State<_BinScanner> {
   //        fires once but doesn't block itself from being called.
   Future<void> _onDetect(BarcodeCapture capture) async {
     if (_busy || _released || !_active) return;
-    final code = capture.barcodes.firstOrNull?.rawValue?.trim();
+    String? code;
+    for (final b in capture.barcodes) {
+      final value = (b.rawValue ?? b.displayValue)?.trim();
+      if (value != null && value.isNotEmpty) {
+        code = value;
+        break;
+      }
+    }
     if (code == null || code.isEmpty) return;
 
     setState(() { _busy = true; _error = null; });

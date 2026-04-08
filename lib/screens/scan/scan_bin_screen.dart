@@ -34,8 +34,16 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
 
   final MobileScannerController _controller = MobileScannerController(
     autoStart: false,
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    formats: const [BarcodeFormat.qrCode],
+    detectionSpeed: DetectionSpeed.normal,
+    formats: const [
+      BarcodeFormat.qrCode,
+      BarcodeFormat.code128,
+      BarcodeFormat.code39,
+      BarcodeFormat.ean13,
+      BarcodeFormat.ean8,
+      BarcodeFormat.upcA,
+      BarcodeFormat.upcE,
+    ],
     facing: _defaultFacing,
     torchEnabled: false,
   );
