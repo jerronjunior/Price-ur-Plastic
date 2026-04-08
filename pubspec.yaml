@@ -24,6 +24,7 @@ dependencies:
   
   # Camera
   camera: ^0.10.5+9
+  sensors_plus: ^4.0.2
   
   # State & routing
   provider: ^6.1.1

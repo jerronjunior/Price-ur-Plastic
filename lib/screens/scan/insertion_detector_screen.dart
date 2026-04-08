@@ -1,12 +1,18 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' show PathMetric;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Flap Detection Engine (unchanged from previous version)
+// pubspec.yaml — add this dependency:
+//   sensors_plus: ^4.0.2
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Flap Detection Engine
 // ══════════════════════════════════════════════════════════════════════════════
 enum _FlapState { idle, open }
 
@@ -14,32 +20,16 @@ class _FlapEngine {
   Rect zone = const Rect.fromLTRB(0.25, 0.10, 0.75, 0.65);
   Rect referenceZone = const Rect.fromLTRB(0.78, 0.20, 0.96, 0.55);
 
-  // Bottle must pass these zones (top -> bottom) before count is accepted.
-  final List<Rect> pathZones = const [
-    Rect.fromLTRB(0.50, 0.28, 0.64, 0.40),
-    Rect.fromLTRB(0.45, 0.42, 0.59, 0.54),
-    Rect.fromLTRB(0.39, 0.56, 0.53, 0.69),
-  ];
-
   double baselineBrightness = 0;
   double baselineReferenceBrightness = 0;
-  List<double> baselinePathBrightness = [];
   bool isCalibrated = false;
   double darkThresholdFraction = 0.25;
-  double pathDarkThresholdFraction = 0.20;
 
   static const double _shakeRejectFraction = 0.12;
-  static const int _pathTimeoutMs = 1300;
-  static const int _pathReadyWindowMs = 2000;
 
   _FlapState state = _FlapState.idle;
   double currentBrightness = 0;
   double currentReferenceBrightness = 0;
-  List<double> currentPathBrightness = [];
-  int pathProgressStep = 0;
-  bool bottleOnExpectedPathStep = false;
-  DateTime? _lastPathStepTime;
-  DateTime? _pathReadyTime;
   bool lastRejectedByShake = false;
   DateTime? _flapOpenTime;
 
@@ -54,25 +44,14 @@ class _FlapEngine {
   }
 
   double get darkThreshold => baselineBrightness * (1.0 - darkThresholdFraction);
-  double get pathProgressFraction => pathProgressStep / pathZones.length;
-
-  bool get _isPathReady {
-    if (_pathReadyTime == null) return false;
-    return DateTime.now().difference(_pathReadyTime!).inMilliseconds <=
-        _pathReadyWindowMs;
-  }
 
   bool processFrame(CameraImage image) {
     if (!isCalibrated || inCooldown) return false;
 
     currentBrightness = _zoneBrightness(image, zone);
     currentReferenceBrightness = _zoneBrightness(image, referenceZone);
-    currentPathBrightness =
-        pathZones.map((z) => _zoneBrightness(image, z)).toList(growable: false);
 
     final bool flapOpen = currentBrightness < darkThreshold;
-
-    _updatePathProgress();
 
     if (baselineReferenceBrightness > 0) {
       final double refChange =
@@ -107,13 +86,8 @@ class _FlapEngine {
           }
           state = _FlapState.idle;
           _flapOpenTime = null;
-          if (_isPathReady) {
-            _lastCount = DateTime.now();
-            _clearPathProgress();
-            return true;
-          }
-          _clearPathProgress();
-          return false;
+          _lastCount = DateTime.now();
+          return true;
         }
         if (_flapOpenTime != null &&
             DateTime.now().difference(_flapOpenTime!).inMilliseconds >
@@ -129,17 +103,6 @@ class _FlapEngine {
   void addCalibrationSample(CameraImage image) {
     final double b = _zoneBrightness(image, zone);
     final double r = _zoneBrightness(image, referenceZone);
-    final List<double> pb =
-        pathZones.map((z) => _zoneBrightness(image, z)).toList(growable: false);
-
-    if (baselinePathBrightness.isEmpty) {
-      baselinePathBrightness = List<double>.from(pb);
-    } else {
-      for (int i = 0; i < baselinePathBrightness.length; i++) {
-        baselinePathBrightness[i] = baselinePathBrightness[i] * 0.7 + pb[i] * 0.3;
-      }
-    }
-
     if (baselineBrightness == 0) {
       baselineBrightness = b;
       baselineReferenceBrightness = r;
@@ -150,42 +113,7 @@ class _FlapEngine {
   }
 
   void finalizeCalibration() {
-    final bool pathReady = baselinePathBrightness.length == pathZones.length &&
-        baselinePathBrightness.every((v) => v > 10);
-    isCalibrated = baselineBrightness > 10 && pathReady;
-  }
-
-  void _updatePathProgress() {
-    final DateTime now = DateTime.now();
-    bottleOnExpectedPathStep = false;
-
-    if (_lastPathStepTime != null &&
-        now.difference(_lastPathStepTime!).inMilliseconds > _pathTimeoutMs) {
-      _clearPathProgress();
-    }
-
-    final int expected = pathProgressStep;
-    if (expected < pathZones.length &&
-        expected < baselinePathBrightness.length &&
-        expected < currentPathBrightness.length) {
-      final double threshold =
-          baselinePathBrightness[expected] * (1.0 - pathDarkThresholdFraction);
-      if (currentPathBrightness[expected] < threshold) {
-        bottleOnExpectedPathStep = true;
-        pathProgressStep++;
-        _lastPathStepTime = now;
-        if (pathProgressStep >= pathZones.length) {
-          _pathReadyTime = now;
-        }
-      }
-    }
-  }
-
-  void _clearPathProgress() {
-    pathProgressStep = 0;
-    bottleOnExpectedPathStep = false;
-    _lastPathStepTime = null;
-    _pathReadyTime = null;
+    isCalibrated = baselineBrightness > 10;
   }
 
   double _zoneBrightness(CameraImage image, Rect z) {
@@ -215,7 +143,6 @@ class _FlapEngine {
     state = _FlapState.idle;
     _flapOpenTime = null;
     lastRejectedByShake = false;
-    _clearPathProgress();
   }
 }
 
@@ -262,14 +189,24 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   Timer? _timeoutTimer;
   late int _remainingSeconds;
 
-  // ── Arrow animation ─────────────────────────────────────────────────────────
-  // 3 chevrons animate sequentially top→bottom to show "insert into slot"
-  // Each completes one full cycle in 1200ms, offset by 400ms each
-  late AnimationController _flowCtrl;
+  // ── Dot animation (marching ants — dots travel along the arc) ──────────────
+  late AnimationController _dotCtrl;
 
-  // Flash animation when bottle is counted
+  // ── Flash on count ─────────────────────────────────────────────────────────
   late AnimationController _flashCtrl;
   bool _showFlash = false;
+
+  // ── Accelerometer — shifts target point as phone tilts ────────────────────
+  // _tiltX: -1.0 (tilted far left) → +1.0 (tilted far right)
+  // _tiltY: -1.0 (tilted far back) → +1.0 (tilted far forward)
+  double _tiltX = 0.0;
+  double _tiltY = 0.0;
+  StreamSubscription<AccelerometerEvent>? _accelSub;
+
+  // Smoothed tilt (low-pass filter to avoid jitter)
+  double _smoothTiltX = 0.0;
+  double _smoothTiltY = 0.0;
+  static const double _tiltSmooth = 0.08; // lower = smoother but slower
 
   @override
   void initState() {
@@ -277,18 +214,18 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     WidgetsBinding.instance.addObserver(this);
     _remainingSeconds = widget.timeoutSeconds;
 
-    // 3D AR arrow: gentle up/down bob, 1400ms per cycle
-    _flowCtrl = AnimationController(
+    // Dots march along the arc, full cycle 1000ms
+    _dotCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
 
-    // White flash on successful count
     _flashCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
 
+    _startAccelerometer();
     _startTimeout();
     _initCamera();
   }
@@ -297,7 +234,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timeoutTimer?.cancel();
-    _flowCtrl.dispose();
+    _accelSub?.cancel();
+    _dotCtrl.dispose();
     _flashCtrl.dispose();
     _cam?.stopImageStream();
     _cam?.dispose();
@@ -310,6 +248,30 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     if (state == AppLifecycleState.resumed) _initCamera();
   }
 
+  // ── Accelerometer ───────────────────────────────────────────────────────────
+  void _startAccelerometer() {
+    _accelSub = accelerometerEventStream().listen((AccelerometerEvent e) {
+      if (!mounted) return;
+      // Accelerometer X: tilting right → negative X gravity → target moves right
+      // Clamp raw value to ±5 m/s², normalise to ±1
+      final double rawX = (-e.x / 5.0).clamp(-1.0, 1.0);
+      // Accelerometer Y: tilting forward → positive Y → target moves up (lower Y on screen)
+      final double rawY = ((e.y - 9.0) / 4.0).clamp(-1.0, 1.0);
+
+      // Low-pass smooth
+      _smoothTiltX += (_tiltX - _smoothTiltX) * _tiltSmooth +
+          (rawX - _tiltX) * _tiltSmooth;
+      _smoothTiltY += (_tiltY - _smoothTiltY) * _tiltSmooth +
+          (rawY - _tiltY) * _tiltSmooth;
+      _tiltX = rawX;
+      _tiltY = rawY;
+
+      // Rebuild only the trajectory — lightweight setState
+      if (mounted) setState(() {});
+    });
+  }
+
+  // ── Timeout ─────────────────────────────────────────────────────────────────
   void _startTimeout() {
     _timeoutTimer?.cancel();
     _timeoutTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -317,15 +279,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       setState(() => _remainingSeconds--);
       if (_remainingSeconds <= 0) {
         _timeoutTimer?.cancel();
-        if (widget.onTimeout != null) {
-          widget.onTimeout!();
-        } else {
-          widget.onBack();
-        }
+        widget.onTimeout != null ? widget.onTimeout!() : widget.onBack();
       }
     });
   }
 
+  // ── Camera ──────────────────────────────────────────────────────────────────
   Future<void> _initCamera() async {
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
@@ -361,19 +320,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _frameCount++;
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
-
     try {
       if (_calibrating) {
         _engine.addCalibrationSample(image);
         _calibrationFrames++;
         if (_calibrationFrames >= _calibrationFrameCount) {
           _engine.finalizeCalibration();
-          if (mounted) {
-            setState(() {
-              _calibrating = false;
-              _calibrationFrames = 0;
-            });
-          }
+          if (mounted) setState(() { _calibrating = false; _calibrationFrames = 0; });
         }
         return;
       }
@@ -384,7 +337,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       if (counted) {
         _detected = true;
         _timeoutTimer?.cancel();
-        // Flash white on count
         _showFlash = true;
         _flashCtrl.forward(from: 0).then((_) {
           if (mounted) setState(() => _showFlash = false);
@@ -398,11 +350,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
-  // ── Arrow color (red base, brightens on detection) ─────────────────────────
-  Color get _arrowColor {
-    if (_calibrating) return Colors.red.withOpacity(0.4);
-    if (_engine.state == _FlapState.open) return const Color(0xFFFF6B35);
-    return const Color(0xFFE53935); // vivid red
+  // ── Status text ──────────────────────────────────────────────────────────────
+  String get _statusText {
+    if (_calibrating) return 'Calibrating…';
+    if (_engine.lastRejectedByShake) return 'Hold camera steady';
+    if (!_engine.isCalibrated) return 'Getting ready…';
+    if (_engine.state == _FlapState.open) return 'Detecting…';
+    return 'Aim at slot and insert bottle';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -419,11 +373,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         iconTheme: const IconThemeData(color: Colors.white),
         title: const Text(
           'Insert Bottle',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w500,
-          ),
+          style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w500),
         ),
       ),
       body: _buildBody(),
@@ -432,18 +382,26 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   Widget _buildBody() {
     if (!_cameraReady || _cam == null || !_cam!.value.isInitialized) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF67E8A8)),
-      );
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF67E8A8)));
     }
 
     return LayoutBuilder(builder: (ctx, box) {
       final Size size = Size(box.maxWidth, box.maxHeight);
 
+      // ── Target point: bin slot is roughly upper-center of the camera view ──
+      // Base position: 50% across, 30% down from top
+      // Tilt shifts it: ±20% horizontal, ±10% vertical
+      final double targetX = size.width  * (0.50 + _smoothTiltX * 0.20);
+      final double targetY = size.height * (0.30 + _smoothTiltY * 0.10);
+
+      // Launch point: bottom-center (where bottle is held)
+      final double launchX = size.width * 0.50;
+      final double launchY = size.height * 0.92;
+
       return Stack(
         fit: StackFit.expand,
         children: [
-          // ── Camera preview ─────────────────────────────────────────────
+          // ── Camera preview ──────────────────────────────────────────────
           ClipRect(
             child: OverflowBox(
               alignment: Alignment.center,
@@ -458,22 +416,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-          // ── Subtle dim ─────────────────────────────────────────────────
-          Container(color: Colors.black.withValues(alpha: 0.15)),
+          // ── Very subtle dark overlay so dots are visible ─────────────────
+          Container(color: Colors.black.withValues(alpha: 0.10)),
 
-          // ── Guided bottle path overlay ─────────────────────────────────
-          IgnorePointer(
-            child: CustomPaint(
-              painter: _BottlePathGuidePainter(
-                progress: _engine.pathProgressFraction,
-                activeStep: _engine.pathProgressStep,
-                bottleOnStep: _engine.bottleOnExpectedPathStep,
-                isCalibrating: _calibrating,
-              ),
-            ),
-          ),
-
-          // ── Count flash ────────────────────────────────────────────────
+          // ── Count flash ──────────────────────────────────────────────────
           if (_showFlash)
             AnimatedBuilder(
               animation: _flashCtrl,
@@ -483,7 +429,23 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               ),
             ),
 
-          // ── Countdown ──────────────────────────────────────────────────
+          // ── Angry Birds dotted trajectory arc ───────────────────────────
+          // Full screen painter — draws the arc from launch → target
+          AnimatedBuilder(
+            animation: _dotCtrl,
+            builder: (context, _) => CustomPaint(
+              size: size,
+              painter: _TrajectoryPainter(
+                launch: Offset(launchX, launchY),
+                target: Offset(targetX, targetY),
+                animationValue: _dotCtrl.value,
+                isDetecting: _engine.state == _FlapState.open,
+                isCalibrated: _engine.isCalibrated,
+              ),
+            ),
+          ),
+
+          // ── Countdown ────────────────────────────────────────────────────
           Positioned(
             top: 18,
             left: 0,
@@ -500,8 +462,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 child: Text(
                   '$_remainingSeconds',
                   style: TextStyle(
-                    color:
-                        _remainingSeconds <= 5 ? Colors.redAccent : Colors.white,
+                    color: _remainingSeconds <= 5 ? Colors.redAccent : Colors.white,
                     fontSize: 32,
                     fontWeight: FontWeight.w700,
                   ),
@@ -510,18 +471,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-          // ── Calibration bar ────────────────────────────────────────────
+          // ── Calibration bar ──────────────────────────────────────────────
           if (_calibrating)
             Positioned(
-              top: 108,
-              left: 32,
-              right: 32,
+              top: 108, left: 32, right: 32,
               child: Column(children: [
-                const Text(
-                  'Calibrating — keep slot clear',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
+                const Text('Calibrating — keep slot clear',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                    textAlign: TextAlign.center),
                 const SizedBox(height: 6),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
@@ -535,40 +492,30 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               ]),
             ),
 
-          // ── Shake warning ──────────────────────────────────────────────
+          // ── Shake warning ────────────────────────────────────────────────
           if (_engine.lastRejectedByShake)
             Positioned(
-              top: 108,
-              left: 0,
-              right: 0,
+              top: 108, left: 0, right: 0,
               child: Center(
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withValues(alpha: 0.85),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.warning_amber, color: Colors.white, size: 14),
-                      SizedBox(width: 6),
-                      Text('Camera moved — hold steady',
-                          style:
-                              TextStyle(color: Colors.white, fontSize: 12)),
-                    ],
-                  ),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.warning_amber, color: Colors.white, size: 14),
+                    SizedBox(width: 6),
+                    Text('Camera moved — hold steady',
+                        style: TextStyle(color: Colors.white, fontSize: 12)),
+                  ]),
                 ),
               ),
             ),
 
-          // ── Status label ───────────────────────────────────────────────
+          // ── Status label ─────────────────────────────────────────────────
           Positioned(
-            // Sits just below the bottom chevron arrow
-            top: size.height * 0.65,
-            left: 0,
-            right: 0,
+            bottom: 88, left: 0, right: 0,
             child: Center(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
@@ -576,39 +523,30 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                   _statusText,
                   key: ValueKey(_statusText),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: _arrowColor,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    shadows: const [
-                      Shadow(color: Colors.black87, blurRadius: 6),
-                    ],
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
                   ),
                 ),
               ),
             ),
           ),
 
-          // ── Bottom instruction ─────────────────────────────────────────
+          // ── Bottom instruction ────────────────────────────────────────────
           Positioned(
-            left: 24,
-            right: 24,
-            bottom: 28,
+            left: 24, right: 24, bottom: 20,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.58),
-                borderRadius: BorderRadius.circular(18),
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(16),
               ),
               child: const Text(
-                'Pass the bottle through the slot before countdown ends.',
+                'Tilt phone to aim the arc at the slot. Insert bottle.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  height: 1.35,
-                ),
+                style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.3),
               ),
             ),
           ),
@@ -616,324 +554,156 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       );
     });
   }
-
-  String get _statusText {
-    if (_calibrating) return 'Calibrating…';
-    if (_engine.lastRejectedByShake) return 'Hold camera steady';
-    if (!_engine.isCalibrated) return 'Getting ready…';
-    if (_engine.pathProgressStep > 0 && _engine.pathProgressStep < 3) {
-      return 'Follow the path to score';
-    }
-    if (_engine.state == _FlapState.open) return 'Detecting…';
-    return 'Move bottle through the guide path';
-  }
 }
 
-class _BottlePathGuidePainter extends CustomPainter {
-  const _BottlePathGuidePainter({
-    required this.progress,
-    required this.activeStep,
-    required this.bottleOnStep,
-    required this.isCalibrating,
+// ══════════════════════════════════════════════════════════════════════════════
+// _TrajectoryPainter
+//
+// Draws the Angry Birds-style dotted arc trajectory from the launch point
+// (bottom of screen, where the bottle is) to the target point (bin slot,
+// which shifts with phone tilt).
+//
+// HOW THE ARC IS COMPUTED:
+//   Uses a quadratic Bézier curve:
+//     - P0 = launch point (bottom-center)
+//     - P1 = control point (peak of the arc, above midpoint between P0 and P2)
+//     - P2 = target point (bin slot, upper area)
+//
+//   The control point height is calculated so the arc peaks about 60% above
+//   the midpoint between launch and target — giving the natural ballistic curve.
+//
+// DOT SPACING AND SIZING:
+//   ~30 dots are placed at equal parameter intervals along the Bézier.
+//   Dots near the launch are larger (bottle just left your hand).
+//   Dots near the target are smaller (perspective depth, further away).
+//   The "marching ants" animation shifts the phase offset each frame so dots
+//   appear to travel continuously from launch toward target.
+//
+// TARGET RETICLE:
+//   A small crosshair circle drawn at the target point shows exactly where
+//   the arc lands. It pulses when the flap is open (bottle detected).
+// ══════════════════════════════════════════════════════════════════════════════
+class _TrajectoryPainter extends CustomPainter {
+  const _TrajectoryPainter({
+    required this.launch,
+    required this.target,
+    required this.animationValue,
+    required this.isDetecting,
+    required this.isCalibrated,
   });
 
-  final double progress;
-  final int activeStep;
-  final bool bottleOnStep;
-  final bool isCalibrating;
+  final Offset launch;
+  final Offset target;
+  final double animationValue; // 0.0 → 1.0, drives marching animation
+  final bool isDetecting;
+  final bool isCalibrated;
+
+  static const int _dotCount = 28;
+  static const Color _dotColor = Color(0xFFE53935); // vivid red
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Offset p1 = Offset(size.width * 0.57, size.height * 0.32);
-    final Offset p2 = Offset(size.width * 0.52, size.height * 0.47);
-    final Offset p3 = Offset(size.width * 0.46, size.height * 0.61);
-
-    final Path curve = Path()
-      ..moveTo(p1.dx, p1.dy)
-      ..quadraticBezierTo(size.width * 0.58, size.height * 0.40, p2.dx, p2.dy)
-      ..quadraticBezierTo(size.width * 0.49, size.height * 0.54, p3.dx, p3.dy);
-
-    final Paint base = Paint()
-      ..color = Colors.white.withOpacity(0.22)
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 6;
-    canvas.drawPath(curve, base);
-
-    final PathMetric metric = curve.computeMetrics().first;
-    final Path done = metric.extractPath(0, metric.length * progress.clamp(0.0, 1.0));
-    final Paint donePaint = Paint()
-      ..color = bottleOnStep ? const Color(0xFF6AF7A9) : const Color(0xFFE53935)
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 7;
-    canvas.drawPath(done, donePaint);
-
-    final List<Offset> checkpoints = [p1, p2, p3];
-    for (int i = 0; i < checkpoints.length; i++) {
-      final bool doneStep = i < activeStep;
-      final bool currentStep = i == activeStep && bottleOnStep;
-      canvas.drawCircle(
-        checkpoints[i],
-        10,
-        Paint()
-          ..color = doneStep || currentStep
-              ? const Color(0xFF6AF7A9).withOpacity(0.85)
-              : Colors.white.withOpacity(0.35),
-      );
-      canvas.drawCircle(
-        checkpoints[i],
-        5,
-        Paint()..color = Colors.black.withOpacity(0.35),
-      );
-    }
-
-    // Draw a small direction arrow at the path end.
-    final Paint tip = Paint()..color = const Color(0xFFE53935).withOpacity(0.85);
-    final Path head = Path()
-      ..moveTo(p3.dx - 10, p3.dy + 6)
-      ..lineTo(p3.dx + 10, p3.dy + 6)
-      ..lineTo(p3.dx, p3.dy + 22)
-      ..close();
-    canvas.drawPath(head, tip);
-
-    if (isCalibrating) {
-      final TextPainter tp = TextPainter(
-        text: const TextSpan(
-          text: 'Guide path calibrating',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, Offset(size.width * 0.5 - tp.width / 2, size.height * 0.26));
-    }
-  }
-
-  @override
-  bool shouldRepaint(_BottlePathGuidePainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.activeStep != activeStep ||
-        oldDelegate.bottleOnStep != bottleOnStep ||
-        oldDelegate.isCalibrating != isCalibrating;
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// _Ar3DArrow
-//
-// Renders a 3D perspective down-arrow that floats over the camera preview,
-// matching the style from the reference image (thick curved tube with
-// highlight, shadow, and a solid 3D arrowhead).
-//
-// HOW THE 3D EFFECT WORKS:
-//   The arrow is drawn in THREE layers on top of each other:
-//   1. Drop shadow  — offset dark blur below the arrow (depth)
-//   2. Dark edge    — slightly wider stroke in a darker shade (gives thickness)
-//   3. Main fill    — the primary color stroke
-//   4. Highlight    — a thin bright streak on the top-left edge (light source)
-//
-//   The arrowhead is drawn as a filled 3D cone shape: a large filled triangle
-//   (the face) + a darker parallelogram underneath (the bottom plane of the
-//   cone), giving it a faceted look.
-//
-// SHAPE:
-//   The arrow body follows a cubic Bézier curve that bends slightly left then
-//   curves down — giving the organic arc from the reference image.
-//   The arrowhead sits at the bottom tip of the curve.
-// ══════════════════════════════════════════════════════════════════════════════
-class _Ar3DArrow extends StatelessWidget {
-  const _Ar3DArrow({
-    required this.bounceCtrl,
-    required this.color,
-    required this.isDetecting,
-  });
-
-  final AnimationController bounceCtrl;
-  final Color color;
-  final bool isDetecting;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: bounceCtrl,
-      builder: (context, _) {
-        final double t = Curves.easeInOut.transform(bounceCtrl.value);
-        final double bob = t * 4.0; // compact movement like a small indicator
-
-        return Align(
-          alignment: Alignment.topCenter,
-          child: Padding(
-            padding: EdgeInsets.only(top: bob),
-            child: CustomPaint(
-              // Smaller fixed size
-              size: const Size(56, 100),
-              painter: _Ar3DArrowPainter(
-                color: color,
-                isDetecting: isDetecting,
-              ),
-            ),
-          ),
-        );
-      },
+    // ── Bézier control point (arc peak) ──────────────────────────────────────
+    final Offset mid = Offset(
+      (launch.dx + target.dx) / 2,
+      (launch.dy + target.dy) / 2,
     );
-  }
-}
 
-class _Ar3DArrowPainter extends CustomPainter {
-  const _Ar3DArrowPainter({
-    required this.color,
-    required this.isDetecting,
-  });
+    // Arc peak: high above the midpoint
+    // The higher above, the more pronounced the arc
+    final double arcHeight = (launch.dy - target.dy).abs() * 0.65 + 80;
+    final Offset ctrl = Offset(mid.dx, mid.dy - arcHeight);
 
-  final Color color;
-  final bool isDetecting;
-
-  Color get _dark   => Color.lerp(color, Colors.black, 0.45)!;
-  Color get _darker => Color.lerp(color, Colors.black, 0.65)!;
-  Color get _light  => Color.lerp(color, Colors.white, 0.40)!;
-  Color get _shadow => Colors.black.withOpacity(0.30);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double w = size.width;
-    final double h = size.height;
-
-    // ── OUTSIDE → INSIDE arrow path ────────────────────────────────────────
-    //
-    // The tail (p0) starts well above the canvas — it is hidden by the
-    // parent ClipRect, creating the "entering from outside the screen" effect.
-    //
-    // The body sweeps from top-right down and slightly left, landing in the
-    // lower-center with the arrowhead pointing straight down.
-    //
-    //  [above screen — hidden]
-    //       p0 •  ← tail: top-right, far above canvas
-    //           ↘
-    //        c1 •  ← swings right, entering visible area
-    //          ↙
-    //       c2 •   ← curves back toward center
-    //         ↓
-    //       p1 •   ← body end, lower-center
-    //         ▼    ← arrowhead
-
-    final double stroke = w * 0.20; // tube thickness — small arrow
-    final double headH  = h * 0.28;
-    final double bodyEndY = h - headH;
-
-    // p0 is -60% above canvas top → fully hidden by ClipRect
-    final Offset p0 = Offset(w * 0.68,  -h * 0.60);
-    final Offset c1 = Offset(w * 0.82,   h * 0.15);
-    final Offset c2 = Offset(w * 0.58,   h * 0.48);
-    final Offset p1 = Offset(w * 0.50,   bodyEndY);
-
-    final Path body = Path()
-      ..moveTo(p0.dx, p0.dy)
-      ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p1.dx, p1.dy);
-
-    // 1 — soft drop shadow
-    canvas.drawPath(body, Paint()
-      ..color = _shadow
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke + 8
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-
-    // 2 — dark bottom face (3D depth)
-    canvas.drawPath(body, Paint()
-      ..color = _darker
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke + 5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round);
-
-    // 3 — main red fill
-    canvas.drawPath(body, Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round);
-
-    // 4 — top-left highlight streak (simulates curved 3D surface)
-    final Path hl = Path()
-      ..moveTo(p0.dx - 4, p0.dy + 5)
-      ..cubicTo(c1.dx - 4, c1.dy + 5, c2.dx - 4, c2.dy + 3, p1.dx - 3, p1.dy);
-    canvas.drawPath(hl, Paint()
-      ..color = _light.withOpacity(0.45)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke * 0.30
-      ..strokeCap = StrokeCap.round);
-
-    // ── Arrowhead ──────────────────────────────────────────────────────────
-    final double tx   = w * 0.50;
-    final double ty   = h;
-    final double sy   = bodyEndY + h * 0.01;
-    final double hw   = w * 0.46; // half-width of head
-    final double dep  = h * 0.05; // 3D depth offset
-
-    // Back face (darker, offset)
-    canvas.drawPath(
-      Path()
-        ..moveTo(tx - hw + dep, sy + dep)
-        ..lineTo(tx + hw + dep, sy + dep)
-        ..lineTo(tx + dep,      ty + dep * 0.4)
-        ..close(),
-      Paint()..color = _darker);
-
-    // Shadow under head
-    canvas.drawPath(
-      Path()
-        ..moveTo(tx - hw, sy)
-        ..lineTo(tx + hw, sy)
-        ..lineTo(tx,      ty)
-        ..close(),
-      Paint()
-        ..color = _shadow
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-
-    // Front face (main color)
-    canvas.drawPath(
-      Path()
-        ..moveTo(tx - hw, sy)
-        ..lineTo(tx + hw, sy)
-        ..lineTo(tx,      ty)
-        ..close(),
-      Paint()..color = color);
-
-    // Left lit edge
-    canvas.drawPath(
-      Path()
-        ..moveTo(tx - hw, sy)
-        ..lineTo(tx,      ty)
-        ..lineTo(tx - hw * 0.25, ty - h * 0.035)
-        ..close(),
-      Paint()..color = _light.withOpacity(0.35));
-
-    // Right shadow edge
-    canvas.drawPath(
-      Path()
-        ..moveTo(tx + hw, sy)
-        ..lineTo(tx,      ty)
-        ..lineTo(tx + hw * 0.25, ty - h * 0.035)
-        ..close(),
-      Paint()..color = _dark.withOpacity(0.40));
-
-    // Pulse glow when detecting
-    if (isDetecting) {
-      canvas.drawPath(body, Paint()
-        ..color = color.withOpacity(0.18)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke + 18
-        ..strokeCap = StrokeCap.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14));
+    // ── Evaluate quadratic Bézier at parameter t ──────────────────────────────
+    // B(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2
+    Offset bezier(double t) {
+      final double mt = 1.0 - t;
+      return Offset(
+        mt * mt * launch.dx + 2 * mt * t * ctrl.dx + t * t * target.dx,
+        mt * mt * launch.dy + 2 * mt * t * ctrl.dy + t * t * target.dy,
+      );
     }
+
+    // ── Draw dots ─────────────────────────────────────────────────────────────
+    // Phase offset makes dots appear to march from launch → target
+    final double phase = animationValue;
+
+    for (int i = 0; i < _dotCount; i++) {
+      // t: parameter along arc (0 = launch, 1 = target)
+      // Add phase offset so dots march; modulo keeps them on arc
+      double t = (i / _dotCount + phase) % 1.0;
+
+      final Offset pos = bezier(t);
+
+      // Size: larger near launch (t≈0), smaller near target (t≈1)
+      // Range: 9px → 3.5px
+      final double dotSize = lerpDouble(9.0, 3.5, t)!;
+
+      // Opacity: fully opaque in middle, slightly faded at edges
+      final double opacity = t < 0.08
+          ? (t / 0.08).clamp(0.0, 1.0)
+          : t > 0.90
+              ? ((1.0 - t) / 0.10).clamp(0.0, 1.0)
+              : 1.0;
+
+      // Color: brighter red when detecting
+      final Color color = isDetecting
+          ? const Color(0xFFFF6B35).withOpacity(opacity * 0.92)
+          : _dotColor.withOpacity(opacity * 0.85);
+
+      canvas.drawCircle(pos, dotSize / 2, Paint()..color = color);
+    }
+
+    // ── Target reticle — crosshair at the bin slot ────────────────────────────
+    _drawReticle(canvas, target);
+  }
+
+  void _drawReticle(Canvas canvas, Offset center) {
+    final double pulse = isDetecting ? 0.5 + sin(animationValue * pi * 4) * 0.5 : 0.0;
+    final double ringR = 16.0 + pulse * 6;
+
+    // Outer ring
+    canvas.drawCircle(
+      center,
+      ringR,
+      Paint()
+        ..color = _dotColor.withOpacity(0.75 + pulse * 0.2)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0,
+    );
+
+    // Inner dot
+    canvas.drawCircle(
+      center,
+      4.0,
+      Paint()..color = _dotColor.withOpacity(0.9),
+    );
+
+    // Four short crosshair lines
+    const double armLen = 10;
+    const double gap    = 6;
+    final Paint linePaint = Paint()
+      ..color = _dotColor.withOpacity(0.80)
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(Offset(center.dx, center.dy - gap),
+        Offset(center.dx, center.dy - gap - armLen), linePaint);
+    canvas.drawLine(Offset(center.dx, center.dy + gap),
+        Offset(center.dx, center.dy + gap + armLen), linePaint);
+    canvas.drawLine(Offset(center.dx - gap, center.dy),
+        Offset(center.dx - gap - armLen, center.dy), linePaint);
+    canvas.drawLine(Offset(center.dx + gap, center.dy),
+        Offset(center.dx + gap + armLen, center.dy), linePaint);
   }
 
   @override
-  bool shouldRepaint(_Ar3DArrowPainter old) =>
-      old.color != color || old.isDetecting != isDetecting;
+  bool shouldRepaint(_TrajectoryPainter old) =>
+      old.launch != launch ||
+      old.target != target ||
+      old.animationValue != animationValue ||
+      old.isDetecting != isDetecting;
 }
+
+// Dart doesn't expose lerpDouble at top level without ui import — inline it:
+double? lerpDouble(double a, double b, double t) => a + (b - a) * t;
