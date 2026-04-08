@@ -197,11 +197,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     WidgetsBinding.instance.addObserver(this);
     _remainingSeconds = widget.timeoutSeconds;
 
-    // Flowing arrows: 1200ms per full cycle, repeating
+    // 3D AR arrow: gentle up/down bob, 1400ms per cycle
     _flowCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat();
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
 
     // White flash on successful count
     _flashCtrl = AnimationController(
@@ -473,14 +473,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               ),
             ),
 
-          // ── OUTSIDE → INSIDE animated arrow ───────────────────────────
-          // 3 chevrons flow downward sequentially showing insertion direction.
-          // Positioned in the center of the screen over the bin slot.
-          // Each chevron fades in and out in turn: top → mid → bottom,
-          // creating a "flowing into slot" motion cue.
+          // ── 3D AR Arrow ────────────────────────────────────────────────
+          // Renders a 3D perspective arrow (like the reference image) floating
+          // over the camera feed. Points downward to show bottle insertion
+          // direction. Bobs gently up and down. Changes color on detection.
           Positioned.fill(
-            child: _FlowingArrow(
-              flowCtrl: _flowCtrl,
+            child: _Ar3DArrow(
+              bounceCtrl: _flowCtrl,
               color: _arrowColor,
               isDetecting: _engine.state == _FlapState.open,
             ),
@@ -550,99 +549,58 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Flowing Arrow Widget
+// _Ar3DArrow
 //
-// Shows 3 chevron arrows stacked vertically in the CENTER of the screen.
-// They animate sequentially top → middle → bottom, each fading in then out,
-// creating the visual illusion of motion flowing FROM OUTSIDE INTO THE SLOT.
+// Renders a 3D perspective down-arrow that floats over the camera preview,
+// matching the style from the reference image (thick curved tube with
+// highlight, shadow, and a solid 3D arrowhead).
 //
-// Layout (screen center):
+// HOW THE 3D EFFECT WORKS:
+//   The arrow is drawn in THREE layers on top of each other:
+//   1. Drop shadow  — offset dark blur below the arrow (depth)
+//   2. Dark edge    — slightly wider stroke in a darker shade (gives thickness)
+//   3. Main fill    — the primary color stroke
+//   4. Highlight    — a thin bright streak on the top-left edge (light source)
 //
-//     ∨   ← chevron 1 (appears first)
-//     ∨   ← chevron 2 (appears second)
-//     ∨   ← chevron 3 (appears last — closest to slot)
-//   ─────   ← slot line (static, shows where the slot is)
+//   The arrowhead is drawn as a filled 3D cone shape: a large filled triangle
+//   (the face) + a darker parallelogram underneath (the bottom plane of the
+//   cone), giving it a faceted look.
 //
-// Color changes:
-//   green  = idle, ready
-//   orange = flap is open (bottle going in right now)
-//   red    = shake detected
-//   grey   = calibrating
+// SHAPE:
+//   The arrow body follows a cubic Bézier curve that bends slightly left then
+//   curves down — giving the organic arc from the reference image.
+//   The arrowhead sits at the bottom tip of the curve.
 // ══════════════════════════════════════════════════════════════════════════════
-class _FlowingArrow extends StatelessWidget {
-  const _FlowingArrow({
-    required this.flowCtrl,
+class _Ar3DArrow extends StatelessWidget {
+  const _Ar3DArrow({
+    required this.bounceCtrl,
     required this.color,
     required this.isDetecting,
   });
 
-  final AnimationController flowCtrl;
+  final AnimationController bounceCtrl;
   final Color color;
   final bool isDetecting;
-
-  // Each chevron occupies a phase window within the 0..1 animation cycle.
-  // phase=0.0 → top chevron starts first
-  // phase=0.33 → middle chevron starts 400ms later
-  // phase=0.66 → bottom chevron starts 800ms later
-  double _chevronOpacity(double animValue, double phase) {
-    // Each chevron is fully visible for 0.35 of the cycle, then fades
-    final double t = (animValue - phase + 1.0) % 1.0;
-    if (t < 0.18) return t / 0.18;         // fade in
-    if (t < 0.35) return 1.0;              // hold
-    if (t < 0.50) return 1.0 - (t - 0.35) / 0.15; // fade out
-    return 0.0;                            // off
-  }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: flowCtrl,
+      animation: bounceCtrl,
       builder: (context, _) {
-        final double v = flowCtrl.value;
-        final double op1 = _chevronOpacity(v, 0.00);
-        final double op2 = _chevronOpacity(v, 0.33);
-        final double op3 = _chevronOpacity(v, 0.66);
+        // Ease in-out bob: 0→18px down then back up
+        final double t = Curves.easeInOut.transform(bounceCtrl.value);
+        final double bob = t * 18.0;
 
         return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Top chevron — first to appear
-              Opacity(
-                opacity: op1.clamp(0.0, 1.0),
-                child: _Chevron(color: color, size: 48),
+          child: Transform.translate(
+            offset: Offset(0, bob),
+            child: CustomPaint(
+              size: const Size(140, 220),
+              painter: _Ar3DArrowPainter(
+                color: color,
+                isDetecting: isDetecting,
               ),
-              const SizedBox(height: 6),
-
-              // Middle chevron — second
-              Opacity(
-                opacity: op2.clamp(0.0, 1.0),
-                child: _Chevron(color: color, size: 56),
-              ),
-              const SizedBox(height: 6),
-
-              // Bottom chevron — last, closest to slot — slightly larger
-              Opacity(
-                opacity: op3.clamp(0.0, 1.0),
-                child: _Chevron(color: color, size: 64),
-              ),
-
-              const SizedBox(height: 14),
-
-              // Slot entry line — shows where the bottle enters
-              // Glows brighter when detecting
-              Container(
-                width: 120,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(isDetecting ? 1.0 : 0.55),
-                  borderRadius: BorderRadius.circular(99),
-                  boxShadow: isDetecting
-                      ? [BoxShadow(color: color.withOpacity(0.6), blurRadius: 12, spreadRadius: 2)]
-                      : null,
-                ),
-              ),
-            ],
+            ),
           ),
         );
       },
@@ -650,55 +608,172 @@ class _FlowingArrow extends StatelessWidget {
   }
 }
 
-// Single chevron "V" shape — drawn as a thick angled stroke
-class _Chevron extends StatelessWidget {
-  const _Chevron({required this.color, required this.size});
-  final Color color;
-  final double size;
+class _Ar3DArrowPainter extends CustomPainter {
+  const _Ar3DArrowPainter({
+    required this.color,
+    required this.isDetecting,
+  });
 
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(size, size * 0.55),
-      painter: _ChevronPainter(color: color),
-    );
-  }
-}
-
-class _ChevronPainter extends CustomPainter {
-  const _ChevronPainter({required this.color});
   final Color color;
+  final bool isDetecting;
+
+  // Derive shading colors from the main color
+  Color get _dark    => Color.lerp(color, Colors.black, 0.45)!;
+  Color get _darker  => Color.lerp(color, Colors.black, 0.65)!;
+  Color get _light   => Color.lerp(color, Colors.white, 0.50)!;
+  Color get _shadow  => Colors.black.withOpacity(0.45);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = size.height * 0.55
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+    final double w = size.width;
+    final double h = size.height;
 
-    // Draw a V-shape (chevron pointing downward)
-    final Path path = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width / 2, size.height)
-      ..lineTo(size.width, 0);
+    // ── Arrow body path (cubic Bézier, curves left then down) ───────────────
+    // Start point: upper-center
+    // Control points: lean slightly right at top, then curve to center-bottom
+    // End point: lower-center (arrowhead tip area)
+    final double bodyStrokeW = w * 0.22; // tube thickness
+    final double headH = h * 0.30;       // height of arrowhead
+    final double bodyEndY = h - headH;   // where the body ends
 
-    // Subtle glow layer
+    // The curve control points give the organic arc from the reference image
+    final Offset p0 = Offset(w * 0.52, 0);
+    final Offset c1 = Offset(w * 0.70, h * 0.25);
+    final Offset c2 = Offset(w * 0.55, h * 0.50);
+    final Offset p1 = Offset(w * 0.50, bodyEndY);
+
+    final Path bodyPath = Path()
+      ..moveTo(p0.dx, p0.dy)
+      ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p1.dx, p1.dy);
+
+    // ── Layer 1: Drop shadow ─────────────────────────────────────────────────
     canvas.drawPath(
-      path,
+      bodyPath,
       Paint()
-        ..color = color.withOpacity(0.3)
+        ..color = _shadow
         ..style = PaintingStyle.stroke
-        ..strokeWidth = size.height * 0.9
+        ..strokeWidth = bodyStrokeW + 8
         ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12),
     );
 
-    canvas.drawPath(path, paint);
+    // ── Layer 2: Dark edge (bottom face of the 3D tube) ──────────────────────
+    canvas.drawPath(
+      bodyPath,
+      Paint()
+        ..color = _darker
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = bodyStrokeW + 6
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    // ── Layer 3: Main fill ───────────────────────────────────────────────────
+    canvas.drawPath(
+      bodyPath,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = bodyStrokeW
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    // ── Layer 4: Highlight streak (top face of tube — simulates light) ───────
+    // Slightly offset upward-left from the main path to look like a lit edge
+    final Path highlightPath = Path()
+      ..moveTo(p0.dx - 6, p0.dy + 4)
+      ..cubicTo(c1.dx - 6, c1.dy + 4, c2.dx - 6, c2.dy + 4, p1.dx - 4, p1.dy);
+
+    canvas.drawPath(
+      highlightPath,
+      Paint()
+        ..color = _light.withOpacity(0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = bodyStrokeW * 0.35
+        ..strokeCap = StrokeCap.round,
+    );
+
+    // ── Arrowhead (3D cone, pointing downward) ───────────────────────────────
+    // The head is built from two faces:
+    //   Face A (front face, main color): wide triangle pointing down
+    //   Face B (bottom plane, darker):   narrower shape offset down-right
+    //
+    // tip of arrowhead
+    final double tipX = w * 0.50;
+    final double tipY = h;
+    // left and right shoulders of the head
+    final double shoulderY = bodyEndY + h * 0.04;
+    final double headHalfW = w * 0.46;
+    final double leftX  = tipX - headHalfW;
+    final double rightX = tipX + headHalfW;
+
+    // Face B — bottom/shadow plane of the 3D cone (drawn first, behind face A)
+    final double depthOffset = h * 0.055; // how deep the bottom face sits
+    final Path faceB = Path()
+      ..moveTo(leftX + depthOffset,  shoulderY + depthOffset)
+      ..lineTo(rightX + depthOffset, shoulderY + depthOffset)
+      ..lineTo(tipX  + depthOffset,  tipY + depthOffset * 0.6)
+      ..close();
+
+    canvas.drawPath(faceB, Paint()..color = _darker);
+
+    // Drop shadow for the head
+    canvas.drawPath(
+      faceB,
+      Paint()
+        ..color = _shadow
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+    );
+
+    // Face A — front face of the 3D cone (main color)
+    final Path faceA = Path()
+      ..moveTo(leftX,  shoulderY)
+      ..lineTo(rightX, shoulderY)
+      ..lineTo(tipX,   tipY)
+      ..close();
+
+    canvas.drawPath(faceA, Paint()..color = color);
+
+    // Highlight on left edge of the arrowhead (lit corner)
+    final Path headHighlight = Path()
+      ..moveTo(leftX,  shoulderY)
+      ..lineTo(tipX,   tipY)
+      ..lineTo(tipX - headHalfW * 0.3, tipY - h * 0.04)
+      ..close();
+
+    canvas.drawPath(
+      headHighlight,
+      Paint()..color = _light.withOpacity(0.35),
+    );
+
+    // Dark right edge of the arrowhead (shadow side)
+    final Path headShadow = Path()
+      ..moveTo(rightX, shoulderY)
+      ..lineTo(tipX,   tipY)
+      ..lineTo(tipX + headHalfW * 0.3, tipY - h * 0.04)
+      ..close();
+
+    canvas.drawPath(
+      headShadow,
+      Paint()..color = _dark.withOpacity(0.5),
+    );
+
+    // Glow ring when actively detecting
+    if (isDetecting) {
+      canvas.drawPath(
+        bodyPath,
+        Paint()
+          ..color = color.withOpacity(0.25)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = bodyStrokeW + 20
+          ..strokeCap = StrokeCap.round
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16),
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_ChevronPainter old) => old.color != color;
+  bool shouldRepaint(_Ar3DArrowPainter old) =>
+      old.color != color || old.isDetecting != isDetecting;
 }
