@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +9,6 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme.dart';
 import '../../models/bin_model.dart';
 import '../../services/firestore_service.dart';
-
 /// Scan bin QR code to get bin ID.
 class ScanBinScreen extends StatefulWidget {
   const ScanBinScreen({
@@ -34,7 +34,7 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
 
   final MobileScannerController _controller = MobileScannerController(
     autoStart: false,
-    detectionSpeed: DetectionSpeed.normal,
+    detectionSpeed: DetectionSpeed.unrestricted,
     formats: const [
       BarcodeFormat.qrCode,
       BarcodeFormat.code128,
@@ -56,6 +56,7 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
   String? _error;
   String? _cameraError;
   String? _cameraInfo;
+  final TextEditingController _manualCodeCtrl = TextEditingController();
 
   CameraController? _desktopCameraController;
   List<CameraDescription> _desktopCameras = const [];
@@ -305,25 +306,15 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
     _desktopScanTimer?.cancel();
     _desktopBarcodeSub?.cancel();
     _desktopCameraController?.dispose();
+    _manualCodeCtrl.dispose();
     _controller.dispose();
     super.dispose();
   }
 
-  Future<void> _onDetect(BarcodeCapture capture) async {
+  Future<void> _handleDetectedCode(String code) async {
     if (_processing) return;
-    final barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
-    String? code;
-    for (final b in barcodes) {
-      final value = (b.rawValue ?? b.displayValue)?.trim();
-      if (value != null && value.isNotEmpty) {
-        code = value;
-        break;
-      }
-    }
-    if (code == null || code.isEmpty) return;
 
-    debugPrint('🧾 Bin QR scanned value: $code');
+    debugPrint('Bin scan detected value: $code');
 
     setState(() {
       _processing = true;
@@ -372,18 +363,86 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
         widget.onScanned(code);
       } else {
         setState(() {
-          _error = 'Unknown bin. Please scan a registered bin QR code.';
+          _error = 'Unknown bin. Please scan or enter a registered bin code.';
           _processing = false;
         });
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Failed to validate bin QR. Please try again.';
+        _error = 'Failed to validate bin code. Please try again.';
         _processing = false;
       });
-      debugPrint('⚠️ Bin QR validation error: $e');
+      debugPrint('Bin validation error: $e');
     }
+  }
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    final barcodes = capture.barcodes;
+    if (barcodes.isEmpty) return;
+    String? code;
+    for (final b in barcodes) {
+      final value = _extractCodeFromBarcode(b);
+      if (value != null && value.isNotEmpty) {
+        code = value;
+        break;
+      }
+    }
+    if (code == null || code.isEmpty) return;
+    await _handleDetectedCode(code);
+  }
+
+  String? _extractCodeFromBarcode(Barcode barcode) {
+    final String? direct = (barcode.rawValue ?? barcode.displayValue)?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    final bytes = barcode.rawBytes;
+    if (bytes == null || bytes.isEmpty) return null;
+
+    try {
+      final utf8Value = utf8.decode(bytes, allowMalformed: true).trim();
+      if (utf8Value.isNotEmpty) return utf8Value;
+    } catch (_) {}
+
+    try {
+      final latin1Value = latin1.decode(bytes, allowInvalid: true).trim();
+      if (latin1Value.isNotEmpty) return latin1Value;
+    } catch (_) {}
+
+    return null;
+  }
+
+  Future<void> _enterCodeManually() async {
+    if (_processing) return;
+    _manualCodeCtrl.text = '';
+    final String? entered = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Bin Code Manually'),
+        content: TextField(
+          controller: _manualCodeCtrl,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            hintText: 'Paste or type QR value',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(_manualCodeCtrl.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    final code = entered?.trim();
+    if (code == null || code.isEmpty) return;
+    await _handleDetectedCode(code);
   }
 
   @override
@@ -557,10 +616,20 @@ class _ScanBinScreenState extends State<ScanBinScreen> {
                   color: Colors.black54,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text(
-                  'Point your camera at the recycling bin QR code',
-                  style: TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Point your camera at the recycling bin QR code',
+                      style: TextStyle(color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _processing ? null : _enterCodeManually,
+                      child: const Text('Enter code manually'),
+                    ),
+                  ],
                 ),
               ),
             ),

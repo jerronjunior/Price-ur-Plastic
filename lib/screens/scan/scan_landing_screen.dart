@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -245,7 +247,7 @@ class _BinScannerState extends State<_BinScanner> {
   //        Creating it inside setState/build caused it to reinitialise
   //        every frame, so onDetect never fired.
   final MobileScannerController _ctrl = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
+    detectionSpeed: DetectionSpeed.unrestricted,
     formats: const [
       BarcodeFormat.qrCode,
       BarcodeFormat.code128,
@@ -290,7 +292,7 @@ class _BinScannerState extends State<_BinScanner> {
     if (_busy || _released || !_active) return;
     String? code;
     for (final b in capture.barcodes) {
-      final value = (b.rawValue ?? b.displayValue)?.trim();
+      final value = _extractCodeFromBarcode(b);
       if (value != null && value.isNotEmpty) {
         code = value;
         break;
@@ -337,6 +339,26 @@ class _BinScannerState extends State<_BinScanner> {
         _busy = false;
       });
     }
+  }
+
+  String? _extractCodeFromBarcode(Barcode barcode) {
+    final String? direct = (barcode.rawValue ?? barcode.displayValue)?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    final bytes = barcode.rawBytes;
+    if (bytes == null || bytes.isEmpty) return null;
+
+    try {
+      final utf8Value = utf8.decode(bytes, allowMalformed: true).trim();
+      if (utf8Value.isNotEmpty) return utf8Value;
+    } catch (_) {}
+
+    try {
+      final latin1Value = latin1.decode(bytes, allowInvalid: true).trim();
+      if (latin1Value.isNotEmpty) return latin1Value;
+    } catch (_) {}
+
+    return null;
   }
 
   @override
