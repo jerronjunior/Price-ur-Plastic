@@ -318,13 +318,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
-  // ── Arrow color based on state ──────────────────────────────────────────────
+  // ── Arrow color (red base, brightens on detection) ─────────────────────────
   Color get _arrowColor {
-    if (_calibrating) return Colors.white38;
-    if (_engine.lastRejectedByShake) return Colors.redAccent;
-    if (_engine.state == _FlapState.open) return Colors.orangeAccent;
-    if (!_engine.isCalibrated) return Colors.white38;
-    return const Color(0xFF58D68D);
+    if (_calibrating) return Colors.red.withOpacity(0.4);
+    if (_engine.state == _FlapState.open) return const Color(0xFFFF6B35);
+    return const Color(0xFFE53935); // vivid red
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -473,15 +471,25 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               ),
             ),
 
-          // ── 3D AR Arrow ────────────────────────────────────────────────
-          // Renders a 3D perspective arrow (like the reference image) floating
-          // over the camera feed. Points downward to show bottle insertion
-          // direction. Bobs gently up and down. Changes color on detection.
-          Positioned.fill(
-            child: _Ar3DArrow(
-              bounceCtrl: _flowCtrl,
-              color: _arrowColor,
-              isDetecting: _engine.state == _FlapState.open,
+          // ── 3D AR Arrow — top of screen, outside→inside ────────────────
+          // Red 3D arrow anchored to the top edge of the screen.
+          // ── 3D AR Arrow — small, semi-transparent, outside→inside ─────
+          // Arrow tail is hidden above the screen edge (ClipRect cuts it off).
+          // Only the curved body + arrowhead is visible — entering from outside.
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: size.height * 0.38,
+            child: ClipRect(
+              child: Opacity(
+                opacity: 0.72,
+                child: _Ar3DArrow(
+                  bounceCtrl: _flowCtrl,
+                  color: _arrowColor,
+                  isDetecting: _engine.state == _FlapState.open,
+                ),
+              ),
             ),
           ),
 
@@ -587,15 +595,16 @@ class _Ar3DArrow extends StatelessWidget {
     return AnimatedBuilder(
       animation: bounceCtrl,
       builder: (context, _) {
-        // Ease in-out bob: 0→18px down then back up
         final double t = Curves.easeInOut.transform(bounceCtrl.value);
-        final double bob = t * 18.0;
+        final double bob = t * 8.0; // subtle 8px bob
 
-        return Center(
-          child: Transform.translate(
-            offset: Offset(0, bob),
+        return Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: EdgeInsets.only(top: bob),
             child: CustomPaint(
-              size: const Size(140, 220),
+              // Small fixed size — 80px wide, 150px tall
+              size: const Size(80, 150),
               painter: _Ar3DArrowPainter(
                 color: color,
                 isDetecting: isDetecting,
@@ -617,159 +626,144 @@ class _Ar3DArrowPainter extends CustomPainter {
   final Color color;
   final bool isDetecting;
 
-  // Derive shading colors from the main color
-  Color get _dark    => Color.lerp(color, Colors.black, 0.45)!;
-  Color get _darker  => Color.lerp(color, Colors.black, 0.65)!;
-  Color get _light   => Color.lerp(color, Colors.white, 0.50)!;
-  Color get _shadow  => Colors.black.withOpacity(0.45);
+  Color get _dark   => Color.lerp(color, Colors.black, 0.45)!;
+  Color get _darker => Color.lerp(color, Colors.black, 0.65)!;
+  Color get _light  => Color.lerp(color, Colors.white, 0.40)!;
+  Color get _shadow => Colors.black.withOpacity(0.30);
 
   @override
   void paint(Canvas canvas, Size size) {
     final double w = size.width;
     final double h = size.height;
 
-    // ── Arrow body path (cubic Bézier, curves left then down) ───────────────
-    // Start point: upper-center
-    // Control points: lean slightly right at top, then curve to center-bottom
-    // End point: lower-center (arrowhead tip area)
-    final double bodyStrokeW = w * 0.22; // tube thickness
-    final double headH = h * 0.30;       // height of arrowhead
-    final double bodyEndY = h - headH;   // where the body ends
+    // ── OUTSIDE → INSIDE arrow path ────────────────────────────────────────
+    //
+    // The tail (p0) starts well above the canvas — it is hidden by the
+    // parent ClipRect, creating the "entering from outside the screen" effect.
+    //
+    // The body sweeps from top-right down and slightly left, landing in the
+    // lower-center with the arrowhead pointing straight down.
+    //
+    //  [above screen — hidden]
+    //       p0 •  ← tail: top-right, far above canvas
+    //           ↘
+    //        c1 •  ← swings right, entering visible area
+    //          ↙
+    //       c2 •   ← curves back toward center
+    //         ↓
+    //       p1 •   ← body end, lower-center
+    //         ▼    ← arrowhead
 
-    // The curve control points give the organic arc from the reference image
-    final Offset p0 = Offset(w * 0.52, 0);
-    final Offset c1 = Offset(w * 0.70, h * 0.25);
-    final Offset c2 = Offset(w * 0.55, h * 0.50);
-    final Offset p1 = Offset(w * 0.50, bodyEndY);
+    final double stroke = w * 0.20; // tube thickness — small arrow
+    final double headH  = h * 0.28;
+    final double bodyEndY = h - headH;
 
-    final Path bodyPath = Path()
+    // p0 is -60% above canvas top → fully hidden by ClipRect
+    final Offset p0 = Offset(w * 0.68,  -h * 0.60);
+    final Offset c1 = Offset(w * 0.82,   h * 0.15);
+    final Offset c2 = Offset(w * 0.58,   h * 0.48);
+    final Offset p1 = Offset(w * 0.50,   bodyEndY);
+
+    final Path body = Path()
       ..moveTo(p0.dx, p0.dy)
       ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p1.dx, p1.dy);
 
-    // ── Layer 1: Drop shadow ─────────────────────────────────────────────────
+    // 1 — soft drop shadow
+    canvas.drawPath(body, Paint()
+      ..color = _shadow
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke + 8
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+
+    // 2 — dark bottom face (3D depth)
+    canvas.drawPath(body, Paint()
+      ..color = _darker
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke + 5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round);
+
+    // 3 — main red fill
+    canvas.drawPath(body, Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round);
+
+    // 4 — top-left highlight streak (simulates curved 3D surface)
+    final Path hl = Path()
+      ..moveTo(p0.dx - 4, p0.dy + 5)
+      ..cubicTo(c1.dx - 4, c1.dy + 5, c2.dx - 4, c2.dy + 3, p1.dx - 3, p1.dy);
+    canvas.drawPath(hl, Paint()
+      ..color = _light.withOpacity(0.45)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke * 0.30
+      ..strokeCap = StrokeCap.round);
+
+    // ── Arrowhead ──────────────────────────────────────────────────────────
+    final double tx   = w * 0.50;
+    final double ty   = h;
+    final double sy   = bodyEndY + h * 0.01;
+    final double hw   = w * 0.46; // half-width of head
+    final double dep  = h * 0.05; // 3D depth offset
+
+    // Back face (darker, offset)
     canvas.drawPath(
-      bodyPath,
+      Path()
+        ..moveTo(tx - hw + dep, sy + dep)
+        ..lineTo(tx + hw + dep, sy + dep)
+        ..lineTo(tx + dep,      ty + dep * 0.4)
+        ..close(),
+      Paint()..color = _darker);
+
+    // Shadow under head
+    canvas.drawPath(
+      Path()
+        ..moveTo(tx - hw, sy)
+        ..lineTo(tx + hw, sy)
+        ..lineTo(tx,      ty)
+        ..close(),
       Paint()
         ..color = _shadow
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = bodyStrokeW + 8
-        ..strokeCap = StrokeCap.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12),
-    );
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
 
-    // ── Layer 2: Dark edge (bottom face of the 3D tube) ──────────────────────
+    // Front face (main color)
     canvas.drawPath(
-      bodyPath,
-      Paint()
-        ..color = _darker
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = bodyStrokeW + 6
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
+      Path()
+        ..moveTo(tx - hw, sy)
+        ..lineTo(tx + hw, sy)
+        ..lineTo(tx,      ty)
+        ..close(),
+      Paint()..color = color);
 
-    // ── Layer 3: Main fill ───────────────────────────────────────────────────
+    // Left lit edge
     canvas.drawPath(
-      bodyPath,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = bodyStrokeW
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
+      Path()
+        ..moveTo(tx - hw, sy)
+        ..lineTo(tx,      ty)
+        ..lineTo(tx - hw * 0.25, ty - h * 0.035)
+        ..close(),
+      Paint()..color = _light.withOpacity(0.35));
 
-    // ── Layer 4: Highlight streak (top face of tube — simulates light) ───────
-    // Slightly offset upward-left from the main path to look like a lit edge
-    final Path highlightPath = Path()
-      ..moveTo(p0.dx - 6, p0.dy + 4)
-      ..cubicTo(c1.dx - 6, c1.dy + 4, c2.dx - 6, c2.dy + 4, p1.dx - 4, p1.dy);
-
+    // Right shadow edge
     canvas.drawPath(
-      highlightPath,
-      Paint()
-        ..color = _light.withOpacity(0.55)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = bodyStrokeW * 0.35
-        ..strokeCap = StrokeCap.round,
-    );
+      Path()
+        ..moveTo(tx + hw, sy)
+        ..lineTo(tx,      ty)
+        ..lineTo(tx + hw * 0.25, ty - h * 0.035)
+        ..close(),
+      Paint()..color = _dark.withOpacity(0.40));
 
-    // ── Arrowhead (3D cone, pointing downward) ───────────────────────────────
-    // The head is built from two faces:
-    //   Face A (front face, main color): wide triangle pointing down
-    //   Face B (bottom plane, darker):   narrower shape offset down-right
-    //
-    // tip of arrowhead
-    final double tipX = w * 0.50;
-    final double tipY = h;
-    // left and right shoulders of the head
-    final double shoulderY = bodyEndY + h * 0.04;
-    final double headHalfW = w * 0.46;
-    final double leftX  = tipX - headHalfW;
-    final double rightX = tipX + headHalfW;
-
-    // Face B — bottom/shadow plane of the 3D cone (drawn first, behind face A)
-    final double depthOffset = h * 0.055; // how deep the bottom face sits
-    final Path faceB = Path()
-      ..moveTo(leftX + depthOffset,  shoulderY + depthOffset)
-      ..lineTo(rightX + depthOffset, shoulderY + depthOffset)
-      ..lineTo(tipX  + depthOffset,  tipY + depthOffset * 0.6)
-      ..close();
-
-    canvas.drawPath(faceB, Paint()..color = _darker);
-
-    // Drop shadow for the head
-    canvas.drawPath(
-      faceB,
-      Paint()
-        ..color = _shadow
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
-
-    // Face A — front face of the 3D cone (main color)
-    final Path faceA = Path()
-      ..moveTo(leftX,  shoulderY)
-      ..lineTo(rightX, shoulderY)
-      ..lineTo(tipX,   tipY)
-      ..close();
-
-    canvas.drawPath(faceA, Paint()..color = color);
-
-    // Highlight on left edge of the arrowhead (lit corner)
-    final Path headHighlight = Path()
-      ..moveTo(leftX,  shoulderY)
-      ..lineTo(tipX,   tipY)
-      ..lineTo(tipX - headHalfW * 0.3, tipY - h * 0.04)
-      ..close();
-
-    canvas.drawPath(
-      headHighlight,
-      Paint()..color = _light.withOpacity(0.35),
-    );
-
-    // Dark right edge of the arrowhead (shadow side)
-    final Path headShadow = Path()
-      ..moveTo(rightX, shoulderY)
-      ..lineTo(tipX,   tipY)
-      ..lineTo(tipX + headHalfW * 0.3, tipY - h * 0.04)
-      ..close();
-
-    canvas.drawPath(
-      headShadow,
-      Paint()..color = _dark.withOpacity(0.5),
-    );
-
-    // Glow ring when actively detecting
+    // Pulse glow when detecting
     if (isDetecting) {
-      canvas.drawPath(
-        bodyPath,
-        Paint()
-          ..color = color.withOpacity(0.25)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = bodyStrokeW + 20
-          ..strokeCap = StrokeCap.round
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16),
-      );
+      canvas.drawPath(body, Paint()
+        ..color = color.withOpacity(0.18)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke + 18
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14));
     }
   }
 
