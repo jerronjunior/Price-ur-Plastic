@@ -29,92 +29,239 @@ import 'package:flutter/material.dart';
 //   If the brightest cell is below a minimum threshold (too dark → phone
 //   not pointing at bin), returns the last known position (or center).
 // ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// _SlotTracker  v2
+//
+// Finds the bin hole (tan/brown flap with downward arrow) and LOCKS onto it.
+//
+// HOW IT FINDS THE FLAP:
+//   The flap is the tan/amber square (~RGB 170,130,80) which in YUV420 means:
+//     Y  ≈ 110–190  (bright relative to dark purple bin body Y ≈ 30–80)
+//     U  ≈ 100–130  (mildly blue-shifted from neutral 128)
+//     V  ≈ 140–170  (warm/red-shifted — characteristic of amber/tan)
+//
+//   Strategy: scan a 11×8 grid in the upper 60% of frame.
+//   Score each cell using THREE criteria:
+//     1. Y brightness is in the tan range (not too dark, not sky-white)
+//     2. V channel (warmth) is elevated — tan is warmer than the purple bin
+//     3. The cell has HIGH CONTRAST with its neighbors — the flap is a bright
+//        square surrounded by the darker bin body
+//   The cell with the highest combined score = the flap.
+//
+// LOCK MECHANISM:
+//   • "Seeking" state: α = 0.18  (responsive, finds the flap quickly)
+//   • "Locked" state:  α = 0.03  (barely moves — target stays on hole)
+//   • Enters locked state after _lockFrames consecutive consistent detections
+//   • Loses lock only if the best cell moves far from locked position
+//
+// RESULT:
+//   slotNormX / slotNormY — normalized 0–1 position that stays FIXED on the
+//   bin hole. The arc endpoint is this position. Only the arc path changes
+//   as the camera moves.
+// ══════════════════════════════════════════════════════════════════════════════
 class _SlotTracker {
-  // Grid dimensions
-  static const int _cols = 9;
-  static const int _rows = 6;
+  static const int    _cols = 11;
+  static const int    _rows = 8;
 
-  // Only scan the upper portion of frame (slot is never at the very bottom)
-  static const double _scanTopFrac    = 0.00;
-  static const double _scanBottomFrac = 0.72;
+  // Only search the upper part of the frame (slot is in top half)
+  static const double _scanTop    = 0.02;
+  static const double _scanBottom = 0.62;
 
-  // Minimum brightness for a cell to be considered as the slot
-  // (below this = too dark, phone not aimed at bin)
-  static const double _minSlotBrightness = 80.0;
+  // Y range for the tan flap: brighter than bin body, dimmer than sky/white
+  static const double _minY = 90.0;
+  static const double _maxY = 210.0;
 
-  // Low-pass filter coefficient (0 = never moves, 1 = instant snap)
-  static const double _alpha = 0.12;
+  // V channel (warmth) threshold — tan/amber has V > neutral 128
+  static const double _minV = 132.0;
 
-  // Exposed tracked position in normalized screen coords (0–1)
+  // Minimum contrast score (cell brightness vs surrounding average)
+  static const double _minContrast = 12.0;
+
+  // Frames of consistent detection before entering locked mode
+  static const int _lockFrames = 8;
+
+  // Alpha values
+  static const double _seekAlpha   = 0.18;  // responsive when seeking
+  static const double _lockedAlpha = 0.03;  // barely moves when locked
+
+  // Max distance from lock position before losing lock (normalised)
+  static const double _unlockDist = 0.18;
+
+  // ── Public state ────────────────────────────────────────────────────────────
   double slotNormX = 0.50;
-  double slotNormY = 0.30;
+  double slotNormY = 0.28;
+  bool   hasLock   = false;
 
-  // Whether the tracker currently has a confident lock on the slot
-  bool hasLock = false;
+  // ── Internal ────────────────────────────────────────────────────────────────
+  int    _consistentFrames = 0;
+  bool   _locked           = false;
+  double _lockedX          = 0.50;
+  double _lockedY          = 0.28;
 
   void update(CameraImage image) {
     final int fw = image.width;
     final int fh = image.height;
+
     final Uint8List yPlane = image.planes[0].bytes;
 
-    final int scanY0 = (_scanTopFrac    * fh).toInt();
-    final int scanY1 = (_scanBottomFrac * fh).toInt();
+    // U and V planes (present in YUV420 images)
+    final Uint8List? uPlane = image.planes.length > 1 ? image.planes[1].bytes : null;
+    final Uint8List? vPlane = image.planes.length > 2 ? image.planes[2].bytes : null;
+    final int uvW = (fw / 2).toInt();  // U/V planes are half resolution
+
+    final int y0scan = (_scanTop    * fh).toInt();
+    final int y1scan = (_scanBottom * fh).toInt();
 
     final int cellW = (fw / _cols).toInt().clamp(1, fw);
-    final int cellH = ((scanY1 - scanY0) / _rows).toInt().clamp(1, fh);
+    final int cellH = ((y1scan - y0scan) / _rows).toInt().clamp(1, fh);
 
-    double bestBrightness = 0;
-    int bestCol = _cols ~/ 2;
-    int bestRow = _rows ~/ 2;
+    // Build brightness grid first (need neighbours for contrast)
+    final List<double> grid    = List.filled(_cols * _rows, 0);
+    final List<double> vGrid   = List.filled(_cols * _rows, 128);
 
-    for (int row = 0; row < _rows; row++) {
-      for (int col = 0; col < _cols; col++) {
-        final int x0 = col * cellW;
-        final int y0 = scanY0 + row * cellH;
-        final int x1 = (x0 + cellW).clamp(0, fw);
-        final int y1 = (y0 + cellH).clamp(0, fh);
+    for (int r = 0; r < _rows; r++) {
+      for (int c = 0; c < _cols; c++) {
+        final int px0 = c * cellW;
+        final int py0 = y0scan + r * cellH;
+        final int px1 = (px0 + cellW).clamp(0, fw);
+        final int py1 = (py0 + cellH).clamp(0, fh);
 
-        double sum = 0;
-        int count = 0;
-        // Sample every 6th pixel for speed
-        for (int py = y0; py < y1; py += 6) {
-          for (int px = x0; px < x1; px += 6) {
-            final int idx = py * fw + px;
-            if (idx < yPlane.length) {
-              sum += yPlane[idx];
-              count++;
+        double sumY = 0, sumV = 0;
+        int cnt = 0;
+
+        for (int py = py0; py < py1; py += 6) {
+          for (int px = px0; px < px1; px += 6) {
+            final int yi = py * fw + px;
+            if (yi < yPlane.length) {
+              sumY += yPlane[yi];
+              // U/V index (half resolution, interleaved or planar)
+              if (vPlane != null) {
+                final int vi = (py ~/ 2) * uvW + (px ~/ 2);
+                if (vi < vPlane.length) sumV += vPlane[vi];
+              }
+              cnt++;
             }
           }
         }
-        final double brightness = count > 0 ? sum / count : 0;
 
-        if (brightness > bestBrightness) {
-          bestBrightness = brightness;
-          bestCol = col;
-          bestRow = row;
+        if (cnt > 0) {
+          grid[r * _cols + c]  = sumY / cnt;
+          vGrid[r * _cols + c] = vPlane != null ? sumV / cnt : 145.0;
         }
       }
     }
 
-    hasLock = bestBrightness >= _minSlotBrightness;
+    // Score each cell
+    double bestScore = 0;
+    int bestC = _cols ~/ 2;
+    int bestR = 1;
 
-    if (hasLock) {
-      // Centre of the winning cell in normalised coords
-      final double rawX = (bestCol + 0.5) / _cols;
-      final double rawY = _scanTopFrac +
-          (bestRow + 0.5) / _rows * (_scanBottomFrac - _scanTopFrac);
+    for (int r = 0; r < _rows; r++) {
+      for (int c = 0; c < _cols; c++) {
+        final double y = grid[r * _cols + c];
+        final double v = vGrid[r * _cols + c];
 
-      // Low-pass smooth
-      slotNormX += (rawX - slotNormX) * _alpha;
-      slotNormY += (rawY - slotNormY) * _alpha;
+        // 1. Y must be in tan range
+        if (y < _minY || y > _maxY) continue;
+
+        // 2. V channel must indicate warm/amber tone
+        // (if UV planes not available, skip this filter)
+        if (vPlane != null && v < _minV) continue;
+
+        // 3. Contrast: how much brighter than the 4 adjacent cells?
+        double neighborSum = 0;
+        int    neighborCnt = 0;
+        for (final int nr in [r - 1, r + 1]) {
+          if (nr >= 0 && nr < _rows) {
+            neighborSum += grid[nr * _cols + c];
+            neighborCnt++;
+          }
+        }
+        for (final int nc in [c - 1, c + 1]) {
+          if (nc >= 0 && nc < _cols) {
+            neighborSum += grid[r * _cols + nc];
+            neighborCnt++;
+          }
+        }
+        final double contrast = neighborCnt > 0
+            ? y - (neighborSum / neighborCnt)
+            : 0.0;
+
+        if (contrast < _minContrast) continue;
+
+        // Score = brightness contribution + warmth bonus + contrast
+        final double score = y * 0.5 +
+            (vPlane != null ? (v - 128) * 1.5 : 0) +
+            contrast * 2.0;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestC     = c;
+          bestR     = r;
+        }
+      }
     }
-    // else: keep last known position
+
+    final bool detected = bestScore > 0;
+
+    // Raw candidate position in normalised coords
+    final double rawX = (bestC + 0.5) / _cols;
+    final double rawY = _scanTop +
+        (bestR + 0.5) / _rows * (_scanBottom - _scanTop);
+
+    if (detected) {
+      // Check if this candidate is consistent with our lock position
+      final double distFromLock = _hypot(rawX - _lockedX, rawY - _lockedY);
+
+      if (_locked && distFromLock > _unlockDist) {
+        // Candidate jumped far from lock — probably noise. Ignore.
+        // Keep existing locked position.
+        hasLock = true;
+        return;
+      }
+
+      // Accumulate consistent frames
+      _consistentFrames =
+          (_consistentFrames + 1).clamp(0, _lockFrames + 1);
+
+      if (_consistentFrames >= _lockFrames && !_locked) {
+        _locked  = true;
+        _lockedX = slotNormX;
+        _lockedY = slotNormY;
+      }
+
+      // Apply appropriate alpha
+      final double alpha = _locked ? _lockedAlpha : _seekAlpha;
+      slotNormX += (rawX - slotNormX) * alpha;
+      slotNormY += (rawY - slotNormY) * alpha;
+
+      // Keep lock reference updated (very slowly)
+      if (_locked) {
+        _lockedX += (rawX - _lockedX) * 0.01;
+        _lockedY += (rawY - _lockedY) * 0.01;
+      }
+
+      hasLock = true;
+    } else {
+      _consistentFrames = (_consistentFrames - 1).clamp(0, _lockFrames);
+      if (_consistentFrames == 0) {
+        _locked = false;
+        hasLock = false;
+      }
+      // Position stays at last known value
+    }
   }
 
+  double _hypot(double dx, double dy) => sqrt(dx * dx + dy * dy);
+
   void reset() {
-    slotNormX = 0.50;
-    slotNormY = 0.30;
-    hasLock = false;
+    slotNormX        = 0.50;
+    slotNormY        = 0.28;
+    hasLock          = false;
+    _locked          = false;
+    _lockedX         = 0.50;
+    _lockedY         = 0.28;
+    _consistentFrames = 0;
   }
 }
 
@@ -436,12 +583,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   String get _statusText {
-    if (_calibrating)                  return 'Calibrating…';
-    if (_engine.lastRejectedByShake)   return 'Hold camera steady';
-    if (!_engine.isCalibrated)         return 'Getting ready…';
-    if (!_tracker.hasLock)             return 'Point camera at the bin slot';
+    if (_calibrating)                     return 'Calibrating…';
+    if (_engine.lastRejectedByShake)      return 'Hold camera steady';
+    if (!_engine.isCalibrated)            return 'Getting ready…';
+    if (!_tracker.hasLock)                return 'Point camera at the bin slot';
     if (_engine.state == _FlapState.open) return 'Detecting…';
-    return 'Aim arc at slot — insert bottle';
+    return 'Slot locked — insert bottle';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -759,52 +906,78 @@ class _TrajectoryPainter extends CustomPainter {
     final Color color = isDetecting ? _detectColor : _idleColor;
     final double ringR = 18.0 + pulse * 8;
 
-    // Outer ring
-    canvas.drawCircle(
-      c, ringR,
-      Paint()
-        ..color = color.withOpacity((0.75 + pulse * 0.25) * lockOpacity)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
-    );
-
-    // Second inner ring when locked
+    // Outer glow when locked
     if (hasLock) {
       canvas.drawCircle(
-        c, ringR * 0.55,
+        c, ringR + 8,
         Paint()
-          ..color = color.withOpacity(0.35 * lockOpacity)
+          ..color = color.withOpacity(0.15 * lockOpacity)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2,
+          ..strokeWidth = 6,
       );
     }
 
-    // Centre dot
+    // Main outer ring — thicker when locked
     canvas.drawCircle(
-      c, 4.5,
+      c, ringR,
+      Paint()
+        ..color = color.withOpacity((0.85 + pulse * 0.15) * lockOpacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = hasLock ? 3.0 : 1.8,
+    );
+
+    // Inner ring only when locked
+    if (hasLock) {
+      canvas.drawCircle(
+        c, ringR * 0.50,
+        Paint()
+          ..color = color.withOpacity(0.50 * lockOpacity)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    // Centre dot — bigger when locked
+    canvas.drawCircle(
+      c, hasLock ? 5.5 : 3.5,
       Paint()..color = color.withOpacity(0.95 * lockOpacity),
     );
 
-    // Crosshair arms
-    const double arm = 12;
-    const double gap =  7;
+    // Crosshair arms — longer when locked
+    final double arm = hasLock ? 16.0 : 10.0;
+    const double gap = 7;
     final Paint lp = Paint()
-      ..color = color.withOpacity(0.80 * lockOpacity)
-      ..strokeWidth = 1.8
+      ..color = color.withOpacity(0.85 * lockOpacity)
+      ..strokeWidth = hasLock ? 2.2 : 1.6
       ..strokeCap = StrokeCap.round;
 
-    canvas.drawLine(
-        Offset(c.dx,       c.dy - gap),
-        Offset(c.dx,       c.dy - gap - arm), lp);
-    canvas.drawLine(
-        Offset(c.dx,       c.dy + gap),
-        Offset(c.dx,       c.dy + gap + arm), lp);
-    canvas.drawLine(
-        Offset(c.dx - gap, c.dy),
+    canvas.drawLine(Offset(c.dx, c.dy - gap),
+        Offset(c.dx, c.dy - gap - arm), lp);
+    canvas.drawLine(Offset(c.dx, c.dy + gap),
+        Offset(c.dx, c.dy + gap + arm), lp);
+    canvas.drawLine(Offset(c.dx - gap, c.dy),
         Offset(c.dx - gap - arm, c.dy), lp);
-    canvas.drawLine(
-        Offset(c.dx + gap, c.dy),
+    canvas.drawLine(Offset(c.dx + gap, c.dy),
         Offset(c.dx + gap + arm, c.dy), lp);
+
+    // "LOCKED" label below reticle
+    if (hasLock && !isDetecting) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: 'SLOT LOCKED',
+          style: TextStyle(
+            color: color.withOpacity(0.75),
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.2,
+            shadows: const [Shadow(color: Colors.black, blurRadius: 4)],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas,
+          Offset(c.dx - tp.width / 2, c.dy + ringR + 10));
+    }
   }
 
   @override
