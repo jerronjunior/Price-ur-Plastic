@@ -626,23 +626,35 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-        // ── 3D AR Arrow ───────────────────────────────────────────────────
-        // Head is FIXED on the bin slot (tracked by _SlotTracker).
-        // Tail is at the bottom-center and moves naturally as the camera
-        // moves (because the head position in screen-space shifts, the
-        // arrow reorients to always point from tail → bin hole).
+        // ── Game-style rotating 3D arrow ──────────────────────────────────
+        // The arrow PIVOTS at the screen center-bottom area.
+        // TIP always points at the bin slot (tracked).
+        // TAIL swings opposite: camera moves right → slot moves left in
+        // frame → tip rotates left → tail swings right.  Exactly like a
+        // game navigation compass arrow.
         AnimatedBuilder(
           animation: _dotCtrl,
-          builder: (context, _) => CustomPaint(
-            size: size,
-            painter: _Ar3DArrowPainter(
-              tail:           Offset(launchX, launchY),
-              head:           Offset(targetX, targetY),
-              animValue:      _dotCtrl.value,
-              isDetecting:    _engine.state == _FlapState.open,
-              hasLock:        _tracker.hasLock,
-            ),
-          ),
+          builder: (context, _) {
+            // Arrow pivot: fixed point on screen the arrow rotates around
+            final Offset pivot = Offset(size.width * 0.50, size.height * 0.62);
+            // Angle from pivot to target (bin slot)
+            final double angle = atan2(
+              targetY - pivot.dy,
+              targetX - pivot.dx,
+            ) + pi / 2; // +pi/2 because arrow art points UP (north)
+
+            return CustomPaint(
+              size: size,
+              painter: _GameArrowPainter(
+                pivot:       pivot,
+                angle:       angle,
+                animValue:   _dotCtrl.value,
+                isDetecting: _engine.state == _FlapState.open,
+                hasLock:     _tracker.hasLock,
+                target:      Offset(targetX, targetY),
+              ),
+            );
+          },
         ),
 
         // ── Countdown ─────────────────────────────────────────────────────
@@ -770,352 +782,288 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
-// _Ar3DArrowPainter
+// _GameArrowPainter
 //
-// Draws a 3D augmented-reality arrow from tail → head (bin slot).
+// Draws a 3D upward-pointing arrow (like the reference image) that ROTATES
+// around a fixed pivot to always aim its tip at the bin slot.
 //
-// HEAD  = fixed on the bin slot (tracked by _SlotTracker, barely moves).
-// TAIL  = bottom-center of screen (where the user holds the bottle).
-//         As the camera moves, the slot position in screen-space changes,
-//         so the arrow reorients — the tail stays, the head follows the slot.
+// BEHAVIOR:
+//   • Pivot point is fixed at screen center-bottom area.
+//   • Angle = atan2(slot - pivot) + π/2  (because arrow art points UP/north).
+//   • Camera moves RIGHT → slot moves LEFT in frame → angle rotates CCW →
+//     tip swings left, tail swings right.  Exactly like a game compass.
 //
-// 3D TUBE BODY:
-//   The arrow shaft is a cubic Bézier drawn in 4 stacked layers:
-//     Layer 1 — blurred shadow  (black, wide blur → depth)
-//     Layer 2 — dark underside  (dark red, +6px wide → bottom face of tube)
-//     Layer 3 — main color      (vivid red → front face of tube)
-//     Layer 4 — highlight       (pale pink, thin, offset left → lit top edge)
-//   Tube width tapers: thick at tail (near camera), thin at head (far away).
-//   This gives natural perspective foreshortening.
+// 3D ARROW DESIGN (matches the reference image):
 //
-// 3D CONE HEAD:
-//   Built from 3 filled shapes drawn back-to-front:
-//     Back plane  — darker, offset down-right (the shadowed underside)
-//     Front face  — main color filled triangle pointing in arrow direction
-//     Lit edge    — bright sliver on the leading left edge
-//   The cone points in the exact direction of the Bézier tangent at t=1,
-//   so it always faces the slot regardless of the camera angle.
+//         ▲   ← tip (points at slot)
+//        ╱ ╲
+//       ╱   ╲  ← triangle head (front face, vivid red)
+//      ╱_____╲
+//      |     |  ← trapezoid body (narrower at top, wider at bottom)
+//      |     |
+//      |_____|
+//      ▔▔▔▔▔▔▔  ← flat base rectangle
+//      ░░░░░░░  ← 3D bottom face (dark, offset down-right)
 //
-// LOCK RING:
-//   A pulsing ring at the head when locked (slot confirmed).
-//   Turns orange and pulses faster when a bottle is being detected.
+//   LEFT FACE:  dark strip visible on the left edge of body+base
+//   BOTTOM:     dark rectangle below the base (3D platform effect)
+//   HIGHLIGHT:  bright strip on right edge of head (light source from right)
 //
-// ENERGY PULSE:
-//   When isDetecting=true, a shimmering pulse travels along the tube
-//   from tail to head (driven by animValue), signalling active detection.
+// STATES:
+//   No lock  → 35% opacity, slow wobble animation
+//   Locked   → full opacity, stable, "SLOT" label at tip
+//   Detecting → orange color, pulsing scale, "INSERT!" label
 // ══════════════════════════════════════════════════════════════════════════════
-class _Ar3DArrowPainter extends CustomPainter {
-  const _Ar3DArrowPainter({
-    required this.tail,
-    required this.head,
+class _GameArrowPainter extends CustomPainter {
+  const _GameArrowPainter({
+    required this.pivot,
+    required this.angle,
     required this.animValue,
     required this.isDetecting,
     required this.hasLock,
+    required this.target,
   });
 
-  final Offset tail;
-  final Offset head;
-  final double animValue;
+  final Offset pivot;
+  final double angle;       // radians: angle to rotate the arrow
+  final double animValue;   // 0→1 animation cycle
   final bool   isDetecting;
   final bool   hasLock;
+  final Offset target;      // screen position of bin slot (for label placement)
 
-  // Colors
   static const Color _red       = Color(0xFFE53935);
   static const Color _orange    = Color(0xFFFF6B35);
-  static const Color _dark      = Color(0xFF8B0000);
-  static const Color _darker    = Color(0xFF4A0000);
+  static const Color _darkRed   = Color(0xFF7B0000);
+  static const Color _darkest   = Color(0xFF3E0000);
   static const Color _highlight = Color(0xFFFF8A80);
 
-  Color get _mainColor => isDetecting ? _orange : _red;
-
-  // Global opacity: dimmed when no lock, full when locked
-  double get _alpha => hasLock ? 0.92 : 0.38;
+  Color get _main  => isDetecting ? _orange : _red;
+  Color get _dark  => isDetecting ? const Color(0xFF8B3000) : _darkRed;
+  Color get _edge  => isDetecting ? const Color(0xFF3E1500) : _darkest;
+  double get _globalOpacity => hasLock ? 0.93 : 0.38;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (tail == head) return;
+    // ── Pulsing scale when detecting ─────────────────────────────────────────
+    final double pulseScale = isDetecting
+        ? 1.0 + sin(animValue * pi * 4) * 0.06
+        : 1.0;
 
-    // ── Arrow body Bézier ─────────────────────────────────────────────────────
-    // Slight arc: control point is offset perpendicular to the tail→head line,
-    // giving the arrow a gentle curve rather than a dead-straight line.
-    final Offset dir = head - tail;
-    final double len = dir.distance;
-    if (len < 10) return;
+    // ── Wobble when seeking (no lock) ─────────────────────────────────────────
+    // The arrow gently rocks left-right to draw attention when not locked
+    final double wobble = hasLock ? 0.0 : sin(animValue * pi * 2) * 0.18;
+    final double finalAngle = angle + wobble;
 
-    // Unit perpendicular (rotated 90°)
-    final Offset perp = Offset(-dir.dy, dir.dx) / len;
+    canvas.save();
+    canvas.translate(pivot.dx, pivot.dy);
+    canvas.rotate(finalAngle);
+    canvas.scale(pulseScale, pulseScale);
 
-    // Control point: 25% of the way from tail to head, nudged perpendicular
-    // by 12% of the total length. This gives a natural AR curve.
-    final Offset ctrl = Offset(
-      tail.dx + dir.dx * 0.35 + perp.dx * len * 0.12,
-      tail.dy + dir.dy * 0.35 + perp.dy * len * 0.12,
-    );
+    _drawArrow(canvas);
 
-    // Quadratic Bézier: tail → ctrl → head
-    // B(t) = (1-t)²·tail + 2(1-t)t·ctrl + t²·head
-    Offset bez(double t) {
-      final double mt = 1 - t;
-      return Offset(
-        mt * mt * tail.dx + 2 * mt * t * ctrl.dx + t * t * head.dx,
-        mt * mt * tail.dy + 2 * mt * t * ctrl.dy + t * t * head.dy,
-      );
-    }
+    canvas.restore();
 
-    // Tangent direction at t (for aligning the arrowhead)
-    Offset bezTangent(double t) {
-      final double mt = 1 - t;
-      return Offset(
-        2 * mt * (ctrl.dx - tail.dx) + 2 * t * (head.dx - ctrl.dx),
-        2 * mt * (ctrl.dy - tail.dy) + 2 * t * (head.dy - ctrl.dy),
-      );
-    }
-
-    // Body path stops before the arrowhead cone begins
-    const double headReserve = 0.88; // t where body ends, head starts
-    final Path bodyPath = Path()..moveTo(tail.dx, tail.dy);
-    for (int i = 1; i <= 40; i++) {
-      final double t = (i / 40) * headReserve;
-      final Offset p = bez(t);
-      bodyPath.lineTo(p.dx, p.dy);
-    }
-
-    // Tube stroke width tapers tail→head (perspective)
-    // Tail: 18px wide (close), head junction: 8px (far)
-    // We simulate taper by drawing 3 separate strokes across 3 segments
-    // with decreasing widths, then compositing them with a single highlight.
-    // Simpler approach that looks great: use one stroke at average width
-    // + offset shadow. The taper comes from the strokeCap + perspective implied
-    // by the curve foreshortening naturally.
-
-    // ── Layer 1: Drop shadow ──────────────────────────────────────────────────
-    canvas.drawPath(bodyPath, Paint()
-      ..color = Colors.black.withOpacity(0.45 * _alpha)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 22
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-
-    // ── Layer 2: Dark underside (3D tube bottom face) ─────────────────────────
-    canvas.drawPath(bodyPath, Paint()
-      ..color = _darker.withOpacity(0.90 * _alpha)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 20
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round);
-
-    // ── Layer 3: Main color front face ────────────────────────────────────────
-    canvas.drawPath(bodyPath, Paint()
-      ..color = _mainColor.withOpacity(0.95 * _alpha)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 14
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round);
-
-    // ── Layer 4: Highlight (lit top edge) ────────────────────────────────────
-    // Offset the highlight path slightly perpendicular to the tube direction
-    final Path hlPath = Path();
-    for (int i = 0; i <= 40; i++) {
-      final double t = (i / 40) * headReserve;
-      final Offset p = bez(t);
-      final Offset tang = bezTangent(t);
-      final double tLen = tang.distance;
-      if (tLen < 0.001) continue;
-      final Offset n = Offset(-tang.dy, tang.dx) / tLen; // left normal
-      final Offset hp = Offset(p.dx + n.dx * 4, p.dy + n.dy * 4);
-      i == 0 ? hlPath.moveTo(hp.dx, hp.dy) : hlPath.lineTo(hp.dx, hp.dy);
-    }
-    canvas.drawPath(hlPath, Paint()
-      ..color = _highlight.withOpacity(0.45 * _alpha)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4
-      ..strokeCap = StrokeCap.round);
-
-    // ── Energy pulse along body when detecting ────────────────────────────────
-    if (isDetecting) {
-      // A bright band travels from tail to head
-      final double pulseT = animValue; // 0→1 cycle
-      final double pStart = (pulseT - 0.12).clamp(0.0, 1.0) * headReserve;
-      final double pEnd   = pulseT * headReserve;
-      final Path pulsePath = Path();
-      bool started = false;
-      for (int i = 0; i <= 60; i++) {
-        final double t = i / 60;
-        if (t < pStart || t > pEnd) continue;
-        final Offset p = bez(t);
-        if (!started) { pulsePath.moveTo(p.dx, p.dy); started = true; }
-        else pulsePath.lineTo(p.dx, p.dy);
-      }
-      if (started) {
-        canvas.drawPath(pulsePath, Paint()
-          ..color = Colors.white.withOpacity(0.55)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 6
-          ..strokeCap = StrokeCap.round
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
-      }
-    }
-
-    // ── 3D Cone arrowhead at head ─────────────────────────────────────────────
-    _drawHead(canvas, bez, bezTangent);
-
-    // ── Lock ring at head ─────────────────────────────────────────────────────
-    _drawLockRing(canvas);
+    // ── Target ring at the slot position ─────────────────────────────────────
+    _drawTargetRing(canvas);
   }
 
-  void _drawHead(
-    Canvas canvas,
-    Offset Function(double) bez,
-    Offset Function(double) bezTangent,
-  ) {
-    // Cone tip = head point
-    // Cone base = 2 points perpendicular to tangent at t=headReserve
-    const double headReserve = 0.88;
-    const double coneLen  = 36.0; // length of the cone
-    const double coneHalfW = 18.0; // half-width at base
+  // ── Arrow drawn pointing UP, centered at (0,0) ───────────────────────────
+  void _drawArrow(Canvas canvas) {
+    // Arrow dimensions (all relative to center at origin)
+    const double arrowTotalH = 160.0;
+    const double headH       = 62.0;  // triangle head height
+    const double headHW      = 52.0;  // head half-width at shoulder
+    const double bodyTopHW   = 22.0;  // body half-width at top
+    const double bodyBotHW   = 28.0;  // body half-width at bottom
+    const double bodyH       = 72.0;  // body trapezoid height
+    const double baseH       = 18.0;  // base rectangle height
+    const double depth       = 8.0;   // 3D depth offset
 
-    final Offset tang = bezTangent(headReserve);
-    final double tLen = tang.distance;
-    if (tLen < 0.001) return;
+    // Y coordinates (0 = pivot center, negative = upward = toward tip)
+    // Arrow is centered vertically: tip at -arrowTotalH*0.6, base at +arrowTotalH*0.4
+    const double tipY       = -arrowTotalH * 0.60;
+    const double shoulderY  = tipY + headH;
+    const double bodyBotY   = shoulderY + bodyH;
+    const double baseBotY   = bodyBotY + baseH;
 
-    final Offset fwd  = tang / tLen;               // forward unit vector
-    final Offset left = Offset(-fwd.dy, fwd.dx);   // left perpendicular
+    final double o = _globalOpacity; // opacity shorthand
 
-    // Cone base center — back along the body from head
-    final Offset base = Offset(
-      head.dx - fwd.dx * coneLen,
-      head.dy - fwd.dy * coneLen,
-    );
+    // ── 3D BACK FACES (drawn first — behind the front face) ──────────────────
 
-    final Offset leftPt  = Offset(base.dx + left.dx * coneHalfW,  base.dy + left.dy * coneHalfW);
-    final Offset rightPt = Offset(base.dx - left.dx * coneHalfW,  base.dy - left.dy * coneHalfW);
-
-    // 3D depth offset — offset back-plane slightly to the right+down
-    final Offset depthOff = Offset(fwd.dy * 5 + 3, -fwd.dx * 5 + 3);
-
-    // Back plane (darker, offset)
-    canvas.drawPath(
-      Path()
-        ..moveTo(leftPt.dx  + depthOff.dx, leftPt.dy  + depthOff.dy)
-        ..lineTo(rightPt.dx + depthOff.dx, rightPt.dy + depthOff.dy)
-        ..lineTo(head.dx    + depthOff.dx, head.dy    + depthOff.dy)
-        ..close(),
-      Paint()..color = _darker.withOpacity(0.85 * _alpha),
-    );
-
-    // Front face (main color)
-    final Path face = Path()
-      ..moveTo(leftPt.dx,  leftPt.dy)
-      ..lineTo(rightPt.dx, rightPt.dy)
-      ..lineTo(head.dx,    head.dy)
+    // Bottom face of base (3D platform, visible below)
+    final Path bottomFace = Path()
+      ..moveTo(-bodyBotHW,          baseBotY)
+      ..lineTo( bodyBotHW,          baseBotY)
+      ..lineTo( bodyBotHW + depth,  baseBotY + depth)
+      ..lineTo(-bodyBotHW + depth,  baseBotY + depth)
       ..close();
-    canvas.drawPath(face, Paint()..color = _mainColor.withOpacity(0.97 * _alpha));
+    canvas.drawPath(bottomFace, Paint()..color = _edge.withOpacity(0.85 * o));
 
-    // Lit leading edge (left side of cone facing light)
+    // Left side face of body (dark strip on the left)
+    final Path leftFace = Path()
+      ..moveTo(-bodyTopHW,          shoulderY)
+      ..lineTo(-bodyTopHW - depth,  shoulderY + depth)
+      ..lineTo(-bodyBotHW - depth,  bodyBotY  + depth)
+      ..lineTo(-bodyBotHW,          bodyBotY)
+      ..close();
+    canvas.drawPath(leftFace, Paint()..color = _dark.withOpacity(0.80 * o));
+
+    // Left side face of base
+    final Path leftBase = Path()
+      ..moveTo(-bodyBotHW,          bodyBotY)
+      ..lineTo(-bodyBotHW - depth,  bodyBotY  + depth)
+      ..lineTo(-bodyBotHW - depth,  baseBotY  + depth)
+      ..lineTo(-bodyBotHW,          baseBotY)
+      ..close();
+    canvas.drawPath(leftBase, Paint()..color = _edge.withOpacity(0.80 * o));
+
+    // Drop shadow under the whole arrow
+    final Path shadowPath = Path()
+      ..moveTo(0,         tipY)
+      ..lineTo( headHW,   shoulderY)
+      ..lineTo( bodyBotHW + depth, baseBotY + depth)
+      ..lineTo(-bodyBotHW + depth, baseBotY + depth)
+      ..lineTo(-headHW,   shoulderY)
+      ..close();
     canvas.drawPath(
-      Path()
-        ..moveTo(leftPt.dx, leftPt.dy)
-        ..lineTo(head.dx,   head.dy)
-        ..lineTo(leftPt.dx + left.dx * 6, leftPt.dy + left.dy * 6)
-        ..close(),
-      Paint()..color = _highlight.withOpacity(0.40 * _alpha),
+      shadowPath,
+      Paint()
+        ..color = Colors.black.withOpacity(0.30 * o)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
     );
 
-    // Shadow trailing edge (right side)
+    // ── FRONT FACE — main red arrow shape ────────────────────────────────────
+    final Path front = Path()
+      // Head triangle
+      ..moveTo(0,          tipY)          // tip (top point)
+      ..lineTo( headHW,    shoulderY)     // right shoulder
+      ..lineTo( bodyTopHW, shoulderY)     // right neck
+      // Body right side
+      ..lineTo( bodyBotHW, bodyBotY)      // right body bottom
+      // Base
+      ..lineTo( bodyBotHW, baseBotY)      // right base bottom
+      ..lineTo(-bodyBotHW, baseBotY)      // left base bottom
+      // Body left side
+      ..lineTo(-bodyBotHW, bodyBotY)      // left body bottom
+      ..lineTo(-bodyTopHW, shoulderY)     // left neck
+      ..lineTo(-headHW,    shoulderY)     // left shoulder
+      ..close();
+
+    canvas.drawPath(front, Paint()..color = _main.withOpacity(0.96 * o));
+
+    // ── RIGHT HIGHLIGHT on head (light from right) ────────────────────────────
+    final Path rightHl = Path()
+      ..moveTo(0,        tipY)
+      ..lineTo(headHW,   shoulderY)
+      ..lineTo(headHW * 0.55, shoulderY)
+      ..close();
     canvas.drawPath(
-      Path()
-        ..moveTo(rightPt.dx, rightPt.dy)
-        ..lineTo(head.dx,    head.dy)
-        ..lineTo(rightPt.dx - left.dx * 4, rightPt.dy - left.dy * 4)
-        ..close(),
-      Paint()..color = _dark.withOpacity(0.45 * _alpha),
+      rightHl,
+      Paint()..color = _highlight.withOpacity(0.35 * o),
+    );
+
+    // ── INNER BODY SHADING — slight darker center of body for depth ───────────
+    // Subtle gradient effect by drawing a narrow darker strip down the center
+    final Path centerShade = Path()
+      ..moveTo(-4, shoulderY)
+      ..lineTo( 4, shoulderY)
+      ..lineTo( bodyBotHW * 0.25, baseBotY)
+      ..lineTo(-bodyBotHW * 0.25, baseBotY)
+      ..close();
+    canvas.drawPath(
+      centerShade,
+      Paint()..color = _dark.withOpacity(0.12 * o),
+    );
+
+    // ── OUTLINE stroke for crispness ─────────────────────────────────────────
+    canvas.drawPath(
+      front,
+      Paint()
+        ..color = _edge.withOpacity(0.40 * o)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round,
     );
   }
 
-  void _drawLockRing(Canvas canvas) {
+  // ── Target ring drawn at the actual slot position ─────────────────────────
+  void _drawTargetRing(Canvas canvas) {
     final double pulse = isDetecting
-        ? 0.5 + sin(animValue * pi * 6) * 0.5
+        ? 0.5 + sin(animValue * pi * 5) * 0.5
         : hasLock
-            ? 0.5 + sin(animValue * pi * 2) * 0.5
-            : 0.0;
+            ? 0.5 + sin(animValue * pi * 2) * 0.3
+            : 0.2;
 
-    final Color ringColor = isDetecting ? _orange : _red;
-    final double r = 22.0 + pulse * 7;
+    final Color rc = isDetecting ? _orange : _red;
+    final double r = 20.0 + pulse * 8;
+    final double o = _globalOpacity;
 
     // Glow
     if (hasLock) {
-      canvas.drawCircle(head, r + 10,
+      canvas.drawCircle(target, r + 8,
         Paint()
-          ..color = ringColor.withOpacity(0.12 * _alpha)
+          ..color = rc.withOpacity(0.12 * o)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 8
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
     }
 
-    // Outer ring
-    canvas.drawCircle(head, r,
+    // Ring
+    canvas.drawCircle(target, r,
       Paint()
-        ..color = ringColor.withOpacity((0.80 + pulse * 0.20) * _alpha)
+        ..color = rc.withOpacity((0.78 + pulse * 0.22) * o)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = hasLock ? 3.0 : 1.5);
+        ..strokeWidth = hasLock ? 2.8 : 1.5);
 
-    // Inner ring (locked only)
-    if (hasLock) {
-      canvas.drawCircle(head, r * 0.52,
-        Paint()
-          ..color = ringColor.withOpacity(0.40 * _alpha)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5);
-    }
-
-    // Centre dot
-    canvas.drawCircle(head, hasLock ? 5.0 : 3.0,
-      Paint()..color = ringColor.withOpacity(0.95 * _alpha));
+    // Center dot
+    canvas.drawCircle(target, hasLock ? 4.5 : 2.5,
+      Paint()..color = rc.withOpacity(0.95 * o));
 
     // Crosshair
-    final double arm = hasLock ? 14.0 : 9.0;
-    const double gap = 7.0;
+    final double arm = hasLock ? 13.0 : 8.0;
+    const double gap = 6.0;
     final Paint lp = Paint()
-      ..color = ringColor.withOpacity(0.80 * _alpha)
-      ..strokeWidth = hasLock ? 2.0 : 1.5
+      ..color = rc.withOpacity(0.80 * o)
+      ..strokeWidth = hasLock ? 2.0 : 1.4
       ..strokeCap = StrokeCap.round;
-
-    canvas.drawLine(Offset(head.dx, head.dy - gap),
-        Offset(head.dx, head.dy - gap - arm), lp);
-    canvas.drawLine(Offset(head.dx, head.dy + gap),
-        Offset(head.dx, head.dy + gap + arm), lp);
-    canvas.drawLine(Offset(head.dx - gap, head.dy),
-        Offset(head.dx - gap - arm, head.dy), lp);
-    canvas.drawLine(Offset(head.dx + gap, head.dy),
-        Offset(head.dx + gap + arm, head.dy), lp);
+    canvas.drawLine(Offset(target.dx, target.dy - gap),
+        Offset(target.dx, target.dy - gap - arm), lp);
+    canvas.drawLine(Offset(target.dx, target.dy + gap),
+        Offset(target.dx, target.dy + gap + arm), lp);
+    canvas.drawLine(Offset(target.dx - gap, target.dy),
+        Offset(target.dx - gap - arm, target.dy), lp);
+    canvas.drawLine(Offset(target.dx + gap, target.dy),
+        Offset(target.dx + gap + arm, target.dy), lp);
 
     // Label
     if (hasLock) {
-      final String label = isDetecting ? 'INSERTING…' : 'SLOT LOCKED';
+      final String label = isDetecting ? 'INSERT!' : 'SLOT';
       final tp = TextPainter(
         text: TextSpan(
           text: label,
           style: TextStyle(
-            color: ringColor.withOpacity(0.80 * _alpha),
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.4,
-            shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+            color: rc.withOpacity(0.85 * o),
+            fontSize: isDetecting ? 12 : 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.5,
+            shadows: const [Shadow(color: Colors.black87, blurRadius: 5)],
           ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, Offset(head.dx - tp.width / 2, head.dy + r + 10));
+      tp.paint(canvas,
+          Offset(target.dx - tp.width / 2, target.dy + r + 8));
     }
   }
 
   @override
-  bool shouldRepaint(_Ar3DArrowPainter old) =>
-      old.tail        != tail       ||
-      old.head        != head       ||
-      old.animValue   != animValue  ||
-      old.isDetecting != isDetecting||
-      old.hasLock     != hasLock;
+  bool shouldRepaint(_GameArrowPainter old) =>
+      old.pivot       != pivot       ||
+      old.angle       != angle       ||
+      old.animValue   != animValue   ||
+      old.isDetecting != isDetecting ||
+      old.hasLock     != hasLock     ||
+      old.target      != target;
 }
