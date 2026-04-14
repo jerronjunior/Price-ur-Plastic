@@ -466,8 +466,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
 
+    // Always use the back camera — prefer back, fall back to first available
+    final camera = cameras.firstWhere(
+      (c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => cameras.first,
+    );
+
     _cam = CameraController(
-      cameras.first,
+      camera,
       ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
