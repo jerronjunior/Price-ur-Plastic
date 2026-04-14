@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'core/theme.dart';
@@ -17,22 +18,44 @@ void main() async {
   runApp(const EcoRecycleApp());
 }
 
-class EcoRecycleApp extends StatelessWidget {
+class EcoRecycleApp extends StatefulWidget {
   const EcoRecycleApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final authService = AuthService();
-    final firestoreService = FirestoreService();
-    final authProvider = AuthProvider(
-      authService: authService,
-      firestoreService: firestoreService,
-    );
-    authProvider.init();
+  State<EcoRecycleApp> createState() => _EcoRecycleAppState();
+}
 
+class _EcoRecycleAppState extends State<EcoRecycleApp> {
+  late final AuthService _authService;
+  late final FirestoreService _firestoreService;
+  late final AuthProvider _authProvider;
+  late final GoRouter _router;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService = AuthService();
+    _firestoreService = FirestoreService();
+    _authProvider = AuthProvider(
+      authService: _authService,
+      firestoreService: _firestoreService,
+    );
+    _authProvider.init();
+    _router = createAppRouter(_authProvider);
+  }
+
+  @override
+  void dispose() {
+    _router.dispose();
+    _authProvider.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+        ChangeNotifierProvider<AuthProvider>.value(value: _authProvider),
         ChangeNotifierProxyProvider<AuthProvider, NotificationProvider>(
           create: (_) => NotificationProvider(),
           update: (_, auth, notifications) {
@@ -44,13 +67,13 @@ class EcoRecycleApp extends StatelessWidget {
             return provider;
           },
         ),
-        Provider<FirestoreService>.value(value: firestoreService),
+        Provider<FirestoreService>.value(value: _firestoreService),
       ],
       child: MaterialApp.router(
         title: 'EcoRecycle',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.theme,
-        routerConfig: createAppRouter(authProvider),
+        routerConfig: _router,
       ),
     );
   }

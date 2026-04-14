@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_model.dart';
@@ -14,6 +16,7 @@ class AuthProvider with ChangeNotifier {
 
   final AuthService _auth;
   final FirestoreService _firestore;
+  StreamSubscription<User?>? _authStateSub;
 
   User? get firebaseUser => _auth.currentUser;
   String? get userId => _auth.currentUserId;
@@ -31,7 +34,8 @@ class AuthProvider with ChangeNotifier {
 
   /// Initialize: listen to auth state and load user profile.
   void init() {
-    _auth.authStateChanges.listen((User? user) async {
+    _authStateSub?.cancel();
+    _authStateSub = _auth.authStateChanges.listen((User? user) async {
       if (user != null) {
         try {
           await _loadUser(user.uid, firebaseUser: user);
@@ -44,6 +48,12 @@ class AuthProvider with ChangeNotifier {
         notifyListeners();
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _authStateSub?.cancel();
+    super.dispose();
   }
 
   UserModel _fallbackUserFromFirebase(User user) {
