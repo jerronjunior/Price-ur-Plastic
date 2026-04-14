@@ -81,16 +81,16 @@ class _SlotTracker {
   static const double _minV   = 130.0;
 
   // Minimum pixels qualifying as "tan flap" for a valid detection
-  static const int    _minPixels = 40;
+  static const int    _minPixels = 20;
 
   // Adaptive threshold: pixel must be this much brighter than scene mean
   static const double _deltaY = 8.0;
 
   // Lock mechanism
-  static const int    _lockFrames  = 6;
-  static const double _seekAlpha   = 0.20;
-  static const double _lockedAlpha = 0.02;
-  static const double _unlockDist  = 0.14;
+  static const int    _lockFrames  = 4;
+  static const double _seekAlpha   = 0.35;
+  static const double _lockedAlpha = 0.05;
+  static const double _unlockDist  = 0.20;
 
   // ── Public ─────────────────────────────────────────────────────────────────
   double slotNormX = 0.50;
@@ -584,17 +584,21 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     return LayoutBuilder(builder: (ctx, box) {
       final Size size = Size(box.maxWidth, box.maxHeight);
 
-      // ── Target point comes from the slot tracker, not accelerometer ──────────
-      // slotNormX/Y are normalised 0–1 positions in camera frame.
-      // Clamp so the arc target never goes completely offscreen.
-      final double targetX =
-          (_tracker.slotNormX * size.width).clamp(size.width * 0.10, size.width  * 0.90);
-      final double targetY =
-          (_tracker.slotNormY * size.height).clamp(size.height * 0.08, size.height * 0.65);
+      // ── ACCURATE coordinate mapping: camera → screen ────────────────────────
+      // The preview uses BoxFit.cover inside a SizedBox(width, width/aspectRatio).
+      // FittedBox.cover scales that to fill the screen, cropping the sides.
+      // Scale factor s = screenHeight × aspectRatio / screenWidth.
+      // A camera normalised coord (0–1) maps to screen as:
+      //   screenX = screenW × (s × (normX − 0.5) + 0.5)   ← horizontal: scaled
+      //   screenY = normY × screenH                        ← vertical: unchanged
+      final double camAspect = _cam!.value.aspectRatio;          // width/height
+      final double s = (size.height * camAspect / size.width)    // cover scale
+          .clamp(1.0, 6.0);
 
-      // Launch point: bottom-center (where the user holds the bottle)
-      final double launchX = size.width  * 0.50;
-      final double launchY = size.height * 0.92;
+      final double targetX = (size.width  * (s * (_tracker.slotNormX - 0.5) + 0.5))
+          .clamp(size.width * 0.05, size.width  * 0.95);
+      final double targetY = (_tracker.slotNormY * size.height)
+          .clamp(size.height * 0.05, size.height * 0.68);
 
       return Stack(fit: StackFit.expand, children: [
         // ── Camera preview ────────────────────────────────────────────────
@@ -636,7 +640,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           animation: _dotCtrl,
           builder: (context, _) {
             // Arrow pivot: fixed point on screen the arrow rotates around
-            final Offset pivot = Offset(size.width * 0.50, size.height * 0.62);
+            final Offset pivot = Offset(size.width * 0.50, size.height * 0.72);
             // Angle from pivot to target (bin slot)
             final double angle = atan2(
               targetY - pivot.dy,
@@ -851,14 +855,10 @@ class _GameArrowPainter extends CustomPainter {
         ? 1.0 + sin(animValue * pi * 4) * 0.06
         : 1.0;
 
-    // ── Wobble when seeking (no lock) ─────────────────────────────────────────
-    // The arrow gently rocks left-right to draw attention when not locked
-    final double wobble = hasLock ? 0.0 : sin(animValue * pi * 2) * 0.18;
-    final double finalAngle = angle + wobble;
-
     canvas.save();
     canvas.translate(pivot.dx, pivot.dy);
-    canvas.rotate(finalAngle);
+    // Strictly track the angle — no wobble, accuracy is more important
+    canvas.rotate(angle);
     canvas.scale(pulseScale, pulseScale);
 
     _drawArrow(canvas);
@@ -918,21 +918,6 @@ class _GameArrowPainter extends CustomPainter {
       ..lineTo(-bodyBotHW,          baseBotY)
       ..close();
     canvas.drawPath(leftBase, Paint()..color = _edge.withOpacity(0.80 * o));
-
-    // Drop shadow under the whole arrow
-    final Path shadowPath = Path()
-      ..moveTo(0,         tipY)
-      ..lineTo( headHW,   shoulderY)
-      ..lineTo( bodyBotHW + depth, baseBotY + depth)
-      ..lineTo(-bodyBotHW + depth, baseBotY + depth)
-      ..lineTo(-headHW,   shoulderY)
-      ..close();
-    canvas.drawPath(
-      shadowPath,
-      Paint()
-        ..color = Colors.black.withOpacity(0.30 * o)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
 
     // ── FRONT FACE — main red arrow shape ────────────────────────────────────
     final Path front = Path()
@@ -999,16 +984,6 @@ class _GameArrowPainter extends CustomPainter {
     final Color rc = isDetecting ? _orange : _red;
     final double r = 20.0 + pulse * 8;
     final double o = _globalOpacity;
-
-    // Glow
-    if (hasLock) {
-      canvas.drawCircle(target, r + 8,
-        Paint()
-          ..color = rc.withOpacity(0.12 * o)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-    }
 
     // Ring
     canvas.drawCircle(target, r,
