@@ -57,7 +57,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     final hasUnread = context.watch<NotificationProvider>().hasUnread;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FF),
+      backgroundColor: const Color(0xFFF1F8E9),
       bottomNavigationBar: const AppBottomNavBar(currentRoute: '/leaderboard'),
       body: Stack(
         children: [
@@ -68,7 +68,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 width: double.infinity,
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
+                    colors: [Color(0xFF2E7D32), Color(0xFF1B5E20)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -149,7 +149,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            CircularProgressIndicator(color: Color(0xFF1565C0)),
+                            CircularProgressIndicator(color: Color(0xFF2E7D32)),
                             SizedBox(height: 12),
                             Text('Loading players...',
                                 style: TextStyle(color: Colors.grey)),
@@ -313,14 +313,14 @@ class _Podium extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
+          colors: [Color(0xFF2E7D32), Color(0xFF388E3C)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1565C0).withOpacity(0.3),
+            color: const Color(0xFF2E7D32).withOpacity(0.3),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -466,14 +466,14 @@ class _MyRankBanner extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1565C0).withOpacity(0.08),
+        color: const Color(0xFF2E7D32).withOpacity(0.08),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF1565C0), width: 1.5),
+        border: Border.all(color: const Color(0xFF2E7D32), width: 1.5),
       ),
       child: Row(
         children: [
           const Icon(Icons.person_pin,
-              color: Color(0xFF1565C0), size: 22),
+              color: Color(0xFF2E7D32), size: 22),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -481,7 +481,7 @@ class _MyRankBanner extends StatelessWidget {
               children: [
                 const Text('Your Ranking',
                     style: TextStyle(
-                        color: Color(0xFF1565C0),
+                        color: Color(0xFF2E7D32),
                         fontSize: 11,
                         fontWeight: FontWeight.w600)),
                 Text(displayName,
@@ -495,7 +495,7 @@ class _MyRankBanner extends StatelessWidget {
             children: [
               Text('#$rank',
                   style: const TextStyle(
-                      color: Color(0xFF1565C0),
+                      color: Color(0xFF2E7D32),
                       fontWeight: FontWeight.bold,
                       fontSize: 20)),
               Text('${user.totalPoints} pts',
@@ -587,11 +587,11 @@ class _RankRowState extends State<_RankRow>
           margin: const EdgeInsets.only(bottom: 8),
           decoration: BoxDecoration(
             color: isMe
-                ? const Color(0xFF1565C0).withOpacity(0.06)
+                ? const Color(0xFF2E7D32).withOpacity(0.06)
                 : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: isMe
-                ? Border.all(color: const Color(0xFF1565C0), width: 1.5)
+                ? Border.all(color: const Color(0xFF2E7D32), width: 1.5)
                 : Border.all(color: Colors.grey.shade100),
             boxShadow: [
               BoxShadow(
@@ -643,7 +643,7 @@ class _RankRowState extends State<_RankRow>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: isMe
-                        ? const Color(0xFF1565C0).withOpacity(0.15)
+                        ? const Color(0xFF2E7D32).withOpacity(0.15)
                         : Colors.grey.shade100,
                   ),
                   child: Center(
@@ -651,7 +651,7 @@ class _RankRowState extends State<_RankRow>
                       displayName[0].toUpperCase(),
                       style: TextStyle(
                         color: isMe
-                            ? const Color(0xFF1565C0)
+                            ? const Color(0xFF2E7D32)
                             : Colors.grey.shade700,
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
@@ -677,7 +677,7 @@ class _RankRowState extends State<_RankRow>
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14,
                                 color: isMe
-                                    ? const Color(0xFF1565C0)
+                                    ? const Color(0xFF2E7D32)
                                     : Colors.black87,
                               ),
                             ),
@@ -688,7 +688,7 @@ class _RankRowState extends State<_RankRow>
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF1565C0),
+                                color: const Color(0xFF2E7D32),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: const Text('You',
@@ -722,7 +722,7 @@ class _RankRowState extends State<_RankRow>
                         color: rank <= 3
                             ? badgeColor
                             : isMe
-                                ? const Color(0xFF1565C0)
+                                ? const Color(0xFF2E7D32)
                                 : Colors.black87,
                       ),
                     ),

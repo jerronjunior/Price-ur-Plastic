@@ -194,16 +194,16 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF5F8FF),
+                    color: const Color(0xFFF1F8E9),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFD7E3FF)),
+                    border: Border.all(color: const Color(0xFFC8E6C9)),
                   ),
                   child: Column(
                     children: [
                       Text(
                         'Session Points: +$sessionPoints',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: const Color(0xFF1565C0),
+                              color: const Color(0xFF2E7D32),
                               fontWeight: FontWeight.bold,
                             ),
                       ),

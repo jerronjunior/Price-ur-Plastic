@@ -637,21 +637,24 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           ),
 
         // ── Game-style rotating 3D arrow ──────────────────────────────────
-        // The arrow PIVOTS at the screen center-bottom area.
-        // TIP always points at the bin slot (tracked).
-        // TAIL swings opposite: camera moves right → slot moves left in
-        // frame → tip rotates left → tail swings right.  Exactly like a
-        // game navigation compass arrow.
         AnimatedBuilder(
           animation: _dotCtrl,
           builder: (context, _) {
-            // Arrow pivot: fixed point on screen the arrow rotates around
             final Offset pivot = Offset(size.width * 0.50, size.height * 0.72);
-            // Angle from pivot to target (bin slot)
-            final double angle = atan2(
-              targetY - pivot.dy,
-              targetX - pivot.dx,
-            ) + pi / 2; // +pi/2 because arrow art points UP (north)
+
+            // Compute deviation angle from "pointing straight up" (north).
+            // atan2(dx, -dy) = 0 when slot is directly above pivot,
+            // positive when slot is to the right, negative when to the left.
+            final double dx = targetX - pivot.dx;
+            final double dy = targetY - pivot.dy;
+            final double deviationFromNorth = atan2(dx, -dy);
+
+            // AMPLIFY the deviation: small camera movement → big tail swing.
+            // Factor 3.0 means a 5° real shift becomes a 15° arrow rotation.
+            // Clamped so the arrow never spins more than ~140° from straight up.
+            const double amplification = 3.0;
+            final double angle = (deviationFromNorth * amplification)
+                .clamp(-pi * 0.78, pi * 0.78);
 
             return CustomPaint(
               size: size,
@@ -853,6 +856,7 @@ class _GameArrowPainter extends CustomPainter {
   Color get _dark  => isDetecting ? const Color(0xFF8B3000) : _darkRed;
   Color get _edge  => isDetecting ? const Color(0xFF3E1500) : _darkest;
   double get _globalOpacity => hasLock ? 0.93 : 0.38;
+  static const double _arrowOpacityMultiplier = 0.55;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -894,7 +898,7 @@ class _GameArrowPainter extends CustomPainter {
     const double bodyBotY   = shoulderY + bodyH;
     const double baseBotY   = bodyBotY + baseH;
 
-    final double o = _globalOpacity; // opacity shorthand
+    final double o = _globalOpacity * _arrowOpacityMultiplier; // arrow-only opacity
 
     // ── 3D BACK FACES (drawn first — behind the front face) ──────────────────
 
@@ -972,9 +976,9 @@ class _GameArrowPainter extends CustomPainter {
     canvas.drawPath(
       front,
       Paint()
-        ..color = _edge.withOpacity(0.40 * o)
+        ..color = Colors.black.withOpacity(hasLock ? 0.82 : 0.68)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
+        ..strokeWidth = 2.2
         ..strokeJoin = StrokeJoin.round,
     );
   }

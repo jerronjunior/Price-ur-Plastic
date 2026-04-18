@@ -370,7 +370,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
             ? Colors.red
             : _isBottleConfirmed
                 ? Colors.green
-                : const Color(0xFF1565C0);
+                : const Color(0xFF2E7D32);
 
     String statusText;
     if (!_tfliteReady) {
@@ -390,7 +390,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
             width: double.infinity,
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
+                colors: [Color(0xFF2E7D32), Color(0xFF1B5E20)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -612,7 +612,7 @@ class _BottomNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primaryBlue = Color(0xFF1565C0);
+    const primaryBlue = Color(0xFF2E7D32);
     return InkWell(
       onTap: onTap,
       child: Column(

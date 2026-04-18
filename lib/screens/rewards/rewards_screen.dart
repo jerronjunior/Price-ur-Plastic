@@ -470,7 +470,7 @@ class _StatItem extends StatelessWidget {
             style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1565C0),
+              color: Color(0xFF2E7D32),
             ),
           ),
           const SizedBox(height: 4),
@@ -514,7 +514,7 @@ class SpinWheelPainter extends CustomPainter {
     [Color(0xFFE65100), Color(0xFFFFAB40)],
     [Color(0xFFF9A825), Color(0xFFFFEE58)],
     [Color(0xFF2E7D32), Color(0xFF69F0AE)],
-    [Color(0xFF1565C0), Color(0xFF82B1FF)],
+    [Color(0xFF2E7D32), Color(0xFFA5D6A7)],
     [Color(0xFF4527A0), Color(0xFFB388FF)],
     [Color(0xFFAD1457), Color(0xFFF48FB1)],
     [Color(0xFF00838F), Color(0xFF84FFFF)],
@@ -649,7 +649,7 @@ class SpinWheelPainter extends CustomPainter {
       ..shader = RadialGradient(
         center: const Alignment(-0.3, -0.4),
         radius: 0.9,
-        colors: [const Color(0xFF42A5F5), const Color(0xFF0D47A1)],
+        colors: [const Color(0xFF66BB6A), const Color(0xFF1B5E20)],
       ).createShader(Rect.fromCircle(center: center, radius: hubRadius));
     canvas.drawCircle(center, hubRadius, hubPaint);
 

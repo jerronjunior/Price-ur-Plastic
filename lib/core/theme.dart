@@ -7,9 +7,9 @@ class AppTheme {
   static const Color primaryDark = Color(0xFF1B5E20);
   static const Color accent = Color(0xFF81C784);
   static const Color surface = Color(0xFFF1F8E9);
-  static const Color background = Color(0xFFFFFFFF);
+  static const Color background = Color(0xFFF7FBF4);
   static const Color error = Color(0xFFC62828);
-  static const Color primaryBlue = Color(0xFF1976D2);
+  static const Color primaryBlue = primaryGreen;
 
   static ThemeData get theme => ThemeData(
         useMaterial3: true,
@@ -21,9 +21,20 @@ class AppTheme {
           error: error,
           brightness: Brightness.light,
         ),
+        scaffoldBackgroundColor: background,
         appBarTheme: const AppBarTheme(
           centerTitle: true,
           elevation: 0,
+          backgroundColor: primaryGreen,
+          foregroundColor: Colors.white,
+        ),
+        snackBarTheme: SnackBarThemeData(
+          backgroundColor: primaryDark,
+          contentTextStyle: const TextStyle(color: Colors.white),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          behavior: SnackBarBehavior.floating,
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
           backgroundColor: primaryGreen,
           foregroundColor: Colors.white,
         ),
@@ -72,6 +83,10 @@ class AppTheme {
             borderRadius: BorderRadius.circular(16),
           ),
           color: surface,
+        ),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: primaryGreen,
+          linearTrackColor: Color(0xFFC8E6C9),
         ),
       );
 }

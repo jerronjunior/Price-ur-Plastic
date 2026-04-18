@@ -125,7 +125,7 @@ class _Header extends StatelessWidget {
       width: double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
+          colors: [Color(0xFF2E7D32), Color(0xFF1B5E20)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -188,7 +188,7 @@ class _StepBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final binDone = step != _Step.scanBin;
     return Container(
-      color: const Color(0xFF0D47A1),
+      color: const Color(0xFF1B5E20),
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
       child: Row(
         children: [
@@ -220,7 +220,7 @@ class _Dot extends StatelessWidget {
               ? const Icon(Icons.check, size: 15, color: Colors.white)
               : Text(num,
                   style: TextStyle(
-                    color: active ? const Color(0xFF0D47A1) : Colors.white54,
+                    color: active ? const Color(0xFF1B5E20) : Colors.white54,
                     fontWeight: FontWeight.bold, fontSize: 12)),
         ),
         const SizedBox(height: 3),
@@ -381,7 +381,7 @@ class _BinScannerState extends State<_BinScanner> {
             const SizedBox(height: 28),
             const Text('Scan & Recycle',
                 style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold,
-                    color: Color(0xFF1565C0))),
+                    color: Color(0xFF2E7D32))),
             const SizedBox(height: 12),
             Text('Start by scanning the QR code on the recycling bin.',
                 textAlign: TextAlign.center,
@@ -607,16 +607,16 @@ class _BottleScannerState extends State<_BottleScanner> {
             Container(
               width: 96, height: 96,
               decoration: BoxDecoration(
-                color: const Color(0xFF1565C0).withOpacity(0.1),
+                color: const Color(0xFF2E7D32).withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.qr_code_2, size: 52,
-                  color: Color(0xFF1565C0)),
+                  color: Color(0xFF2E7D32)),
             ),
             const SizedBox(height: 24),
             const Text('Scan the Bottle',
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold,
-                    color: Color(0xFF1565C0))),
+                    color: Color(0xFF2E7D32))),
             const SizedBox(height: 10),
             Text('Scan the barcode on the bottle you want to recycle.',
                 textAlign: TextAlign.center,
@@ -631,7 +631,7 @@ class _BottleScannerState extends State<_BottleScanner> {
                         fontWeight: FontWeight.bold, fontSize: 16)),
                 onPressed: () => setState(() { _active = true; _error = null; }),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1565C0),
+                  backgroundColor: const Color(0xFF2E7D32),
                   padding: const EdgeInsets.symmetric(vertical: 18),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
@@ -658,12 +658,12 @@ class _BottleScannerState extends State<_BottleScanner> {
             boxSize: const Size(300, 180),
             borderColor: _confirmedCode != null
                 ? Colors.green
-                : const Color(0xFF1565C0),
+                : const Color(0xFF2E7D32),
             borderRadius: 12,
           ),
         ),
 
-        const Center(child: _ScanLine(color: Color(0xFF1565C0), boxSize: 300)),
+        const Center(child: _ScanLine(color: Color(0xFF2E7D32), boxSize: 300)),
 
         Positioned(
           bottom: 40, left: 20, right: 20,
@@ -1021,7 +1021,7 @@ class _FailedScreen extends StatelessWidget {
                             fontWeight: FontWeight.bold, fontSize: 16)),
                     onPressed: onTryAgain,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1565C0),
+                      backgroundColor: const Color(0xFF2E7D32),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
