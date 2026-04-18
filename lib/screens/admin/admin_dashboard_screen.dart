@@ -50,7 +50,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final hasUnread = context.watch<NotificationProvider>().hasUnread;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Admin'),
+        title: const Text('Admin Dashboard'),
         actions: [
           IconButton(
             icon: Stack(
