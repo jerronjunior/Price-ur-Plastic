@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 /// Eco theme: green, clean, rounded.
 class AppTheme {
-  static const Color primaryGreen = Color(0xFF66BB6A);
+  static const Color primaryGreen = Color(0xFF43A047);
   static const Color primaryLight = Color(0xFFA5D6A7);
   static const Color primaryDark = Color(0xFF2E7D32);
-  static const Color accent = Color(0xFFC8E6C9);
-  static const Color surface = Color(0xFFF3FBF3);
-  static const Color background = Color(0xFFF8FCF7);
+  static const Color accent = Color(0xFFE8F5E9);
+  static const Color surface = Color(0xFFFFFFFF);
+  static const Color background = Color(0xFFFFFFFF);
   static const Color error = Color(0xFFC62828);
   static const Color primaryBlue = primaryGreen;
 
@@ -25,8 +25,10 @@ class AppTheme {
         appBarTheme: const AppBarTheme(
           centerTitle: true,
           elevation: 0,
-          backgroundColor: primaryLight,
-          foregroundColor: Colors.white,
+          backgroundColor: background,
+          foregroundColor: primaryDark,
+          surfaceTintColor: Colors.transparent,
+          iconTheme: IconThemeData(color: primaryDark),
         ),
         snackBarTheme: SnackBarThemeData(
           backgroundColor: primaryDark,
@@ -35,12 +37,12 @@ class AppTheme {
           behavior: SnackBarBehavior.floating,
         ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: primaryLight,
+          backgroundColor: primaryGreen,
           foregroundColor: Colors.white,
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: primaryLight,
+            backgroundColor: primaryGreen,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             shape: RoundedRectangleBorder(
@@ -52,7 +54,7 @@ class AppTheme {
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
             foregroundColor: primaryDark,
-            side: const BorderSide(color: primaryLight),
+            side: const BorderSide(color: primaryGreen),
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
@@ -85,8 +87,8 @@ class AppTheme {
           color: surface,
         ),
         progressIndicatorTheme: const ProgressIndicatorThemeData(
-          color: primaryLight,
-          linearTrackColor: Color(0xFFC8E6C9),
+          color: primaryGreen,
+          linearTrackColor: Color(0xFFE8F5E9),
         ),
       );
 }
