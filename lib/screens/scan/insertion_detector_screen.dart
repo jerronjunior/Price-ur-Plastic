@@ -856,7 +856,7 @@ class _GameArrowPainter extends CustomPainter {
   Color get _dark  => isDetecting ? const Color(0xFF8B3000) : _darkRed;
   Color get _edge  => isDetecting ? const Color(0xFF3E1500) : _darkest;
   double get _globalOpacity => hasLock ? 0.93 : 0.38;
-  static const double _arrowOpacityMultiplier = 0.55;
+  static const double _arrowOpacityMultiplier = 0.30;
 
   @override
   void paint(Canvas canvas, Size size) {
