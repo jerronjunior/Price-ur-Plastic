@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 const List<String> kDefaultWheelGifts = [
   '50 pts',
   'Badge',
@@ -44,13 +42,13 @@ class RewardConfigModel {
       goldPoints: (map['goldPoints'] as num?)?.toInt() ?? 500,
       maxBottlesPerDay: (map['maxBottlesPerDay'] as num?)?.toInt() ?? 25,
       cooldownSeconds: (map['cooldownSeconds'] as num?)?.toInt() ?? 20,
-        wheelGifts: (map['wheelGifts'] as List<dynamic>?)
-            ?.map((gift) => gift.toString())
-            .where((gift) => gift.trim().isNotEmpty)
-            .toList() ??
+      wheelGifts: (map['wheelGifts'] as List<dynamic>?)
+              ?.map((gift) => gift.toString())
+              .where((gift) => gift.trim().isNotEmpty)
+              .toList() ??
           kDefaultWheelGifts,
-      updatedAt: map['updatedAt'] is Timestamp
-          ? (map['updatedAt'] as Timestamp).toDate()
+      updatedAt: map['updatedAt'] is String
+          ? DateTime.tryParse(map['updatedAt'] as String)?.toLocal()
           : null,
     );
   }
@@ -63,7 +61,7 @@ class RewardConfigModel {
         'maxBottlesPerDay': maxBottlesPerDay,
         'cooldownSeconds': cooldownSeconds,
         'wheelGifts': wheelGifts,
-        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
       };
 
   RewardConfigModel copyWith({

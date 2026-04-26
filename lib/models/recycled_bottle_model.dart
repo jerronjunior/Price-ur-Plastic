@@ -1,6 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-/// Single recycled bottle record in Firestore.
+/// Single recycled bottle record in storage.
 class RecycledBottleModel {
   final String? id;
   final String barcode;
@@ -23,7 +21,9 @@ class RecycledBottleModel {
       barcode: map['barcode'] as String? ?? '',
       userId: map['userId'] as String? ?? '',
       binId: map['binId'] as String? ?? '',
-      timestamp: ts is Timestamp ? ts.toDate() : DateTime.now(),
+      timestamp: ts is String
+          ? (DateTime.tryParse(ts)?.toLocal() ?? DateTime.now())
+          : DateTime.now(),
     );
   }
 
@@ -31,6 +31,6 @@ class RecycledBottleModel {
         'barcode': barcode,
         'userId': userId,
         'binId': binId,
-        'timestamp': Timestamp.fromDate(timestamp),
+        'timestamp': timestamp.toUtc().toIso8601String(),
       };
 }

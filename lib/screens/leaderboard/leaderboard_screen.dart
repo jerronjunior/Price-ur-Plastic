@@ -141,7 +141,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               // ── Live leaderboard ───────────────────────────────────────
               Expanded(
                 child: StreamBuilder<List<UserModel>>(
-                  // Use unlimited stream — we need real ranks for everyone
                   stream: firestore.leaderboardStreamAll(),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
@@ -163,7 +162,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                           message: snapshot.error.toString());
                     }
 
-                    // snapshot.data is null until first emission
                     if (!snapshot.hasData) {
                       return const Center(
                         child: Text('No data received yet...',
@@ -177,7 +175,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       return const _EmptyState();
                     }
 
-                    // Find current user's rank
                     final myIndex = currentUserId != null
                         ? users.indexWhere((u) => u.userId == currentUserId)
                         : -1;
@@ -187,7 +184,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       opacity: _fadeAnim,
                       child: CustomScrollView(
                         slivers: [
-                          // ── Top 3 Podium ─────────────────────────────
                           if (users.length >= 3)
                             SliverToBoxAdapter(
                               child: _Podium(
@@ -196,7 +192,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                               ),
                             ),
 
-                          // ── "Your rank" banner if outside top 3 ──────
                           if (myRank != null && myRank > 3)
                             SliverToBoxAdapter(
                               child: _MyRankBanner(
@@ -205,7 +200,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                               ),
                             ),
 
-                          // ── Section header ───────────────────────────
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
@@ -234,7 +228,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                             ),
                           ),
 
-                          // ── Full ranked list ─────────────────────────
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                             sliver: SliverList(
@@ -264,7 +257,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             ],
           ),
 
-          // ── Notification panel ─────────────────────────────────────────
           if (_showNotificationPanel)
             Positioned.fill(
               child: GestureDetector(
@@ -292,7 +284,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Top 3 Podium
+// Top 3 Podium — unchanged
 // ─────────────────────────────────────────────────────────────────────────────
 class _Podium extends StatelessWidget {
   const _Podium({required this.users, required this.currentUserId});
@@ -301,7 +293,6 @@ class _Podium extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Podium order: 2nd (left) | 1st (center, tallest) | 3rd (right)
     final order = [
       (index: 1, height: 90.0,  color: const Color(0xFFB0BEC5), crown: '🥈'),
       (index: 0, height: 120.0, color: const Color(0xFFFFA000), crown: '🏆'),
@@ -370,11 +361,8 @@ class _PodiumSlot extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Crown
         Text(crown, style: const TextStyle(fontSize: 22)),
         const SizedBox(height: 6),
-
-        // Avatar
         Container(
           width: rank == 1 ? 64 : 52,
           height: rank == 1 ? 64 : 52,
@@ -398,8 +386,6 @@ class _PodiumSlot extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-
-        // Name
         SizedBox(
           width: 90,
           child: Text(
@@ -414,8 +400,6 @@ class _PodiumSlot extends StatelessWidget {
             ),
           ),
         ),
-
-        // Points
         Text(
           '${user.totalPoints} pts',
           style: TextStyle(
@@ -425,8 +409,6 @@ class _PodiumSlot extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-
-        // Podium block
         Container(
           width: rank == 1 ? 80 : 68,
           height: podiumHeight,
@@ -452,7 +434,7 @@ class _PodiumSlot extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "Your Rank" sticky banner (shown when current user is outside top 3)
+// "Your Rank" banner — unchanged
 // ─────────────────────────────────────────────────────────────────────────────
 class _MyRankBanner extends StatelessWidget {
   const _MyRankBanner({required this.rank, required this.user});
@@ -510,7 +492,7 @@ class _MyRankBanner extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Individual rank row
+// Individual rank row — unchanged
 // ─────────────────────────────────────────────────────────────────────────────
 class _RankRow extends StatefulWidget {
   const _RankRow({
@@ -562,7 +544,6 @@ class _RankRowState extends State<_RankRow>
     final isMe = widget.isMe;
     final displayName = _displayNameFor(user);
 
-    // Rank badge color
     Color badgeColor;
     Color badgeText;
     if (rank == 1) {
@@ -606,7 +587,6 @@ class _RankRowState extends State<_RankRow>
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
-                // Rank badge
                 Container(
                   width: 36,
                   height: 36,
@@ -635,8 +615,6 @@ class _RankRowState extends State<_RankRow>
                   ),
                 ),
                 const SizedBox(width: 12),
-
-                // Avatar circle
                 Container(
                   width: 38,
                   height: 38,
@@ -660,8 +638,6 @@ class _RankRowState extends State<_RankRow>
                   ),
                 ),
                 const SizedBox(width: 12),
-
-                // Name + bottles
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -709,8 +685,6 @@ class _RankRowState extends State<_RankRow>
                     ],
                   ),
                 ),
-
-                // Points
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -741,7 +715,7 @@ class _RankRowState extends State<_RankRow>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Empty / Error states
+// Empty / Error states — unchanged
 // ─────────────────────────────────────────────────────────────────────────────
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
@@ -785,7 +759,6 @@ class _ErrorState extends StatelessWidget {
             const Text('Could not load leaderboard',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
-            // Show full error in a scrollable box so nothing is cut off
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),

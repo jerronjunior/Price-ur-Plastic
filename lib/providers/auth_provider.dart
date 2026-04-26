@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
@@ -16,9 +15,9 @@ class AuthProvider with ChangeNotifier {
 
   final AuthService _auth;
   final FirestoreService _firestore;
-  StreamSubscription<User?>? _authStateSub;
+  StreamSubscription<AppAuthUser?>? _authStateSub;
 
-  User? get firebaseUser => _auth.currentUser;
+  AppAuthUser? get firebaseUser => _auth.currentUser;
   String? get userId => _auth.currentUserId;
   UserModel? _user;
   UserModel? get user => _user;
@@ -30,12 +29,12 @@ class AuthProvider with ChangeNotifier {
   bool get justLoggedIn => _justLoggedIn;
 
   /// Stream for router refresh on login/logout.
-  Stream<User?> get authStateChanges => _auth.authStateChanges;
+  Stream<AppAuthUser?> get authStateChanges => _auth.authStateChanges;
 
   /// Initialize: listen to auth state and load user profile.
   void init() {
     _authStateSub?.cancel();
-    _authStateSub = _auth.authStateChanges.listen((User? user) async {
+    _authStateSub = _auth.authStateChanges.listen((AppAuthUser? user) async {
       if (user != null) {
         try {
           await _loadUser(user.uid, firebaseUser: user);
@@ -56,7 +55,7 @@ class AuthProvider with ChangeNotifier {
     super.dispose();
   }
 
-  UserModel _fallbackUserFromFirebase(User user) {
+  UserModel _fallbackUserFromFirebase(AppAuthUser user) {
     return UserModel(
       userId: user.uid,
       name: user.displayName ?? user.email?.split('@').first ?? 'User',
@@ -67,7 +66,7 @@ class AuthProvider with ChangeNotifier {
     );
   }
 
-  Future<void> _loadUser(String uid, {User? firebaseUser}) async {
+  Future<void> _loadUser(String uid, {AppAuthUser? firebaseUser}) async {
     final firestoreUser = await _firestore.getUser(uid);
     if (firestoreUser != null) {
       _user = firestoreUser;
@@ -144,10 +143,10 @@ class AuthProvider with ChangeNotifier {
       _justLoggedIn = false;
       notifyListeners();
       return null;
-    } on FirebaseAuthException catch (e) {
+    } on AppAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Registration failed.');
     } catch (_) {
-      return 'Registration failed. Check Firebase Auth and Firestore setup.';
+      return 'Registration failed. Check Supabase Auth and database setup.';
     }
   }
 
@@ -172,37 +171,53 @@ class AuthProvider with ChangeNotifier {
         _justLoggedIn = true;
       }
       return null;
-    } on FirebaseAuthException catch (e) {
+    } on AppAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Login failed.');
     } catch (_) {
-      return 'Login failed. Check Firebase Auth and Firestore setup.';
+      return 'Login failed. Check Supabase Auth and database setup.';
     }
   }
 
   String _friendlyAuthMessage(
-    FirebaseAuthException e, {
+    AppAuthException e, {
     required String fallback,
   }) {
-    switch (e.code) {
-      case 'operation-not-allowed':
-        return 'Email/password sign-in is disabled in Firebase Authentication.';
-      case 'invalid-credential':
-      case 'wrong-password':
-      case 'user-not-found':
-        return 'Incorrect email or password.';
-      case 'email-already-in-use':
-        return 'This email is already registered.';
-      case 'weak-password':
-        return 'Password is too weak. Use at least 6 characters.';
-      case 'invalid-email':
-        return 'Invalid email address.';
-      case 'network-request-failed':
-        return 'Network error. Check your internet connection.';
-      case 'too-many-requests':
-        return 'Too many attempts. Try again later.';
-      default:
-        return e.message ?? fallback;
+    final code = e.code.toLowerCase();
+    final message = (e.message ?? '').toLowerCase();
+    if (code.contains('invalid') && message.contains('credential')) {
+      return 'Incorrect email or password.';
     }
+    if (message.contains('invalid login credentials')) {
+      return 'Incorrect email or password.';
+    }
+    if (code.contains('email') && code.contains('exists')) {
+      return 'This email is already registered.';
+    }
+    if (message.contains('already registered')) {
+      return 'This email is already registered.';
+    }
+    if (message.contains('email not confirmed') ||
+        message.contains('email not verified')) {
+      return 'Please verify your email address before logging in.';
+    }
+    if (code.contains('weak_password') || message.contains('password')) {
+      return 'Password is too weak. Use at least 6 characters.';
+    }
+    final isInvalidEmail = code.contains('invalid_email') ||
+        code.contains('invalid-email') ||
+        message.contains('invalid email') ||
+        message.contains('email address is invalid') ||
+        message.contains('unable to validate email address');
+    if (isInvalidEmail) {
+      return 'Invalid email address.';
+    }
+    if (message.contains('network')) {
+      return 'Network error. Check your internet connection.';
+    }
+    if (message.contains('too many')) {
+      return 'Too many attempts. Try again later.';
+    }
+    return e.message ?? fallback;
   }
 
   /// Logout.
@@ -279,7 +294,7 @@ class AuthProvider with ChangeNotifier {
         newPassword: newPassword,
       );
       return null;
-    } on FirebaseAuthException catch (e) {
+    } on AppAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Failed to change password.');
     } catch (_) {
       return 'Failed to change password. Please try again.';
@@ -291,7 +306,7 @@ class AuthProvider with ChangeNotifier {
     try {
       await _auth.sendPasswordResetEmail(email);
       return null;
-    } on FirebaseAuthException catch (e) {
+    } on AppAuthException catch (e) {
       return _friendlyAuthMessage(
         e,
         fallback: 'Failed to send password reset email.',

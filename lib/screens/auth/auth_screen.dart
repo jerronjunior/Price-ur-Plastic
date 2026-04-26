@@ -18,7 +18,9 @@ class _AuthScreenState extends State<AuthScreen> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
   bool _loading = false;
   String? _error;
 
@@ -27,6 +29,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -70,6 +73,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() {
       _isLogin = true;
       _passwordController.clear();
+      _confirmPasswordController.clear();
       _error = null;
     });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -195,7 +199,11 @@ class _AuthScreenState extends State<AuthScreen> {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _isLogin = true),
+                            onTap: () => setState(() {
+                              _isLogin = true;
+                              _confirmPasswordController.clear();
+                              _error = null;
+                            }),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               decoration: BoxDecoration(
@@ -216,7 +224,10 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _isLogin = false),
+                            onTap: () => setState(() {
+                              _isLogin = false;
+                              _error = null;
+                            }),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               decoration: BoxDecoration(
@@ -327,6 +338,41 @@ class _AuthScreenState extends State<AuthScreen> {
                             return null;
                           },
                         ),
+                        if (!_isLogin) ...[
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _confirmPasswordController,
+                            obscureText: _obscureConfirmPassword,
+                            decoration: InputDecoration(
+                              labelText: 'Confirm Password',
+                              prefixIcon: const Icon(Icons.lock_outline),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscureConfirmPassword
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed: () => setState(
+                                  () => _obscureConfirmPassword =
+                                      !_obscureConfirmPassword,
+                                ),
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            validator: (v) {
+                              if (_isLogin) return null;
+                              if (v == null || v.isEmpty) {
+                                return 'Confirm password';
+                              }
+                              if (v != _passwordController.text) {
+                                return 'Passwords do not match';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
                         if (_isLogin)
                           Align(
                             alignment: Alignment.centerRight,

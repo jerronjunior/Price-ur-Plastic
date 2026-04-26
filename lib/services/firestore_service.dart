@@ -1,13 +1,15 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_model.dart';
 import '../models/recycled_bottle_model.dart';
 import '../models/bin_model.dart';
 import '../models/reward_config_model.dart';
 
-/// Firestore operations for users, recycled_bottles, and bins.
+/// Supabase operations for users, recycled_bottles, and bins.
 class FirestoreService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final SupabaseClient _client = Supabase.instance.client;
 
   static const String _usersCollection = 'users';
   static const String _recycledBottlesCollection = 'recycled_bottles';
@@ -17,7 +19,9 @@ class FirestoreService {
   String _safeBinDocId(String raw) {
     final trimmed = raw.trim();
     final cleaned = trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
-    return cleaned.isEmpty ? 'bin_${DateTime.now().millisecondsSinceEpoch}' : cleaned;
+    return cleaned.isEmpty
+        ? 'bin_${DateTime.now().millisecondsSinceEpoch}'
+        : cleaned;
   }
 
   List<String> _binLookupCandidates(String rawValue) {
@@ -86,44 +90,52 @@ class FirestoreService {
     return expanded.where((e) => e.isNotEmpty).toList(growable: false);
   }
 
+  Stream<T> _poll<T>(Future<T> Function() loader) async* {
+    yield await loader();
+    yield* Stream.periodic(const Duration(seconds: 2))
+        .asyncMap((_) => loader());
+  }
+
+  Map<String, dynamic> _asMap(dynamic data) {
+    return Map<String, dynamic>.from(data as Map);
+  }
+
   // --- Users ---
 
-  /// Create or overwrite user document after registration.
+  /// Create or overwrite user row after registration.
   Future<void> setUser(UserModel user) async {
-    await _firestore.collection(_usersCollection).doc(user.userId).set(
-          user.toMap(),
-          SetOptions(merge: true),
-        );
+    await _client.from(_usersCollection).upsert(
+      {
+        'user_id': user.userId,
+        ...user.toMap(),
+      },
+      onConflict: 'user_id',
+    );
   }
 
   /// Get user by ID.
   Future<UserModel?> getUser(String userId) async {
-    final doc = await _firestore.collection(_usersCollection).doc(userId).get();
-    if (doc.exists && doc.data() != null) {
-      return UserModel.fromMap(doc.id, doc.data()!);
+    final data = await _client
+        .from(_usersCollection)
+        .select()
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (data != null) {
+      return UserModel.fromMap(userId, _asMap(data));
     }
     return null;
   }
 
-  /// Stream user document for real-time updates.
+  /// Stream user row updates.
   Stream<UserModel?> userStream(String userId) {
-    return _firestore
-        .collection(_usersCollection)
-        .doc(userId)
-        .snapshots()
-        .map((doc) {
-      if (doc.exists && doc.data() != null) {
-        return UserModel.fromMap(doc.id, doc.data()!);
-      }
-      return null;
-    });
+    return _poll(() => getUser(userId));
   }
 
   /// Update user name.
   Future<void> updateUserName(String userId, String name) async {
-    await _firestore.collection(_usersCollection).doc(userId).update({
+    await _client.from(_usersCollection).update({
       'name': name,
-    });
+    }).eq('user_id', userId);
   }
 
   /// Update profile fields that can be edited in profile screen.
@@ -132,51 +144,49 @@ class FirestoreService {
     required String name,
     required String mobile,
   }) async {
-    await _firestore.collection(_usersCollection).doc(userId).update({
+    await _client.from(_usersCollection).update({
       'name': name,
       'mobile': mobile,
-    });
+    }).eq('user_id', userId);
   }
 
   /// Update user profile image URL.
   Future<void> updateProfileImage(String userId, String? imageUrl) async {
-    await _firestore.collection(_usersCollection).doc(userId).set({
+    await _client.from(_usersCollection).upsert({
+      'user_id': userId,
       'profileImageUrl': imageUrl,
-    }, SetOptions(merge: true));
+    }, onConflict: 'user_id');
   }
 
   /// Update user total points (for spin wheel and other features).
   Future<void> updateTotalPoints(String userId, int points) async {
-    await _firestore.collection(_usersCollection).doc(userId).update({
+    await _client.from(_usersCollection).update({
       'totalPoints': points,
-    });
+    }).eq('user_id', userId);
   }
 
   /// Increment user points and bottles (called after successful recycle).
   Future<void> incrementUserPointsAndBottles(String userId) async {
-    final ref = _firestore.collection(_usersCollection).doc(userId);
-    await _firestore.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      final currentPoints = (snap.data()?['totalPoints'] as num?)?.toInt() ?? 0;
-      final currentBottles =
-          (snap.data()?['totalBottles'] as num?)?.toInt() ?? 0;
-      tx.update(ref, {
-        'totalPoints': currentPoints + 1,
-        'totalBottles': currentBottles + 1,
-      });
-    });
+    final user = await getUser(userId);
+    final currentPoints = user?.totalPoints ?? 0;
+    final currentBottles = user?.totalBottles ?? 0;
+    await _client.from(_usersCollection).upsert({
+      'user_id': userId,
+      'totalPoints': currentPoints + 1,
+      'totalBottles': currentBottles + 1,
+    }, onConflict: 'user_id');
   }
 
   // --- Recycled bottles ---
 
   /// Check if barcode was already recycled (each barcode can only be used once).
   Future<bool> barcodeExists(String barcode) async {
-    final query = await _firestore
-        .collection(_recycledBottlesCollection)
-        .where('barcode', isEqualTo: barcode)
-        .limit(1)
-        .get();
-    return query.docs.isNotEmpty;
+    final query = await _client
+        .from(_recycledBottlesCollection)
+        .select('id')
+        .eq('barcode', barcode)
+        .limit(1);
+    return (query as List).isNotEmpty;
   }
 
   /// Count bottles recycled by user today (for daily limit of 25).
@@ -184,46 +194,36 @@ class FirestoreService {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
-    final query = await _firestore
-        .collection(_recycledBottlesCollection)
-        .where('userId', isEqualTo: userId)
-        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-        .where('timestamp', isLessThan: Timestamp.fromDate(endOfDay))
-        .get();
-    return query.docs.length;
+    final query = await _client
+        .from(_recycledBottlesCollection)
+        .select('id')
+        .eq('userId', userId)
+        .gte('timestamp', startOfDay.toUtc().toIso8601String())
+        .lt('timestamp', endOfDay.toUtc().toIso8601String());
+    return (query as List).length;
   }
 
   /// Get last recycle timestamp for cooldown (20 seconds).
   Future<DateTime?> getLastRecycleTime(String userId) async {
-    final query = await _firestore
-        .collection(_recycledBottlesCollection)
-        .where('userId', isEqualTo: userId)
-        .orderBy('timestamp', descending: true)
+    final data = await _client
+        .from(_recycledBottlesCollection)
+        .select('timestamp')
+        .eq('userId', userId)
+        .order('timestamp', ascending: false)
         .limit(1)
-        .get();
-    if (query.docs.isEmpty) return null;
-    final data = query.docs.first.data();
-    final ts = data['timestamp'];
-    return ts is Timestamp ? ts.toDate() : null;
+        .maybeSingle();
+    if (data == null) return null;
+    final ts = _asMap(data)['timestamp'];
+    if (ts is String) {
+      return DateTime.tryParse(ts)?.toLocal();
+    }
+    return null;
   }
 
   /// Save recycled bottle and increment user stats.
   Future<void> saveRecycledBottle(RecycledBottleModel bottle) async {
-    final batch = _firestore.batch();
-    final bottleRef =
-        _firestore.collection(_recycledBottlesCollection).doc();
-    batch.set(bottleRef, bottle.toMap());
-    final userRef = _firestore.collection(_usersCollection).doc(bottle.userId);
-    final userSnap = await userRef.get();
-    final currentPoints =
-        (userSnap.data()?['totalPoints'] as num?)?.toInt() ?? 0;
-    final currentBottles =
-        (userSnap.data()?['totalBottles'] as num?)?.toInt() ?? 0;
-    batch.update(userRef, {
-      'totalPoints': currentPoints + 1,
-      'totalBottles': currentBottles + 1,
-    });
-    await batch.commit();
+    await _client.from(_recycledBottlesCollection).insert(bottle.toMap());
+    await incrementUserPointsAndBottles(bottle.userId);
   }
 
   // --- Bins ---
@@ -233,42 +233,49 @@ class FirestoreService {
     final candidates = _binLookupCandidates(binId);
 
     for (final candidate in candidates) {
-      if (candidate.contains('/')) continue;
-      final byIdDoc = await _firestore.collection(_binsCollection).doc(candidate).get();
-      if (byIdDoc.exists && byIdDoc.data() != null) {
-        return BinModel.fromMap(byIdDoc.id, byIdDoc.data()!);
+      final byId = await _client
+          .from(_binsCollection)
+          .select()
+          .eq('binId', candidate)
+          .limit(1);
+      if ((byId as List).isNotEmpty) {
+        final map = _asMap(byId.first);
+        return BinModel.fromMap((map['binId'] ?? candidate).toString(), map);
       }
     }
 
     // Backstop lookup for bins where QR is stored in field instead of doc id.
     for (final candidate in candidates) {
-      final byQr = await _firestore
-          .collection(_binsCollection)
-          .where('qrCode', isEqualTo: candidate)
-          .limit(1)
-          .get();
-      if (byQr.docs.isNotEmpty) {
-        final doc = byQr.docs.first;
-        return BinModel.fromMap(doc.id, doc.data());
+      final byQr = await _client
+          .from(_binsCollection)
+          .select()
+          .eq('qrCode', candidate)
+          .limit(1);
+      if ((byQr as List).isNotEmpty) {
+        final map = _asMap(byQr.first);
+        final id = (map['binId'] ?? candidate).toString();
+        return BinModel.fromMap(id, map);
       }
     }
 
     // Final fuzzy fallback for mixed legacy data/casing/formatting differences.
-    final allBins = await _firestore.collection(_binsCollection).limit(300).get();
-    final normalizedCandidates = candidates
-        .map((e) => _safeBinDocId(e).toLowerCase())
-        .toSet();
+    final allBins = await _client.from(_binsCollection).select().limit(300);
+    final normalizedCandidates =
+        candidates.map((e) => _safeBinDocId(e).toLowerCase()).toSet();
 
-    for (final doc in allBins.docs) {
-      final data = doc.data();
-      final docIdNorm = _safeBinDocId(doc.id).toLowerCase();
-      final binIdNorm = _safeBinDocId((data['binId'] ?? '').toString()).toLowerCase();
-      final qrNorm = _safeBinDocId((data['qrCode'] ?? '').toString()).toLowerCase();
+    for (final row in (allBins as List)) {
+      final data = _asMap(row);
+      final docId = (data['binId'] ?? '').toString();
+      final docIdNorm = _safeBinDocId(docId).toLowerCase();
+      final binIdNorm =
+          _safeBinDocId((data['binId'] ?? '').toString()).toLowerCase();
+      final qrNorm =
+          _safeBinDocId((data['qrCode'] ?? '').toString()).toLowerCase();
 
       if (normalizedCandidates.contains(docIdNorm) ||
           normalizedCandidates.contains(binIdNorm) ||
           normalizedCandidates.contains(qrNorm)) {
-        return BinModel.fromMap(doc.id, data);
+        return BinModel.fromMap(docId, data);
       }
     }
 
@@ -278,33 +285,29 @@ class FirestoreService {
   /// Create bin (admin/seed use).
   Future<void> setBin(BinModel bin) async {
     final docId = _safeBinDocId(bin.binId);
-    await _firestore
-        .collection(_binsCollection)
-        .doc(docId)
-        .set({
-          ...bin.toMap(),
-          'binId': docId,
-          'qrCode': bin.qrCode,
-        }, SetOptions(merge: true));
+    await _client.from(_binsCollection).upsert({
+      ...bin.toMap(),
+      'binId': docId,
+      'qrCode': bin.qrCode,
+    }, onConflict: 'binId');
   }
 
   /// Increment user points by a specific amount (for bin scans, etc).
   Future<void> incrementUserPoints(String userId, int points) async {
-    final ref = _firestore.collection(_usersCollection).doc(userId);
-    await _firestore.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      final currentPoints = (snap.data()?['totalPoints'] as num?)?.toInt() ?? 0;
-      tx.update(ref, {
-        'totalPoints': currentPoints + points,
-      });
-    });
+    final user = await getUser(userId);
+    final currentPoints = user?.totalPoints ?? 0;
+    await _client.from(_usersCollection).upsert({
+      'user_id': userId,
+      'totalPoints': currentPoints + points,
+    }, onConflict: 'user_id');
   }
 
   /// Log a bin scan for analytics.
   Future<void> logBinScan(String userId, String binId) async {
-    await _firestore.collection(_usersCollection).doc(userId).collection('bin_scans').add({
+    await _client.from('bin_scans').insert({
+      'userId': userId,
       'binId': binId,
-      'timestamp': Timestamp.now(),
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
     });
   }
 
@@ -313,7 +316,7 @@ class FirestoreService {
     required String reward,
   }) async {
     final now = DateTime.now();
-    await _firestore.collection('admin_notifications').add({
+    await _client.from('admin_notifications').insert({
       'title': 'User Won Reward',
       'subtitle': '$userName won $reward.',
       'time': '${now.day.toString().padLeft(2, '0')}/'
@@ -324,7 +327,7 @@ class FirestoreService {
       'icon': 'reward',
       'color': '#FF9800',
       'isRead': false,
-      'createdAt': FieldValue.serverTimestamp(),
+      'createdAt': now.toUtc().toIso8601String(),
       'type': 'reward_win',
     });
   }
@@ -333,13 +336,18 @@ class FirestoreService {
 
   /// Top 10 users by totalPoints, real-time stream (legacy, kept for compat).
   Stream<List<UserModel>> leaderboardStream() {
-    return _firestore
-        .collection(_usersCollection)
-        .orderBy('totalPoints', descending: true)
-        .limit(10)
-        .snapshots()
-        .map((snap) =>
-            snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
+    return _poll(() async {
+      final rows = await _client
+          .from(_usersCollection)
+          .select()
+          .order('totalPoints', ascending: false)
+          .limit(10);
+      return (rows as List).map((row) {
+        final map = _asMap(row);
+        final id = (map['user_id'] ?? '').toString();
+        return UserModel.fromMap(id, map);
+      }).toList();
+    });
   }
 
   /// ALL users ordered by totalPoints descending — real-time stream.
@@ -354,15 +362,12 @@ class FirestoreService {
   /// Instead: fetch all users with no filter, sort client-side in Dart.
   /// This guarantees every registered user appears on the leaderboard.
   Stream<List<UserModel>> leaderboardStreamAll() {
-    return _firestore
-        .collection(_usersCollection)
-        .snapshots()
-        .map((snap) {
+    return _poll(() async {
+      final rows = await _fetchLeaderboardRows();
       final all = <UserModel>[];
-      for (final doc in snap.docs) {
+      for (final row in rows) {
         try {
-          // doc.data() returns an unmodifiable map — copy it first
-          final raw = Map<String, dynamic>.from(doc.data());
+          final raw = _normalizeLeaderboardRow(_asMap(row));
 
           // Safely parse totalPoints — handle int, double, null, missing
           final pts = raw['totalPoints'];
@@ -371,23 +376,22 @@ class FirestoreService {
           final bottles = raw['totalBottles'];
           raw['totalBottles'] = bottles is num ? bottles.toInt() : 0;
 
-            final rawEmail = (raw['email'] ?? '').toString().trim();
-            final emailPrefix = rawEmail.contains('@')
-              ? rawEmail.split('@').first
-              : rawEmail;
-            final rawName = (raw['name'] ?? '').toString().trim();
+          final rawEmail = (raw['email'] ?? '').toString().trim();
+          final emailPrefix =
+              rawEmail.contains('@') ? rawEmail.split('@').first : rawEmail;
+          final rawName = (raw['name'] ?? '').toString().trim();
 
-            // Keep leaderboard names non-empty (important for admin users
-            // created from console with blank name fields).
-            raw['name'] = rawName.isNotEmpty
+          // Keep leaderboard names non-empty (important for admin users
+          // created from console with blank name fields).
+          raw['name'] = rawName.isNotEmpty
               ? rawName
               : (emailPrefix.isNotEmpty ? emailPrefix : 'User');
-            raw['email'] = rawEmail;
+          raw['email'] = rawEmail;
 
-          all.add(UserModel.fromMap(doc.id, raw));
+          all.add(UserModel.fromMap((raw['user_id'] ?? '').toString(), raw));
         } catch (e) {
           // Skip malformed documents — never crash the whole leaderboard
-          debugPrint('leaderboardStreamAll: skipping doc ${doc.id}: $e');
+          debugPrint('leaderboardStreamAll: skipping row: $e');
         }
       }
       // Sort by totalPoints descending in Dart
@@ -396,54 +400,97 @@ class FirestoreService {
     });
   }
 
+  Future<List<dynamic>> _fetchLeaderboardRows() async {
+    try {
+      final rows = await _client.from(_usersCollection).select();
+      return rows as List;
+    } on PostgrestException catch (e) {
+      final code = (e.code ?? '').toUpperCase();
+      final message = (e.message).toLowerCase();
+
+      final missingUsersTable =
+          code == 'PGRST205' && message.contains('public.users');
+      if (!missingUsersTable) rethrow;
+
+      // Some Supabase starter setups use `profiles` instead of `users`.
+      try {
+        final profileRows = await _client.from('profiles').select();
+        return profileRows as List;
+      } on PostgrestException {
+        throw StateError(
+          'Database is missing the `users` table. Run supabase/schema.sql in your Supabase SQL editor.',
+        );
+      }
+    }
+  }
+
+  Map<String, dynamic> _normalizeLeaderboardRow(Map<String, dynamic> source) {
+    final map = Map<String, dynamic>.from(source);
+
+    map['user_id'] = (map['user_id'] ?? map['id'] ?? map['uid'] ?? '').toString();
+    map['name'] = (map['name'] ?? map['full_name'] ?? map['username'] ?? '').toString();
+    map['email'] = (map['email'] ?? '').toString();
+    map['mobile'] = (map['mobile'] ?? '').toString();
+    map['totalPoints'] = map['totalPoints'] ?? map['total_points'] ?? map['points'] ?? 0;
+    map['totalBottles'] = map['totalBottles'] ?? map['total_bottles'] ?? map['bottles'] ?? 0;
+    map['profileImageUrl'] = map['profileImageUrl'] ?? map['avatar_url'];
+    map['isAdmin'] = map['isAdmin'] ?? map['is_admin'] ?? false;
+
+    return map;
+  }
+
   // --- Admin: Bin Management ---
 
   /// Get all bins (admin view).
   Stream<List<BinModel>> getAllBinsStream() {
-    return _firestore
-        .collection(_binsCollection)
-        .orderBy('locationName')
-        .snapshots()
-        .map((snap) =>
-            snap.docs.map((d) => BinModel.fromMap(d.id, d.data())).toList());
+    return _poll(() async {
+      final rows =
+          await _client.from(_binsCollection).select().order('locationName');
+      return (rows as List).map((row) {
+        final map = _asMap(row);
+        final id = (map['binId'] ?? '').toString();
+        return BinModel.fromMap(id, map);
+      }).toList();
+    });
   }
 
   /// Add a new bin (admin).
   Future<void> addBin(String binId, String locationName) async {
     final qrCode = binId.trim();
     final docId = _safeBinDocId(qrCode);
-    await _firestore.collection(_binsCollection).doc(docId).set({
+    await _client.from(_binsCollection).upsert({
       'binId': docId,
       'qrCode': qrCode,
       'locationName': locationName,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+    }, onConflict: 'binId');
   }
 
   /// Update bin location (admin).
   Future<void> updateBin(String binId, String locationName) async {
     final docId = _safeBinDocId(binId);
-    await _firestore.collection(_binsCollection).doc(docId).update({
+    await _client.from(_binsCollection).update({
       'locationName': locationName,
-    });
+    }).eq('binId', docId);
   }
 
   /// Delete bin (admin).
   Future<void> deleteBin(String binId) async {
     final docId = _safeBinDocId(binId);
-    await _firestore.collection(_binsCollection).doc(docId).delete();
+    await _client.from(_binsCollection).delete().eq('binId', docId);
   }
 
   // --- Admin: Reward Configuration ---
 
   /// Get reward configuration (or return default).
   Future<RewardConfigModel> getRewardConfig() async {
-    final doc = await _firestore
-        .collection(_rewardConfigCollection)
-        .doc('default')
-        .get();
-    if (doc.exists && doc.data() != null) {
-      return RewardConfigModel.fromMap(doc.id, doc.data()!);
+    final data = await _client
+        .from(_rewardConfigCollection)
+        .select()
+        .eq('id', 'default')
+        .maybeSingle();
+    if (data != null) {
+      return RewardConfigModel.fromMap('default', _asMap(data));
     }
     // Return defaults if not configured yet
     return const RewardConfigModel(id: 'default');
@@ -451,47 +498,37 @@ class FirestoreService {
 
   /// Stream reward configuration.
   Stream<RewardConfigModel> rewardConfigStream() {
-    return _firestore
-        .collection(_rewardConfigCollection)
-        .doc('default')
-        .snapshots()
-        .map((doc) {
-      if (doc.exists && doc.data() != null) {
-        return RewardConfigModel.fromMap(doc.id, doc.data()!);
-      }
-      return const RewardConfigModel(id: 'default');
-    });
+    return _poll(getRewardConfig);
   }
 
   /// Update reward configuration (admin).
   Future<void> updateRewardConfig(RewardConfigModel config) async {
-    await _firestore
-        .collection(_rewardConfigCollection)
-        .doc('default')
-        .set(config.toMap(), SetOptions(merge: true));
+    await _client.from(_rewardConfigCollection).upsert({
+      'id': 'default',
+      ...config.toMap(),
+    }, onConflict: 'id');
   }
 
   /// Get total counts for admin dashboard.
   Future<Map<String, int>> getAdminStats() async {
-    final usersCount = await _firestore.collection(_usersCollection).count().get();
-    final binsCount = await _firestore.collection(_binsCollection).count().get();
-    final bottlesCount = await _firestore.collection(_recycledBottlesCollection).count().get();
-    
+    final users = await _client.from(_usersCollection).select('user_id');
+    final bins = await _client.from(_binsCollection).select('binId');
+    final bottles = await _client.from(_recycledBottlesCollection).select('id');
+
     return {
-      'totalUsers': usersCount.count ?? 0,
-      'totalBins': binsCount.count ?? 0,
-      'totalBottlesRecycled': bottlesCount.count ?? 0,
+      'totalUsers': (users as List).length,
+      'totalBins': (bins as List).length,
+      'totalBottlesRecycled': (bottles as List).length,
     };
   }
 
   Stream<List<UserModel>> allUsersStream() {
-    return _firestore
-        .collection(_usersCollection)
-        .snapshots()
-        .map((snapshot) {
-      final users = snapshot.docs
-          .map((doc) => UserModel.fromMap(doc.id, doc.data()))
-          .toList();
+    return _poll(() async {
+      final rows = await _client.from(_usersCollection).select();
+      final users = (rows as List).map((row) {
+        final map = _asMap(row);
+        return UserModel.fromMap((map['user_id'] ?? '').toString(), map);
+      }).toList();
       users.sort((a, b) => b.totalPoints.compareTo(a.totalPoints));
       return users;
     });

@@ -10,11 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   
-  # Firebase
-  firebase_core: 4.4.0
-  firebase_auth: 6.1.4
-  cloud_firestore: 6.1.2
-  firebase_storage: ^13.0.6
+  # Supabase
+  supabase_flutter: ^2.10.3
   
   # Scanning
   mobile_scanner: ^4.0.1

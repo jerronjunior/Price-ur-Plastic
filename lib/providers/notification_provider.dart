@@ -1,30 +1,28 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/notification_model.dart';
 
 /// Stores in-app notifications visible in the notification panel.
 class NotificationProvider with ChangeNotifier {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final SupabaseClient _client = Supabase.instance.client;
   final List<NotificationModel> _notifications = [];
   final List<NotificationModel> _userNotifications = [];
   final List<NotificationModel> _adminNotifications = [];
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _userSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _adminSubscription;
+  Timer? _pollingTimer;
   String? _activeUserId;
   bool _isAdmin = false;
   bool _hasUnread = false;
 
-  List<NotificationModel> get notifications => List.unmodifiable(_notifications);
+  List<NotificationModel> get notifications =>
+      List.unmodifiable(_notifications);
   bool get hasUnread => _hasUnread;
 
   void bindToUser(String? userId, {required bool isAdmin}) {
     if (_activeUserId == userId && _isAdmin == isAdmin) return;
 
-    _userSubscription?.cancel();
-    _adminSubscription?.cancel();
-    _userSubscription = null;
-    _adminSubscription = null;
+    _pollingTimer?.cancel();
+    _pollingTimer = null;
     _activeUserId = userId;
     _isAdmin = isAdmin;
 
@@ -36,41 +34,11 @@ class NotificationProvider with ChangeNotifier {
 
     if (userId == null) return;
 
-    _userSubscription = _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('notifications')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .listen((snapshot) {
-      _userNotifications
-        ..clear()
-        ..addAll(snapshot.docs.map((doc) {
-          final map = Map<String, dynamic>.from(doc.data());
-          map['id'] = doc.id;
-          return NotificationModel.fromMap(map);
-        }));
-      _mergeNotifications();
-      notifyListeners();
-    });
-
-    if (isAdmin) {
-      _adminSubscription = _firestore
-          .collection('admin_notifications')
-          .orderBy('createdAt', descending: true)
-          .snapshots()
-          .listen((snapshot) {
-        _adminNotifications
-          ..clear()
-          ..addAll(snapshot.docs.map((doc) {
-            final map = Map<String, dynamic>.from(doc.data());
-            map['id'] = doc.id;
-            return NotificationModel.fromMap(map);
-          }));
-        _mergeNotifications();
-        notifyListeners();
-      });
-    }
+    _refreshNotifications();
+    _pollingTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _refreshNotifications(),
+    );
   }
 
   Future<void> addRewardNotification(String reward) async {
@@ -94,14 +62,11 @@ class NotificationProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _firestore
-          .collection('users')
-          .doc(_activeUserId)
-          .collection('notifications')
-          .doc(id)
-          .set({
+      await _client.from('notifications').insert({
+        'id': id,
+        'userId': _activeUserId,
         ...notification.toMap(),
-        'createdAt': FieldValue.serverTimestamp(),
+        'createdAt': DateTime.now().toUtc().toIso8601String(),
       });
     } catch (_) {
       // Keep local notification if remote write fails.
@@ -117,17 +82,12 @@ class NotificationProvider with ChangeNotifier {
         .toList();
 
     if (_activeUserId != null && unreadUserIds.isNotEmpty) {
-      final batch = _firestore.batch();
-      for (final id in unreadUserIds) {
-        final ref = _firestore
-            .collection('users')
-            .doc(_activeUserId)
-            .collection('notifications')
-            .doc(id);
-        batch.update(ref, {'isRead': true});
-      }
       try {
-        await batch.commit();
+        await _client
+            .from('notifications')
+            .update({'isRead': true})
+            .eq('userId', _activeUserId!)
+            .inFilter('id', unreadUserIds);
       } catch (_) {
         return;
       }
@@ -139,13 +99,10 @@ class NotificationProvider with ChangeNotifier {
           .map((notification) => notification.id)
           .toList();
       if (unreadAdminIds.isNotEmpty) {
-        final batch = _firestore.batch();
-        for (final id in unreadAdminIds) {
-          final ref = _firestore.collection('admin_notifications').doc(id);
-          batch.update(ref, {'isRead': true});
-        }
         try {
-          await batch.commit();
+          await _client
+              .from('admin_notifications')
+              .update({'isRead': true}).inFilter('id', unreadAdminIds);
         } catch (_) {}
       }
     }
@@ -163,7 +120,8 @@ class NotificationProvider with ChangeNotifier {
   }
 
   String _formatTime(DateTime time) {
-    final hour = time.hour == 0 ? 12 : (time.hour > 12 ? time.hour - 12 : time.hour);
+    final hour =
+        time.hour == 0 ? 12 : (time.hour > 12 ? time.hour - 12 : time.hour);
     final minute = time.minute.toString().padLeft(2, '0');
     final suffix = time.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $suffix';
@@ -171,8 +129,7 @@ class NotificationProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    _userSubscription?.cancel();
-    _adminSubscription?.cancel();
+    _pollingTimer?.cancel();
     super.dispose();
   }
 
@@ -194,5 +151,43 @@ class NotificationProvider with ChangeNotifier {
       ..clear()
       ..addAll([..._userNotifications, ..._adminNotifications]);
     _hasUnread = _notifications.any((notification) => !notification.isRead);
+  }
+
+  Future<void> _refreshNotifications() async {
+    if (_activeUserId == null) return;
+
+    try {
+      final userRows = await _client
+          .from('notifications')
+          .select()
+          .eq('userId', _activeUserId!)
+          .order('createdAt', ascending: false);
+      _userNotifications
+        ..clear()
+        ..addAll((userRows as List).map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          return NotificationModel.fromMap(map);
+        }));
+
+      if (_isAdmin) {
+        final adminRows = await _client
+            .from('admin_notifications')
+            .select()
+            .order('createdAt', ascending: false);
+        _adminNotifications
+          ..clear()
+          ..addAll((adminRows as List).map((row) {
+            final map = Map<String, dynamic>.from(row as Map);
+            return NotificationModel.fromMap(map);
+          }));
+      } else {
+        _adminNotifications.clear();
+      }
+
+      _mergeNotifications();
+      notifyListeners();
+    } catch (_) {
+      // Keep last fetched notifications when network reads fail.
+    }
   }
 }

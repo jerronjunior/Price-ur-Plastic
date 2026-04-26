@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../../core/theme.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
@@ -100,7 +99,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       setState(() => _uploadingImage = true);
 
-      // Upload to Firebase Storage
+      // Upload to Supabase Storage
       final userId = context.read<AuthProvider>().userId;
       if (userId == null) {
         if (mounted) {
@@ -123,7 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SnackBar(content: Text('Profile picture updated!')),
         );
       }
-    } on FirebaseException catch (e) {
+    } on StorageServiceException catch (e) {
       if (mounted) {
         final errorText = e.message ?? 'Failed to upload profile picture.';
         ScaffoldMessenger.of(context).showSnackBar(
@@ -166,14 +165,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   newPassword.isEmpty ||
                   confirmPassword.isEmpty) {
                 ScaffoldMessenger.of(this.context).showSnackBar(
-                  const SnackBar(content: Text('Please fill all password fields.')),
+                  const SnackBar(
+                      content: Text('Please fill all password fields.')),
                 );
                 return;
               }
               if (newPassword.length < 6) {
                 ScaffoldMessenger.of(this.context).showSnackBar(
                   const SnackBar(
-                    content: Text('New password must be at least 6 characters.'),
+                    content:
+                        Text('New password must be at least 6 characters.'),
                   ),
                 );
                 return;
@@ -186,10 +187,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               }
 
               setDialogState(() => submitting = true);
-              final msg = await this.context.read<AuthProvider>().changePassword(
-                    currentPassword: currentPassword,
-                    newPassword: newPassword,
-                  );
+              final msg =
+                  await this.context.read<AuthProvider>().changePassword(
+                        currentPassword: currentPassword,
+                        newPassword: newPassword,
+                      );
               if (!mounted) return;
               setDialogState(() => submitting = false);
 
@@ -226,8 +228,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ? Icons.visibility_off
                                 : Icons.visibility,
                           ),
-                          onPressed: () =>
-                              setDialogState(() => obscureCurrent = !obscureCurrent),
+                          onPressed: () => setDialogState(
+                              () => obscureCurrent = !obscureCurrent),
                         ),
                       ),
                     ),
@@ -239,7 +241,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         labelText: 'New Password',
                         suffixIcon: IconButton(
                           icon: Icon(
-                            obscureNew ? Icons.visibility_off : Icons.visibility,
+                            obscureNew
+                                ? Icons.visibility_off
+                                : Icons.visibility,
                           ),
                           onPressed: () =>
                               setDialogState(() => obscureNew = !obscureNew),
@@ -269,7 +273,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: submitting ? null : () => Navigator.pop(dialogContext),
+                  onPressed:
+                      submitting ? null : () => Navigator.pop(dialogContext),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
@@ -317,15 +322,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               final displayName =
                   user?.name ?? fallbackFirebaseUser?.displayName ?? 'User';
-              final displayEmail = user?.email ?? fallbackFirebaseUser?.email ?? '';
+              final displayEmail =
+                  user?.email ?? fallbackFirebaseUser?.email ?? '';
               final displayMobile = user?.mobile ?? '';
               final displayProfileImage = user?.profileImageUrl;
               final displayIsAdmin = user?.isAdmin ?? false;
 
               final nameParts = displayName.split(' ');
               final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
-              final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-              final userInitial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+              final lastName =
+                  nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+              final userInitial =
+                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
 
               if (!_isEditing) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -346,347 +354,370 @@ class _ProfileScreenState extends State<ProfileScreen> {
               }
 
               return SingleChildScrollView(
-            child: Column(
-              children: [
-                // Blue Header
-                Container(
-                  width: double.infinity,
-                  color: AppTheme.primaryBlue,
-                  padding: EdgeInsets.fromLTRB(
-                    24,
-                    20 + MediaQuery.of(context).padding.top,
-                    24,
-                    20,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.person, color: Colors.white),
-                        onPressed: () {},
-                      ),
-                      const Text(
-                        'PROFILE',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            const Icon(Icons.notifications, color: Colors.white),
-                            if (hasUnread)
-                              const Positioned(
-                                right: -1,
-                                top: -1,
-                                child: SizedBox(
-                                  width: 10,
-                                  height: 10,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        onPressed: () {
-                          if (!_showNotificationPanel) {
-                            context
-                                .read<NotificationProvider>()
-                                .markAllAsRead();
-                          }
-                          setState(() {
-                            _showNotificationPanel = !_showNotificationPanel;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // User Info Card
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Container(
-                    decoration: BoxDecoration(
+                child: Column(
+                  children: [
+                    // Blue Header
+                    Container(
+                      width: double.infinity,
                       color: AppTheme.primaryBlue,
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      children: [
-                        // Avatar with edit button
-                        Stack(
-                          children: [
-                            GestureDetector(
-                              onTap: _uploadingImage ? null : _pickAndUploadImage,
-                              child: CircleAvatar(
-                                radius: 50,
-                                backgroundColor: Colors.white.withOpacity(0.3),
-                                backgroundImage: displayProfileImage != null
-                                  ? NetworkImage(displayProfileImage)
-                                    : null,
-                                child: _uploadingImage
-                                    ? const CircularProgressIndicator(
-                                        color: Colors.white,
-                                      )
-                                  : displayProfileImage == null
-                                        ? Text(
-                                            userInitial,
-                                            style: const TextStyle(
-                                              fontSize: 40,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : null,
-                              ),
+                      padding: EdgeInsets.fromLTRB(
+                        24,
+                        20 + MediaQuery.of(context).padding.top,
+                        24,
+                        20,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.person, color: Colors.white),
+                            onPressed: () {},
+                          ),
+                          const Text(
+                            'PROFILE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
                             ),
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: GestureDetector(
-                                onTap: _uploadingImage ? null : _pickAndUploadImage,
-                                child: Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: AppTheme.primaryBlue,
-                                      width: 2,
+                          ),
+                          IconButton(
+                            icon: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                const Icon(Icons.notifications,
+                                    color: Colors.white),
+                                if (hasUnread)
+                                  const Positioned(
+                                    right: -1,
+                                    top: -1,
+                                    child: SizedBox(
+                                      width: 10,
+                                      height: 10,
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: Colors.red,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                  child: const Icon(
-                                    Icons.camera_alt,
-                                    size: 18,
-                                    color: AppTheme.primaryBlue,
+                              ],
+                            ),
+                            onPressed: () {
+                              if (!_showNotificationPanel) {
+                                context
+                                    .read<NotificationProvider>()
+                                    .markAllAsRead();
+                              }
+                              setState(() {
+                                _showNotificationPanel =
+                                    !_showNotificationPanel;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // User Info Card
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryBlue,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          children: [
+                            // Avatar with edit button
+                            Stack(
+                              children: [
+                                GestureDetector(
+                                  onTap: _uploadingImage
+                                      ? null
+                                      : _pickAndUploadImage,
+                                  child: CircleAvatar(
+                                    radius: 50,
+                                    backgroundColor:
+                                        Colors.white.withOpacity(0.3),
+                                    backgroundImage: displayProfileImage != null
+                                        ? NetworkImage(displayProfileImage)
+                                        : null,
+                                    child: _uploadingImage
+                                        ? const CircularProgressIndicator(
+                                            color: Colors.white,
+                                          )
+                                        : displayProfileImage == null
+                                            ? Text(
+                                                userInitial,
+                                                style: const TextStyle(
+                                                  fontSize: 40,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                ),
+                                              )
+                                            : null,
+                                  ),
+                                ),
+                                Positioned(
+                                  bottom: 0,
+                                  right: 0,
+                                  child: GestureDetector(
+                                    onTap: _uploadingImage
+                                        ? null
+                                        : _pickAndUploadImage,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: AppTheme.primaryBlue,
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.camera_alt,
+                                        size: 18,
+                                        color: AppTheme.primaryBlue,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            // Name
+                            Text(
+                              displayName,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Email
+                            Text(
+                              displayEmail,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // Info Section
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          children: [
+                            // First Name
+                            _InfoRow(
+                              label: 'First Name',
+                              value: firstName,
+                              isEditing: _isEditing,
+                              controller: _firstNameController,
+                            ),
+                            const Divider(height: 32),
+                            // Last Name
+                            _InfoRow(
+                              label: 'Last Name',
+                              value: lastName,
+                              isEditing: _isEditing,
+                              controller: _lastNameController,
+                            ),
+                            const Divider(height: 32),
+                            // Email
+                            _InfoRow(
+                              label: 'Email',
+                              value: displayEmail,
+                              isEditing: false,
+                              controller: _emailController,
+                            ),
+                            const Divider(height: 32),
+                            // Mobile
+                            _InfoRow(
+                              label: 'Mobile',
+                              value: displayMobile,
+                              isEditing: _isEditing,
+                              controller: _mobileController,
+                            ),
+                            const SizedBox(height: 24),
+                            // Edit Profile Button
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  if (_isEditing) {
+                                    // Save changes
+                                    final firstName =
+                                        _firstNameController.text.trim();
+                                    final lastName =
+                                        _lastNameController.text.trim();
+                                    final mobile =
+                                        _mobileController.text.trim();
+                                    final fullName =
+                                        '$firstName $lastName'.trim();
+
+                                    if (fullName.isEmpty) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Name cannot be empty'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      return;
+                                    }
+
+                                    try {
+                                      await context
+                                          .read<AuthProvider>()
+                                          .updateProfile(
+                                            name: fullName,
+                                            mobile: mobile,
+                                          );
+
+                                      setState(() => _isEditing = false);
+
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                                'Profile updated successfully!'),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
+                                      }
+                                    } catch (e) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                                'Failed to update profile: $e'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  } else {
+                                    setState(() => _isEditing = true);
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.primaryBlue,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: Text(
+                                  _isEditing ? 'Save Profile' : 'Edit Profile',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Admin Dashboard Button (only for admins)
+                            if (displayIsAdmin)
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: () => context.push('/admin'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.primaryGreen,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 14),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.admin_panel_settings,
+                                      color: Colors.white),
+                                  label: const Text(
+                                    'Admin Dashboard',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (displayIsAdmin) const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: _showChangePasswordDialog,
+                                icon: const Icon(Icons.lock_reset),
+                                label: const Text('Change Password'),
+                                style: OutlinedButton.styleFrom(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Logout Button
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  await context.read<AuthProvider>().logout();
+                                  if (context.mounted) context.go('/login');
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFE53935),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Logout',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
                                   ),
                                 ),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 16),
-                        // Name
-                        Text(
-                          displayName,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        // Email
-                        Text(
-                          displayEmail,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 24),
+                  ],
                 ),
-                const SizedBox(height: 24),
-                // Info Section
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      children: [
-                        // First Name
-                        _InfoRow(
-                          label: 'First Name',
-                          value: firstName,
-                          isEditing: _isEditing,
-                          controller: _firstNameController,
-                        ),
-                        const Divider(height: 32),
-                        // Last Name
-                        _InfoRow(
-                          label: 'Last Name',
-                          value: lastName,
-                          isEditing: _isEditing,
-                          controller: _lastNameController,
-                        ),
-                        const Divider(height: 32),
-                        // Email
-                        _InfoRow(
-                          label: 'Email',
-                          value: displayEmail,
-                          isEditing: false,
-                          controller: _emailController,
-                        ),
-                        const Divider(height: 32),
-                        // Mobile
-                        _InfoRow(
-                          label: 'Mobile',
-                          value: displayMobile,
-                          isEditing: _isEditing,
-                          controller: _mobileController,
-                        ),
-                        const SizedBox(height: 24),
-                        // Edit Profile Button
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: () async {
-                              if (_isEditing) {
-                                // Save changes
-                                final firstName = _firstNameController.text.trim();
-                                final lastName = _lastNameController.text.trim();
-                                final mobile = _mobileController.text.trim();
-                                final fullName = '$firstName $lastName'.trim();
-                                
-                                if (fullName.isEmpty) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Name cannot be empty'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                  return;
-                                }
-                                
-                                try {
-                                  await context.read<AuthProvider>().updateProfile(
-                                        name: fullName,
-                                        mobile: mobile,
-                                      );
-                                  
-                                  setState(() => _isEditing = false);
-                                  
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Profile updated successfully!'),
-                                        backgroundColor: Colors.green,
-                                      ),
-                                    );
-                                  }
-                                } catch (e) {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Failed to update profile: $e'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                  }
-                                }
-                              } else {
-                                setState(() => _isEditing = true);
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.primaryBlue,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: Text(
-                              _isEditing ? 'Save Profile' : 'Edit Profile',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        // Admin Dashboard Button (only for admins)
-                        if (displayIsAdmin)
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: () => context.push('/admin'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.primaryGreen,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              icon: const Icon(Icons.admin_panel_settings, color: Colors.white),
-                              label: const Text(
-                                'Admin Dashboard',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        if (displayIsAdmin) const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: _showChangePasswordDialog,
-                            icon: const Icon(Icons.lock_reset),
-                            label: const Text('Change Password'),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        // Logout Button
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: () async {
-                              await context.read<AuthProvider>().logout();
-                              if (context.mounted) context.go('/login');
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE53935),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Logout',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
-            ),
-          );
-        },
-      ),
+              );
+            },
+          ),
           // Notification Panel Overlay
           if (_showNotificationPanel)
             Positioned(
@@ -753,8 +784,9 @@ class _InfoRow extends StatelessWidget {
           TextField(
             controller: controller,
             textAlign: TextAlign.left,
-            keyboardType: label == 'Mobile' ? TextInputType.phone : TextInputType.text,
-            inputFormatters: label == 'Mobile' 
+            keyboardType:
+                label == 'Mobile' ? TextInputType.phone : TextInputType.text,
+            inputFormatters: label == 'Mobile'
                 ? [FilteringTextInputFormatter.digitsOnly]
                 : null,
             decoration: InputDecoration(

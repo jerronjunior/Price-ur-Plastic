@@ -1,69 +1,128 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Handles Firebase Authentication (email/password).
+class AppAuthException implements Exception {
+  const AppAuthException({required this.code, this.message});
+
+  final String code;
+  final String? message;
+}
+
+class AppAuthUser {
+  const AppAuthUser({
+    required this.uid,
+    this.email,
+    this.displayName,
+  });
+
+  final String uid;
+  final String? email;
+  final String? displayName;
+}
+
+class AppAuthResult {
+  const AppAuthResult({this.user});
+
+  final AppAuthUser? user;
+}
+
+/// Handles Supabase Authentication (email/password).
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final SupabaseClient _client = Supabase.instance.client;
 
-  User? get currentUser => _auth.currentUser;
-  String? get currentUserId => _auth.currentUser?.uid;
+  AppAuthUser? get currentUser => _mapUser(_client.auth.currentUser);
+  String? get currentUserId => _client.auth.currentUser?.id;
 
-  Stream<User?> get authStateChanges => _auth.authStateChanges();
-
-  /// Register with email and password.
-  Future<UserCredential> registerWithEmailPassword({
-    required String email,
-    required String password,
-  }) async {
-    return _auth.createUserWithEmailAndPassword(
-      email: email,
-      password: password,
+  Stream<AppAuthUser?> get authStateChanges {
+    return _client.auth.onAuthStateChange.map(
+      (state) => _mapUser(state.session?.user ?? _client.auth.currentUser),
     );
   }
 
-  /// Sign in with email and password.
-  Future<UserCredential> signInWithEmailPassword({
+  /// Register with email and password.
+  Future<AppAuthResult> registerWithEmailPassword({
     required String email,
     required String password,
   }) async {
-    return _auth.signInWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
+    try {
+      final response = await _client.auth.signUp(
+        email: email,
+        password: password,
+      );
+      return AppAuthResult(user: _mapUser(response.user));
+    } on AuthException catch (e) {
+      throw AppAuthException(
+          code: e.statusCode ?? 'auth_error', message: e.message);
+    }
+  }
+
+  /// Sign in with email and password.
+  Future<AppAuthResult> signInWithEmailPassword({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final response = await _client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+      return AppAuthResult(user: _mapUser(response.user));
+    } on AuthException catch (e) {
+      throw AppAuthException(
+          code: e.statusCode ?? 'auth_error', message: e.message);
+    }
   }
 
   /// Sign out.
   Future<void> signOut() async {
-    await _auth.signOut();
+    await _client.auth.signOut();
   }
 
   /// Sends a password reset email.
   Future<void> sendPasswordResetEmail(String email) async {
-    await _auth.sendPasswordResetEmail(email: email);
+    try {
+      await _client.auth.resetPasswordForEmail(email);
+    } on AuthException catch (e) {
+      throw AppAuthException(
+          code: e.statusCode ?? 'auth_error', message: e.message);
+    }
   }
 
   /// Change password for the currently signed-in user.
-  ///
-  /// Firebase requires recent authentication, so we re-authenticate
-  /// with current email/password before updating to the new password.
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
   }) async {
-    final user = _auth.currentUser;
+    final user = _client.auth.currentUser;
     if (user == null) {
-      throw FirebaseAuthException(code: 'user-not-found');
+      throw const AppAuthException(code: 'user-not-found');
     }
     final email = user.email;
     if (email == null || email.isEmpty) {
-      throw FirebaseAuthException(code: 'invalid-email');
+      throw const AppAuthException(code: 'invalid-email');
     }
 
-    final credential = EmailAuthProvider.credential(
-      email: email,
-      password: currentPassword,
-    );
+    try {
+      // Verify current password before changing password.
+      await _client.auth.signInWithPassword(
+        email: email,
+        password: currentPassword,
+      );
+      await _client.auth.updateUser(
+        UserAttributes(password: newPassword),
+      );
+    } on AuthException catch (e) {
+      throw AppAuthException(
+          code: e.statusCode ?? 'auth_error', message: e.message);
+    }
+  }
 
-    await user.reauthenticateWithCredential(credential);
-    await user.updatePassword(newPassword);
+  AppAuthUser? _mapUser(User? user) {
+    if (user == null) return null;
+    final metadata = user.userMetadata ?? const <String, dynamic>{};
+    return AppAuthUser(
+      uid: user.id,
+      email: user.email,
+      displayName: metadata['name']?.toString(),
+    );
   }
 }
