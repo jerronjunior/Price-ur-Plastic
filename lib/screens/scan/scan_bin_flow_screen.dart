@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
+import '../../models/recycled_bottle_model.dart';
 import 'insertion_detector_screen.dart';
 import 'scan_bottle_screen.dart';
 import 'scan_bin_screen.dart';
@@ -26,6 +27,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
   int _totalPoints = 0;
   int _totalBottles = 0;
   String? _lastBinId;
+  String? _lastBarcode;
 
   Future<void> _onBinScanned(String binId) async {
     setState(() {
@@ -40,6 +42,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     if (_lastBinId == null) return;
 
     setState(() {
+      _lastBarcode = barcode;
       _bottleDetecting = false;
       _cameraConfirming = true;
       _showSuccess = false;
@@ -62,8 +65,19 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
       final firestore = context.read<FirestoreService>();
 
-      // Keep points and bottle count in sync: +1 point and +1 bottle.
-      await firestore.incrementUserPointsAndBottles(userId);
+      final barcode = _lastBarcode;
+      if (barcode == null || barcode.trim().isEmpty) {
+        throw StateError('Bottle barcode missing. Please scan the bottle again.');
+      }
+
+      await firestore.saveRecycledBottle(
+        RecycledBottleModel(
+          barcode: barcode,
+          userId: userId,
+          binId: binId,
+          timestamp: DateTime.now(),
+        ),
+      );
 
       // Log the bin scan
       await firestore.logBinScan(userId, binId);

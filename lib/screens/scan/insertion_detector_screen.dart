@@ -246,11 +246,22 @@ class _FlapEngine {
   double     currentReferenceBrightness = 0;
   bool       lastRejectedByShake  = false;
   DateTime?  _flapOpenTime;
+  bool       _countedThisOpen     = false;
 
-  static const int _minFlapOpenMs = 150;
+  static const int _minFlapOpenMs = 0;
   static const int _maxFlapOpenMs = 3000;
   static const int _cooldownMs    = 2500;
+
+  // Noise guard: require sustained open/close and meaningful darkness drop.
+  static const int _minOpenFrames = 1;
+  static const int _minCloseFrames = 1;
+  static const double _minOpenDropFraction = 0.20;
+  static const double _minOpenDropAbsolute = 10.0;
+
   DateTime? _lastCount;
+  int _openFrames = 0;
+  int _closeFrames = 0;
+  double _minBrightnessDuringOpen = double.infinity;
 
   bool get inCooldown {
     if (_lastCount == null) return false;
@@ -284,24 +295,88 @@ class _FlapEngine {
     switch (state) {
       case _FlapState.idle:
         if (flapOpen) {
-          state = _FlapState.open;
-          _flapOpenTime = DateTime.now();
+          _openFrames += 1;
+          _closeFrames = 0;
+          _minBrightnessDuringOpen =
+              currentBrightness < _minBrightnessDuringOpen
+                  ? currentBrightness
+                  : _minBrightnessDuringOpen;
+
+          if (_openFrames >= _minOpenFrames) {
+            state = _FlapState.open;
+            _flapOpenTime = DateTime.now();
+            _countedThisOpen = false;
+          }
+        } else {
+          _openFrames = 0;
+          _closeFrames = 0;
+          _minBrightnessDuringOpen = double.infinity;
         }
         break;
       case _FlapState.open:
-        if (!flapOpen) {
+        if (flapOpen) {
+          _openFrames += 1;
+          _closeFrames = 0;
+          _minBrightnessDuringOpen =
+              currentBrightness < _minBrightnessDuringOpen
+                  ? currentBrightness
+                  : _minBrightnessDuringOpen;
+
           final int openMs = _flapOpenTime != null
               ? DateTime.now().difference(_flapOpenTime!).inMilliseconds
               : 0;
-          if (openMs < _minFlapOpenMs || openMs > _maxFlapOpenMs) {
+
+          final double drop = baselineBrightness - _minBrightnessDuringOpen;
+          final double dropFraction =
+              baselineBrightness > 0 ? drop / baselineBrightness : 0;
+          final bool meaningfulOcclusion =
+              dropFraction >= _minOpenDropFraction &&
+              drop >= _minOpenDropAbsolute;
+
+          if (!_countedThisOpen &&
+              openMs >= _minFlapOpenMs &&
+              meaningfulOcclusion) {
+            _countedThisOpen = true;
             state = _FlapState.idle;
             _flapOpenTime = null;
-            return false;
+            _openFrames = 0;
+            _closeFrames = 0;
+            _minBrightnessDuringOpen = double.infinity;
+            _lastCount = DateTime.now();
+            return true;
           }
-          state = _FlapState.idle;
-          _flapOpenTime = null;
-          _lastCount = DateTime.now();
-          return true;
+        } else {
+          final int openMs = _flapOpenTime != null
+              ? DateTime.now().difference(_flapOpenTime!).inMilliseconds
+              : 0;
+
+          final double drop = baselineBrightness - _minBrightnessDuringOpen;
+          final double dropFraction =
+              baselineBrightness > 0 ? drop / baselineBrightness : 0;
+          final bool meaningfulOcclusion =
+              dropFraction >= _minOpenDropFraction &&
+              drop >= _minOpenDropAbsolute;
+
+          if (openMs < _maxFlapOpenMs && meaningfulOcclusion) {
+            state = _FlapState.idle;
+            _flapOpenTime = null;
+            _openFrames = 0;
+            _closeFrames = 0;
+            _minBrightnessDuringOpen = double.infinity;
+            _countedThisOpen = false;
+            _lastCount = DateTime.now();
+            return true;
+          }
+
+          _closeFrames += 1;
+          if (_closeFrames >= _minCloseFrames) {
+            state = _FlapState.idle;
+            _flapOpenTime = null;
+            _openFrames = 0;
+            _closeFrames = 0;
+            _minBrightnessDuringOpen = double.infinity;
+            _countedThisOpen = false;
+          }
         }
         if (_flapOpenTime != null &&
             DateTime.now()
@@ -310,6 +385,10 @@ class _FlapEngine {
                 _maxFlapOpenMs) {
           state = _FlapState.idle;
           _flapOpenTime = null;
+          _openFrames = 0;
+          _closeFrames = 0;
+          _minBrightnessDuringOpen = double.infinity;
+          _countedThisOpen = false;
         }
         break;
     }
@@ -355,6 +434,10 @@ class _FlapEngine {
     state = _FlapState.idle;
     _flapOpenTime = null;
     lastRejectedByShake = false;
+    _openFrames = 0;
+    _closeFrames = 0;
+    _minBrightnessDuringOpen = double.infinity;
+    _countedThisOpen = false;
   }
 }
 
@@ -388,6 +471,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _processingFrame = false;
   int  _frameCount     = 0;
   bool _detected       = false;
+  bool _hasSeenLock = false;
 
   // ── Detection engine ────────────────────────────────────────────────────────
   final _FlapEngine  _engine  = _FlapEngine();
@@ -481,6 +565,15 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     try {
       await _cam!.initialize();
+
+      // Keep preview at neutral optical zoom (1.0) when supported.
+      try {
+        final minZoom = await _cam!.getMinZoomLevel();
+        final maxZoom = await _cam!.getMaxZoomLevel();
+        final neutralZoom = (minZoom <= 1.0 && maxZoom >= 1.0) ? 1.0 : minZoom;
+        await _cam!.setZoomLevel(neutralZoom);
+      } catch (_) {}
+
       if (!mounted) return;
       setState(() {
         _cameraReady         = true;
@@ -512,40 +605,99 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       // as soon as the camera opens.
       _tracker.update(image);
 
+      if (_tracker.hasLock) {
+        _hasSeenLock = true;
+      }
+
+      // Keep detection windows centered on the tracked slot point.
+      _syncDetectionZonesToTrackedSlot();
+
       // ── Calibration mode ────────────────────────────────────────────────────
       if (_calibrating) {
+        if (!_tracker.hasLock) {
+          if (mounted) {
+            setState(() {});
+          }
+          return;
+        }
+
         _engine.addCalibrationSample(image);
         _calibrationFrames++;
         if (_calibrationFrames >= _calibrationFrameCount) {
           _engine.finalizeCalibration();
-          if (mounted) setState(() {
-            _calibrating       = false;
-            _calibrationFrames = 0;
-          });
+          if (mounted) {
+            setState(() {
+              _calibrating       = false;
+              _calibrationFrames = 0;
+            });
+          }
         }
         // Trigger UI refresh so arc starts updating during calibration too
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {});
+        }
         return;
       }
 
       // ── Detection mode ───────────────────────────────────────────────────────
-      final bool counted = _engine.processFrame(image);
-      if (mounted) setState(() {});
+      if (!_engine.isCalibrated || !_hasSeenLock) {
+        if (mounted) {
+          setState(() {});
+        }
+        return;
+      }
 
-      if (counted) {
+      if (!_tracker.hasLock) {
         _detected = true;
         _timeoutTimer?.cancel();
         _showFlash = true;
         _flashCtrl.forward(from: 0).then((_) {
-          if (mounted) setState(() => _showFlash = false);
+          if (mounted) {
+            setState(() => _showFlash = false);
+          }
         });
         Future.delayed(const Duration(milliseconds: 350), () {
           if (mounted) widget.onDetected();
         });
+        return;
+      }
+
+      if (mounted) {
+        setState(() {});
       }
     } finally {
       _processingFrame = false;
     }
+  }
+
+  void _syncDetectionZonesToTrackedSlot() {
+    final double cx = _tracker.slotNormX.clamp(0.08, 0.92);
+    final double cy = _tracker.slotNormY.clamp(0.08, 0.62);
+
+    const double zoneW = 0.14;
+    const double zoneH = 0.16;
+    const double halfW = zoneW / 2;
+    const double halfH = zoneH / 2;
+
+    _engine.zone = Rect.fromLTRB(
+      (cx - halfW).clamp(0.02, 0.84),
+      (cy - halfH).clamp(0.02, 0.70),
+      (cx + halfW).clamp(0.16, 0.98),
+      (cy + halfH).clamp(0.06, 0.78),
+    );
+
+    // Use a nearby patch as a shake/reference brightness anchor.
+    const double refOffsetX = 0.18;
+    const double refW = 0.12;
+    const double refH = 0.16;
+    final double refCx = (cx + refOffsetX).clamp(0.10, 0.92);
+
+    _engine.referenceZone = Rect.fromLTRB(
+      (refCx - refW / 2).clamp(0.02, 0.86),
+      (cy - refH / 2).clamp(0.02, 0.70),
+      (refCx + refW / 2).clamp(0.14, 0.98),
+      (cy + refH / 2).clamp(0.06, 0.80),
+    );
   }
 
   String get _statusText {
@@ -589,37 +741,17 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     return LayoutBuilder(builder: (ctx, box) {
       final Size size = Size(box.maxWidth, box.maxHeight);
-
-      // ── ACCURATE coordinate mapping: camera → screen ────────────────────────
-      // The preview uses BoxFit.cover inside a SizedBox(width, width/aspectRatio).
-      // FittedBox.cover scales that to fill the screen, cropping the sides.
-      // Scale factor s = screenHeight × aspectRatio / screenWidth.
-      // A camera normalised coord (0–1) maps to screen as:
-      //   screenX = screenW × (s × (normX − 0.5) + 0.5)   ← horizontal: scaled
-      //   screenY = normY × screenH                        ← vertical: unchanged
-      final double camAspect = _cam!.value.aspectRatio;          // width/height
-      final double s = (size.height * camAspect / size.width)    // cover scale
-          .clamp(1.0, 6.0);
-
-      final double targetX = (size.width  * (s * (_tracker.slotNormX - 0.5) + 0.5))
-          .clamp(size.width * 0.05, size.width  * 0.95);
-      final double targetY = (_tracker.slotNormY * size.height)
-          .clamp(size.height * 0.05, size.height * 0.68);
+      final double targetX =
+        (_tracker.slotNormX.clamp(0.0, 1.0) * size.width)
+          .clamp(size.width * 0.05, size.width * 0.95);
+      final double targetY =
+        (_tracker.slotNormY.clamp(0.0, 1.0) * size.height)
+          .clamp(size.height * 0.05, size.height * 0.95);
 
       return Stack(fit: StackFit.expand, children: [
-        // ── Camera preview ────────────────────────────────────────────────
-        ClipRect(
-          child: OverflowBox(
-            alignment: Alignment.center,
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width:  size.width,
-                height: size.width / _cam!.value.aspectRatio,
-                child:  CameraPreview(_cam!),
-              ),
-            ),
-          ),
+        // ── Camera preview (same visual style as QR scan page) ───────────
+        Positioned.fill(
+          child: CameraPreview(_cam!),
         ),
 
         // ── Very subtle overlay so dots pop against camera feed ───────────
@@ -793,6 +925,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       ]);
     });
   }
+
 }
 
 
@@ -909,7 +1042,7 @@ class _GameArrowPainter extends CustomPainter {
       ..lineTo( bodyBotHW + depth,  baseBotY + depth)
       ..lineTo(-bodyBotHW + depth,  baseBotY + depth)
       ..close();
-    canvas.drawPath(bottomFace, Paint()..color = _edge.withOpacity(0.85 * o));
+    canvas.drawPath(bottomFace, Paint()..color = _edge.withValues(alpha: 0.85 * o));
 
     // Left side face of body (dark strip on the left)
     final Path leftFace = Path()
@@ -918,7 +1051,7 @@ class _GameArrowPainter extends CustomPainter {
       ..lineTo(-bodyBotHW - depth,  bodyBotY  + depth)
       ..lineTo(-bodyBotHW,          bodyBotY)
       ..close();
-    canvas.drawPath(leftFace, Paint()..color = _dark.withOpacity(0.80 * o));
+    canvas.drawPath(leftFace, Paint()..color = _dark.withValues(alpha: 0.80 * o));
 
     // Left side face of base
     final Path leftBase = Path()
@@ -927,7 +1060,7 @@ class _GameArrowPainter extends CustomPainter {
       ..lineTo(-bodyBotHW - depth,  baseBotY  + depth)
       ..lineTo(-bodyBotHW,          baseBotY)
       ..close();
-    canvas.drawPath(leftBase, Paint()..color = _edge.withOpacity(0.80 * o));
+    canvas.drawPath(leftBase, Paint()..color = _edge.withValues(alpha: 0.80 * o));
 
     // ── FRONT FACE — main red arrow shape ────────────────────────────────────
     final Path front = Path()
@@ -946,7 +1079,7 @@ class _GameArrowPainter extends CustomPainter {
       ..lineTo(-headHW,    shoulderY)     // left shoulder
       ..close();
 
-    canvas.drawPath(front, Paint()..color = _main.withOpacity(0.96 * o));
+    canvas.drawPath(front, Paint()..color = _main.withValues(alpha: 0.96 * o));
 
     // ── RIGHT HIGHLIGHT on head (light from right) ────────────────────────────
     final Path rightHl = Path()
@@ -956,7 +1089,7 @@ class _GameArrowPainter extends CustomPainter {
       ..close();
     canvas.drawPath(
       rightHl,
-      Paint()..color = _highlight.withOpacity(0.35 * o),
+      Paint()..color = _highlight.withValues(alpha: 0.35 * o),
     );
 
     // ── INNER BODY SHADING — slight darker center of body for depth ───────────
@@ -969,14 +1102,14 @@ class _GameArrowPainter extends CustomPainter {
       ..close();
     canvas.drawPath(
       centerShade,
-      Paint()..color = _dark.withOpacity(0.12 * o),
+      Paint()..color = _dark.withValues(alpha: 0.12 * o),
     );
 
     // ── OUTLINE stroke for crispness ─────────────────────────────────────────
     canvas.drawPath(
       front,
       Paint()
-        ..color = Colors.black.withOpacity(hasLock ? 0.82 : 0.68)
+        ..color = Colors.black.withValues(alpha: hasLock ? 0.82 : 0.68)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.2
         ..strokeJoin = StrokeJoin.round,
@@ -998,19 +1131,19 @@ class _GameArrowPainter extends CustomPainter {
     // Ring
     canvas.drawCircle(target, r,
       Paint()
-        ..color = rc.withOpacity((0.78 + pulse * 0.22) * o)
+        ..color = rc.withValues(alpha: (0.78 + pulse * 0.22) * o)
         ..style = PaintingStyle.stroke
         ..strokeWidth = hasLock ? 2.8 : 1.5);
 
     // Center dot
     canvas.drawCircle(target, hasLock ? 4.5 : 2.5,
-      Paint()..color = rc.withOpacity(0.95 * o));
+      Paint()..color = rc.withValues(alpha: 0.95 * o));
 
     // Crosshair
     final double arm = hasLock ? 13.0 : 8.0;
     const double gap = 6.0;
     final Paint lp = Paint()
-      ..color = rc.withOpacity(0.80 * o)
+      ..color = rc.withValues(alpha: 0.80 * o)
       ..strokeWidth = hasLock ? 2.0 : 1.4
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(Offset(target.dx, target.dy - gap),
@@ -1029,7 +1162,7 @@ class _GameArrowPainter extends CustomPainter {
         text: TextSpan(
           text: label,
           style: TextStyle(
-            color: rc.withOpacity(0.85 * o),
+            color: rc.withValues(alpha: 0.85 * o),
             fontSize: isDetecting ? 12 : 10,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.5,

@@ -222,8 +222,12 @@ class FirestoreService {
 
   /// Save recycled bottle and increment user stats.
   Future<void> saveRecycledBottle(RecycledBottleModel bottle) async {
-    await _client.from(_recycledBottlesCollection).insert(bottle.toMap());
-    await incrementUserPointsAndBottles(bottle.userId);
+    await _client.rpc('record_bottle', params: {
+      'p_user_id': bottle.userId,
+      'p_bin_id': bottle.binId,
+      'p_barcode': bottle.barcode,
+      'p_points': 1,
+    });
   }
 
   // --- Bins ---
