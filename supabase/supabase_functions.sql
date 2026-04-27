@@ -10,6 +10,29 @@ create or replace function record_bottle(
   p_points int
 ) returns void language plpgsql security definer as $$
 begin
+  -- Ensure a matching users row exists (required by recycled_bottles.userId FK).
+  -- Pull defaults from auth.users when available.
+  insert into users (
+    user_id,
+    name,
+    email,
+    mobile,
+    "totalPoints",
+    "totalBottles",
+    "isAdmin"
+  )
+  select
+    p_user_id,
+    coalesce(nullif(trim(au.raw_user_meta_data ->> 'name'), ''), 'User'),
+    coalesce(au.email, ''),
+    '',
+    0,
+    0,
+    false
+  from auth.users au
+  where au.id::text = p_user_id
+  on conflict (user_id) do nothing;
+
   insert into recycled_bottles (barcode, "userId", "binId")
   values (p_barcode, p_user_id, p_bin_id)
   on conflict (barcode) do nothing;
