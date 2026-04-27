@@ -9,9 +9,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
-  # Supabase
-  supabase_flutter: ^2.10.3
+
+  # Firebase
+  firebase_core: ^3.15.2
+  firebase_auth: ^5.6.3
+  cloud_firestore: ^5.6.12
+  firebase_storage: ^12.4.10
   
   # Scanning
   mobile_scanner: ^4.0.1

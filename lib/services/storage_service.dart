@@ -1,6 +1,7 @@
 import 'dart:io';
+
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 class StorageServiceException implements Exception {
   const StorageServiceException({required this.code, this.message});
@@ -9,69 +10,47 @@ class StorageServiceException implements Exception {
   final String? message;
 }
 
-/// Service for uploading files to Supabase Storage.
+/// Service for uploading files to Firebase Storage.
 class StorageService {
-  final SupabaseClient _client = Supabase.instance.client;
-  static const String _bucket = 'profile-images';
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  /// Upload profile image and return the download URL
   Future<String> uploadProfileImage(String userId, File imageFile) async {
     try {
-      final currentUser = _client.auth.currentUser;
-      if (currentUser == null) {
+      if (!await imageFile.exists()) {
         throw const StorageServiceException(
-          code: 'unauthenticated',
-          message: 'User must be signed in to upload profile image.',
+          code: 'not-found',
+          message: 'Image file not found.',
         );
       }
 
-      if (currentUser.id != userId) {
-        throw const StorageServiceException(
-          code: 'permission-denied',
-          message: 'Cannot upload image for another user.',
-        );
-      }
-
-      // Keep profile image versions to avoid stale cache and overwrite issues.
       final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final objectPath = 'profile_images/$userId/$fileName';
-
-      // Upload the file
-      final bytes = await imageFile.readAsBytes();
-      await _client.storage.from(_bucket).uploadBinary(
-            objectPath,
-            bytes,
-            fileOptions: const FileOptions(
-              contentType: 'image/jpeg',
-              upsert: true,
-            ),
-          );
-
-      // Get the download URL
-      return _client.storage.from(_bucket).getPublicUrl(objectPath);
-    } on StorageException catch (e) {
-      debugPrint('Error uploading profile image: ${e.statusCode} ${e.message}');
-      throw StorageServiceException(
-        code: e.statusCode ?? 'storage_error',
-        message: e.message,
-      );
-    } on StorageServiceException catch (e) {
+      final ref = _storage.ref().child(objectPath);
+      await ref.putFile(imageFile);
+      return await ref.getDownloadURL();
+    } on FirebaseException catch (e) {
       debugPrint('Error uploading profile image: ${e.code} ${e.message}');
+      throw StorageServiceException(code: e.code, message: e.message);
+    } on StorageServiceException {
       rethrow;
     } catch (e) {
       debugPrint('Unexpected error uploading profile image: $e');
-      throw Exception('Failed to upload profile image.');
+      throw const StorageServiceException(
+        code: 'upload-failed',
+        message: 'Failed to upload profile image.',
+      );
     }
   }
 
-  /// Delete profile image from storage
   Future<void> deleteProfileImage(String userId) async {
     try {
-      await _client.storage.from(_bucket).remove([
-        'profile_images/$userId.jpg',
-      ]);
+      final root = _storage.ref().child('profile_images/$userId');
+      final listResult = await root.listAll();
+      for (final item in listResult.items) {
+        await item.delete();
+      }
     } catch (e) {
-      print('Error deleting profile image: $e');
+      debugPrint('Error deleting profile images: $e');
     }
   }
 }

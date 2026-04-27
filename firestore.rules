@@ -2,64 +2,84 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper function to check if user is admin
+    // Helper: requester is signed in.
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: requester is admin according to users/{uid}.isAdmin.
     function isAdmin() {
-      return request.auth != null && 
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
-    // Users: authenticated users can read profiles (needed for leaderboard);
-    // users can create/update only their own profile and cannot self-elevate admin.
+    // Users: authenticated users can read; users can write own document.
+    // Non-admin users cannot self-elevate to admin.
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && 
-                       request.auth.uid == userId &&
-                       // Prevent users from changing their own admin status
-                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) ||
-                        isAdmin());
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated()
+        && request.auth.uid == userId
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin'])
+          || isAdmin()
+        );
+      allow delete: if false;
     }
 
-    // Recycled bottles: anyone authenticated can create; no duplicate barcode
+    // Recycled bottles: authenticated users can read/create for themselves.
     match /recycled_bottles/{docId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.keys().hasAll(['barcode', 'userId', 'binId', 'timestamp']);
+        && request.resource.data.keys().hasAll(['barcode', 'userId', 'binId', 'timestamp'])
+        && request.resource.data.barcode is string
+        && request.resource.data.userId is string
+        && request.resource.data.binId is string;
       allow update, delete: if false;
     }
 
-    // Bins: read by authenticated users, write by admins only
+    // Bins: read by authenticated users, write by admins only.
     match /bins/{binId} {
-      allow read: if request.auth != null;
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 
-    // Reward config: read by all authenticated, write by admins only
+    // Reward config: read by authenticated users, write by admins.
     match /reward_config/{configId} {
-      allow read: if request.auth != null;
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 
-    // Bin scans subcollection (for analytics)
-    match /users/{userId}/bin_scans/{scanId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null && request.auth.uid == userId;
+    // Top-level bin scans analytics.
+    match /bin_scans/{scanId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasAll(['userId', 'binId', 'timestamp']);
+      allow update, delete: if false;
     }
 
-    // User notifications subcollection (reward history)
-    match /users/{userId}/notifications/{notificationId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null
-        && request.auth.uid == userId
+    // Top-level user notifications.
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'userId', 'title', 'subtitle', 'time', 'icon', 'color', 'isRead', 'createdAt'
+        ]);
+      allow update: if isAuthenticated()
+        && resource.data.userId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
       allow delete: if false;
     }
 
+    // Admin notifications feed. App currently allows any authenticated user to
+    // create reward-win notices; reads/mark-read are admin-only.
     match /admin_notifications/{notificationId} {
       allow read: if isAdmin();
-      allow create: if request.auth != null;
+      allow create: if isAuthenticated();
       allow update: if isAdmin()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
       allow delete: if false;

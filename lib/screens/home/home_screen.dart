@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -55,6 +57,23 @@ class _HomeScreenState extends State<HomeScreen> {
               final name = user?.name ?? 'User';
               final points = user?.totalPoints ?? 0;
               final bottles = user?.totalBottles ?? 0;
+              final profileImageUrl = user?.profileImageUrl;
+
+              ImageProvider? profileImageProvider;
+              if (profileImageUrl != null && profileImageUrl.isNotEmpty) {
+                if (profileImageUrl.startsWith('http://') ||
+                    profileImageUrl.startsWith('https://')) {
+                  profileImageProvider = NetworkImage(profileImageUrl);
+                } else {
+                  final filePath = profileImageUrl.startsWith('file://')
+                      ? Uri.parse(profileImageUrl).toFilePath()
+                      : profileImageUrl;
+                  final localFile = File(filePath);
+                  if (localFile.existsSync()) {
+                    profileImageProvider = FileImage(localFile);
+                  }
+                }
+              }
 
               return SingleChildScrollView(
                 child: Column(
@@ -179,10 +198,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           CircleAvatar(
                             radius: 32,
                             backgroundColor: Colors.white.withOpacity(0.3),
-                            backgroundImage: user?.profileImageUrl != null
-                                ? NetworkImage(user!.profileImageUrl!)
-                                : null,
-                            child: user?.profileImageUrl == null
+                            backgroundImage: profileImageProvider,
+                            child: profileImageProvider == null
                                 ? Text(
                                     name.isNotEmpty ? name[0].toUpperCase() : 'U',
                                     style: const TextStyle(

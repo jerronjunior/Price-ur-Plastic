@@ -187,7 +187,7 @@ class AuthProvider with ChangeNotifier {
     } on AppAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Registration failed.');
     } catch (_) {
-      return 'Registration failed. Check Supabase Auth and database setup.';
+      return 'Registration failed. Please try again.';
     }
   }
 
@@ -215,7 +215,7 @@ class AuthProvider with ChangeNotifier {
     } on AppAuthException catch (e) {
       return _friendlyAuthMessage(e, fallback: 'Login failed.');
     } catch (_) {
-      return 'Login failed. Check Supabase Auth and database setup.';
+      return 'Login failed. Please try again.';
     }
   }
 

@@ -99,7 +99,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       setState(() => _uploadingImage = true);
 
-      // Upload to Supabase Storage
+      // Upload profile image to local app storage
       final userId = context.read<AuthProvider>().userId;
       if (userId == null) {
         if (mounted) {
@@ -115,7 +115,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         File(pickedFile.path),
       );
 
-      // Save image URL in Firestore user document.
+      // Save image path in user profile.
       await context.read<AuthProvider>().updateProfileImage(imageUrl);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -327,6 +327,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
               final displayMobile = user?.mobile ?? '';
               final displayProfileImage = user?.profileImageUrl;
               final displayIsAdmin = user?.isAdmin ?? false;
+              ImageProvider? profileImageProvider;
+              if (displayProfileImage != null &&
+                  displayProfileImage.isNotEmpty) {
+                if (displayProfileImage.startsWith('http://') ||
+                    displayProfileImage.startsWith('https://')) {
+                  profileImageProvider = NetworkImage(displayProfileImage);
+                } else {
+                  final filePath = displayProfileImage.startsWith('file://')
+                      ? Uri.parse(displayProfileImage).toFilePath()
+                      : displayProfileImage;
+                  final localFile = File(filePath);
+                  if (localFile.existsSync()) {
+                    profileImageProvider = FileImage(localFile);
+                  }
+                }
+              }
 
               final nameParts = displayName.split(' ');
               final firstName = nameParts.isNotEmpty ? nameParts[0] : '';
@@ -442,14 +458,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     radius: 50,
                                     backgroundColor:
                                         Colors.white.withOpacity(0.3),
-                                    backgroundImage: displayProfileImage != null
-                                        ? NetworkImage(displayProfileImage)
-                                        : null,
+                                    backgroundImage: profileImageProvider,
                                     child: _uploadingImage
                                         ? const CircularProgressIndicator(
                                             color: Colors.white,
                                           )
-                                        : displayProfileImage == null
+                                      : profileImageProvider == null
                                             ? Text(
                                                 userInitial,
                                                 style: const TextStyle(
