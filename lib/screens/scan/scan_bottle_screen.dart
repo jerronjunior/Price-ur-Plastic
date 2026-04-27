@@ -166,7 +166,9 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
         _processing ||
         _navigating ||
         _cameraController == null ||
-        !_cameraController!.value.isInitialized) return;
+        !_cameraController!.value.isInitialized) {
+      return;
+    }
 
     _isScanningFrame = true;
     String? imagePath;
@@ -277,7 +279,9 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
     // 150ms is enough for the confirmation animation to register visually.
     await Future.delayed(const Duration(milliseconds: 150));
     if (!mounted) return;
-    widget.onScanned('bottle-confirmed');
+    // Use a unique synthetic barcode for AI-confirmed bottles so each
+    // insertion is recorded once (DB enforces unique barcode).
+    widget.onScanned('bottle-${DateTime.now().millisecondsSinceEpoch}');
   }
 
   Future<void> _onDesktopDetect(BarcodeCapture capture) async {
