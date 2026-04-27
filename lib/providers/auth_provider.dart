@@ -16,6 +16,8 @@ class AuthProvider with ChangeNotifier {
   final AuthService _auth;
   final FirestoreService _firestore;
   StreamSubscription<AppAuthUser?>? _authStateSub;
+  StreamSubscription<UserModel?>? _userProfileSub;
+  String? _boundUserId;
 
   AppAuthUser? get firebaseUser => _auth.currentUser;
   String? get userId => _auth.currentUserId;
@@ -36,6 +38,7 @@ class AuthProvider with ChangeNotifier {
     _authStateSub?.cancel();
     _authStateSub = _auth.authStateChanges.listen((AppAuthUser? user) async {
       if (user != null) {
+        _bindUserProfileStream(user.uid);
         try {
           await _loadUser(user.uid, firebaseUser: user);
         } catch (_) {
@@ -43,6 +46,7 @@ class AuthProvider with ChangeNotifier {
           notifyListeners();
         }
       } else {
+        _unbindUserProfileStream();
         _user = null;
         notifyListeners();
       }
@@ -52,7 +56,44 @@ class AuthProvider with ChangeNotifier {
   @override
   void dispose() {
     _authStateSub?.cancel();
+    _userProfileSub?.cancel();
     super.dispose();
+  }
+
+  void _bindUserProfileStream(String uid) {
+    if (_boundUserId == uid && _userProfileSub != null) return;
+
+    _userProfileSub?.cancel();
+    _boundUserId = uid;
+    _userProfileSub = _firestore.userStream(uid).listen(
+      (latestUser) {
+        if (latestUser == null) return;
+        if (_isSameUser(_user, latestUser)) return;
+        _user = latestUser;
+        notifyListeners();
+      },
+      onError: (_) {
+        // Keep existing local state on transient stream errors.
+      },
+    );
+  }
+
+  void _unbindUserProfileStream() {
+    _userProfileSub?.cancel();
+    _userProfileSub = null;
+    _boundUserId = null;
+  }
+
+  bool _isSameUser(UserModel? current, UserModel next) {
+    if (current == null) return false;
+    return current.userId == next.userId &&
+        current.name == next.name &&
+        current.email == next.email &&
+        current.mobile == next.mobile &&
+        current.totalPoints == next.totalPoints &&
+        current.totalBottles == next.totalBottles &&
+        current.profileImageUrl == next.profileImageUrl &&
+        current.isAdmin == next.isAdmin;
   }
 
   UserModel _fallbackUserFromFirebase(AppAuthUser user) {

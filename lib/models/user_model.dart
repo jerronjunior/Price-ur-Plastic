@@ -50,12 +50,22 @@ class UserModel {
       name: _parseString(map['name']),
       email: _parseString(map['email']),
       mobile: _parseString(map['mobile']),
-        totalPoints: _parseInt(map['totalPoints']),
-        totalBottles: _parseInt(map['totalBottles']),
-      profileImageUrl: map['profileImageUrl'] == null
+      totalPoints:
+          _parseInt(map['totalPoints'] ?? map['total_points'] ?? map['points']),
+      totalBottles: _parseInt(
+        map['totalBottles'] ?? map['total_bottles'] ?? map['bottles'],
+      ),
+      profileImageUrl: (map['profileImageUrl'] ??
+                  map['profile_image_url'] ??
+                  map['avatar_url']) ==
+              null
           ? null
-          : _parseString(map['profileImageUrl']),
-      isAdmin: _parseBool(map['isAdmin']),
+          : _parseString(
+              map['profileImageUrl'] ??
+                  map['profile_image_url'] ??
+                  map['avatar_url'],
+            ),
+      isAdmin: _parseBool(map['isAdmin'] ?? map['is_admin']),
     );
   }
 

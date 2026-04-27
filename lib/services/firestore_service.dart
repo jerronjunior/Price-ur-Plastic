@@ -222,12 +222,52 @@ class FirestoreService {
 
   /// Save recycled bottle and increment user stats.
   Future<void> saveRecycledBottle(RecycledBottleModel bottle) async {
+    final before = await getUser(bottle.userId);
     await _client.rpc('record_bottle', params: {
       'p_user_id': bottle.userId,
       'p_bin_id': bottle.binId,
       'p_barcode': bottle.barcode,
       'p_points': 1,
     });
+
+    final after = await getUser(bottle.userId);
+    final expectedPoints = (before?.totalPoints ?? 0) + 1;
+    final expectedBottles = (before?.totalBottles ?? 0) + 1;
+    final pointsAfter = after?.totalPoints ?? 0;
+    final bottlesAfter = after?.totalBottles ?? 0;
+
+    // Some deployments have a mismatched SQL function/table schema where
+    // recycled_bottles insert succeeds but user totals are not incremented.
+    if (pointsAfter < expectedPoints || bottlesAfter < expectedBottles) {
+      await _fallbackIncrementUserTotals(
+        userId: bottle.userId,
+        nextPoints: expectedPoints,
+        nextBottles: expectedBottles,
+      );
+    }
+  }
+
+  Future<void> _fallbackIncrementUserTotals({
+    required String userId,
+    required int nextPoints,
+    required int nextBottles,
+  }) async {
+    try {
+      await _client.from(_usersCollection).upsert({
+        'user_id': userId,
+        'totalPoints': nextPoints,
+        'totalBottles': nextBottles,
+      }, onConflict: 'user_id');
+      return;
+    } catch (_) {
+      // Fall through to snake_case compatibility for legacy schemas.
+    }
+
+    await _client.from(_usersCollection).upsert({
+      'user_id': userId,
+      'total_points': nextPoints,
+      'total_bottles': nextBottles,
+    }, onConflict: 'user_id');
   }
 
   // --- Bins ---
