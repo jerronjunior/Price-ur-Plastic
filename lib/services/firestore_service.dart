@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/bin_model.dart';
+import '../models/bin_location_model.dart';
 import '../models/recycled_bottle_model.dart';
 import '../models/reward_config_model.dart';
 import '../models/user_model.dart';
@@ -96,6 +97,33 @@ class FirestoreService {
       },
       SetOptions(merge: true),
     );
+  }
+
+  /// Bin Locations CRUD (for map features)
+  Future<List<BinLocationModel>> getBinLocations() async {
+    final snap = await _db.collection('bin_locations').get();
+    return snap.docs
+        .map((d) => BinLocationModel.fromMap({'id': d.id, ...d.data()}))
+        .toList(growable: false);
+  }
+
+  Stream<List<BinLocationModel>> binLocationsStream() {
+    return _db.collection('bin_locations').snapshots().map((snap) =>
+        snap.docs.map((d) => BinLocationModel.fromMap({'id': d.id, ...d.data()})).toList());
+  }
+
+  Future<void> addBinLocation(BinLocationModel bin) async {
+    final id = bin.id.isNotEmpty ? bin.id : _db.collection('bin_locations').doc().id;
+    await _db.collection('bin_locations').doc(id).set(bin.toMap());
+  }
+
+  Future<void> updateBinLocation(BinLocationModel bin) async {
+    if (bin.id.isEmpty) throw Exception('Bin id required');
+    await _db.collection('bin_locations').doc(bin.id).set(bin.toMap(), SetOptions(merge: true));
+  }
+
+  Future<void> deleteBinLocation(String id) async {
+    await _db.collection('bin_locations').doc(id).delete();
   }
 
   Future<UserModel?> getUser(String userId) async {

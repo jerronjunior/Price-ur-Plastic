@@ -11,6 +11,7 @@ import 'providers/auth_provider.dart';
 import 'providers/notification_provider.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +29,25 @@ void main() async {
           'Firebase is configured for Android in this project.\n'
           'Run the app on an Android device/emulator using "flutter run -d android".';
     } else {
-      await Firebase.initializeApp();
+      // Check if Firebase is already initialized by native side to prevent duplicate-app errors
+      try {
+        // Wait a moment for native initialization to complete if it's happening
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        if (Firebase.apps.isEmpty) {
+          await Firebase.initializeApp(
+            options: DefaultFirebaseOptions.currentPlatform,
+          );
+        }
+      } on FirebaseException catch (e) {
+        // If Firebase is already initialized by native side, that's OK - use the existing instance
+        if (e.code == 'duplicate-app') {
+          // This is expected - native Android initializes Firebase automatically
+          // The app is already ready to use
+        } else {
+          rethrow;
+        }
+      }
     }
   } catch (e) {
     startupError =

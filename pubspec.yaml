@@ -34,6 +34,9 @@ dependencies:
   image: ^4.2.0
   path_provider: ^2.1.2
   camera_windows: ^0.2.6+2
+  google_maps_flutter: ^2.4.6
+  location: ^8.0.1
+  http: ^1.1.0
 
 dev_dependencies:
   flutter_test:

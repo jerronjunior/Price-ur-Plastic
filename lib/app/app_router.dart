@@ -13,6 +13,7 @@ import '../screens/admin/manage_bins_screen.dart';
 import '../screens/admin/manage_rewards_screen.dart';
 import '../screens/startup/splash_screen.dart';
 import '../screens/startup/welcome_screen.dart';
+import '../screens/map/map_screen.dart';
 
 /// App routing with auth redirect.
 GoRouter createAppRouter(AuthProvider authProvider) {
@@ -77,6 +78,10 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       GoRoute(
         path: '/rewards',
         builder: (_, __) => const RewardsScreen(),
+      ),
+      GoRoute(
+        path: '/map',
+        builder: (_, __) => const MapScreen(),
       ),
       GoRoute(
         path: '/admin',
