@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../services/firestore_service.dart';
-import '../../models/bin_location_model.dart';
+import '../../models/bin_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -254,8 +254,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               Expanded(
                                 child: GestureDetector(
                                   onTap: () => context.push('/map'),
-                                  child: StreamBuilder<List<BinLocationModel>>(
-                                    stream: FirestoreService().binLocationsStream(),
+                                  child: StreamBuilder<List<BinModel>>(
+                                    stream: FirestoreService().getAllBinsStream(),
                                     builder: (context, snap) {
                                       final count = snap.data?.length ?? 0;
                                       return _StatBox(

@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-import '../../models/bin_location_model.dart';
+import '../../models/bin_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/location_service.dart';
 
@@ -27,8 +27,8 @@ class _MapScreenState extends State<MapScreen> {
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
   LatLng? _userLatLng;
-  List<BinLocationModel> _bins = [];
-  BinLocationModel? _selectedBin;
+  List<BinModel> _bins = [];
+  BinModel? _selectedBin;
 
   @override
   void initState() {
@@ -38,16 +38,26 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _init() async {
     final locService = LocationService();
-    final ok = await locService.requestPermission();
-    if (!ok) return;
+    final fs = Provider.of<FirestoreService>(context, listen: false);
 
+    // Parallelize permission request and Firestore subscription
+    // Both can run simultaneously since they don't depend on each other
+    final results = await Future.wait([
+      locService.requestPermission(),
+      fs.getAllBinsStream().first,
+    ], eagerError: false);
+
+    final permissionOk = results[0] as bool;
+    if (!permissionOk) return;
+
+    // Now that permission is granted, get current location
     final loc = await locService.getCurrentLocation();
     if (loc != null) {
       _updateUserLocation(LatLng(loc.latitude!, loc.longitude!));
     }
 
-    final fs = Provider.of<FirestoreService>(context, listen: false);
-    fs.binLocationsStream().listen((bins) {
+    // Subscribe to bin updates for real-time changes
+    fs.getAllBinsStream().listen((bins) {
       setState(() {
         _bins = bins;
         _updateBinMarkers();
@@ -72,20 +82,20 @@ class _MapScreenState extends State<MapScreen> {
     _markers.removeWhere((m) => m.markerId.value.startsWith('bin_'));
     for (final b in _bins) {
       _markers.add(Marker(
-        markerId: MarkerId('bin_${b.id}'),
+        markerId: MarkerId('bin_${b.binId}'),
         position: LatLng(b.latitude, b.longitude),
-        infoWindow: InfoWindow(title: b.name),
+        infoWindow: InfoWindow(title: b.locationName),
         onTap: () => _onBinTapped(b),
       ));
     }
   }
 
-  void _onBinTapped(BinLocationModel bin) {
+  void _onBinTapped(BinModel bin) {
     setState(() => _selectedBin = bin);
     _showBinBottomSheet(bin);
   }
 
-  void _showBinBottomSheet(BinLocationModel bin) {
+  void _showBinBottomSheet(BinModel bin) {
     final dist = _userLatLng == null ? null : _distanceMeters(_userLatLng!, LatLng(bin.latitude, bin.longitude));
     showModalBottomSheet(
       context: context,
@@ -95,7 +105,7 @@ class _MapScreenState extends State<MapScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(bin.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(bin.locationName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             if (dist != null) Text('${(dist/1000).toStringAsFixed(2)} km away'),
             const SizedBox(height: 12),
@@ -136,7 +146,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _findNearest() async {
     if (_userLatLng == null || _bins.isEmpty) return;
-    BinLocationModel? nearest;
+    BinModel? nearest;
     double best = double.infinity;
     for (final b in _bins) {
       final d = _distanceMeters(_userLatLng!, LatLng(b.latitude, b.longitude));
@@ -152,7 +162,7 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  Future<void> _getDirectionsTo(BinLocationModel bin) async {
+  Future<void> _getDirectionsTo(BinModel bin) async {
     if (_userLatLng == null) return;
     if (kGoogleMapsApiKey == 'YOUR_GOOGLE_DIRECTIONS_API_KEY') {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Set Google Directions API key in code.')));

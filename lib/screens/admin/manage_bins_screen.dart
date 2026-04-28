@@ -1,10 +1,16 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:location/location.dart';
+import 'package:http/http.dart' as http;
 import '../../services/firestore_service.dart';
 import '../../models/bin_model.dart';
 import '../../core/theme.dart';
+
+const String _googleMapsApiKey = 'AIzaSyCBmI_4GT9sOei5WWA8j-7XGnAI5yievmY';
 
 /// Admin screen to manage recycling bins.
 class ManageBinsScreen extends StatefulWidget {
@@ -265,36 +271,57 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
   void _showAddBinDialog({String? prefilledQrValue}) {
     final binIdController = TextEditingController(text: prefilledQrValue ?? '');
     final locationController = TextEditingController();
+    LatLng? selectedLocation;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Add New Bin'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: binIdController,
-              decoration: const InputDecoration(
-                labelText: 'QR Code Value',
-                hintText: 'e.g., BIN001 or full QR text',
-                prefixIcon: Icon(Icons.qr_code),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: binIdController,
+                decoration: const InputDecoration(
+                  labelText: 'QR Code Value',
+                  hintText: 'e.g., BIN001 or full QR text',
+                  prefixIcon: Icon(Icons.qr_code),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: locationController,
-              decoration: const InputDecoration(
-                labelText: 'Location Name',
-                hintText: 'e.g., Main Campus Entrance',
-                prefixIcon: Icon(Icons.location_on),
+              const SizedBox(height: 16),
+              TextField(
+                controller: locationController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Location Name',
+                  hintText: 'Select from map',
+                  prefixIcon: Icon(Icons.location_on),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final picked = await _pickLocationFromMap();
+                    if (picked == null) return;
+                    final name = await _reverseGeocode(picked);
+                    if (!dialogContext.mounted) return;
+                    selectedLocation = picked;
+                    locationController.text = name;
+                    (dialogContext as Element).markNeedsBuild();
+                  },
+                  icon: const Icon(Icons.map),
+                  label: const Text('Select location from map'),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -302,20 +329,25 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               final binId = binIdController.text.trim();
               final location = locationController.text.trim();
 
-              if (binId.isEmpty || location.isEmpty) {
+              if (binId.isEmpty || location.isEmpty || selectedLocation == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please fill all fields')),
+                  const SnackBar(content: Text('Please enter QR and pick a location from the map')),
                 );
                 return;
               }
 
               try {
-                await _firestoreService.addBin(binId, location);
+                await _firestoreService.addBin(
+                  binId,
+                  location,
+                  latitude: selectedLocation!.latitude,
+                  longitude: selectedLocation!.longitude,
+                );
                 if (context.mounted) {
-                  Navigator.pop(context);
+                  Navigator.pop(dialogContext);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Bin and QR saved to Firebase successfully'),
+                      content: Text('Bin, QR, and location saved successfully'),
                     ),
                   );
                 }
@@ -336,35 +368,57 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
 
   void _showEditBinDialog(BinModel bin) {
     final locationController = TextEditingController(text: bin.locationName);
+    LatLng? selectedLocation;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Edit Bin'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              enabled: false,
-              decoration: InputDecoration(
-                labelText: 'Bin ID',
-                hintText: bin.binId,
-                prefixIcon: const Icon(Icons.qr_code),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                enabled: false,
+                decoration: InputDecoration(
+                  labelText: 'Bin ID',
+                  hintText: bin.binId,
+                  prefixIcon: const Icon(Icons.qr_code),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: locationController,
-              decoration: const InputDecoration(
-                labelText: 'Location Name',
-                prefixIcon: Icon(Icons.location_on),
+              const SizedBox(height: 16),
+              TextField(
+                controller: locationController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Location Name',
+                  hintText: 'Select from map',
+                  prefixIcon: Icon(Icons.location_on),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final picked = await _pickLocationFromMap();
+                    if (picked == null) return;
+                    final name = await _reverseGeocode(picked);
+                    if (!dialogContext.mounted) return;
+                    selectedLocation = picked;
+                    locationController.text = name;
+                    (dialogContext as Element).markNeedsBuild();
+                  },
+                  icon: const Icon(Icons.map),
+                  label: const Text('Select location from map'),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -379,9 +433,14 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               }
 
               try {
-                await _firestoreService.updateBin(bin.binId, location);
+                await _firestoreService.updateBin(
+                  bin.binId,
+                  location,
+                  latitude: selectedLocation?.latitude,
+                  longitude: selectedLocation?.longitude,
+                );
                 if (context.mounted) {
-                  Navigator.pop(context);
+                  Navigator.pop(dialogContext);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Bin updated successfully')),
                   );
@@ -399,6 +458,101 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
         ],
       ),
     );
+  }
+
+  Future<LatLng?> _pickLocationFromMap() async {
+    final location = Location();
+    LatLng initial = const LatLng(0, 0);
+
+    try {
+      final enabled = await location.serviceEnabled() || await location.requestService();
+      if (enabled) {
+        final permission = await location.hasPermission();
+        final granted = permission == PermissionStatus.granted ||
+            permission == PermissionStatus.grantedLimited ||
+            (permission == PermissionStatus.denied &&
+                await location.requestPermission() == PermissionStatus.granted);
+        if (granted) {
+          final current = await location.getLocation();
+          if (current.latitude != null && current.longitude != null) {
+            initial = LatLng(current.latitude!, current.longitude!);
+          }
+        }
+      }
+    } catch (_) {
+      // Use fallback initial position.
+    }
+
+    LatLng selected = initial;
+
+    return showDialog<LatLng>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            final markers = <Marker>{
+              Marker(
+                markerId: const MarkerId('selected'),
+                position: selected,
+                draggable: true,
+                onDragEnd: (pos) => setLocalState(() => selected = pos),
+              ),
+            };
+
+            return AlertDialog(
+              title: const Text('Pick Location'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 420,
+                child: GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: selected,
+                    zoom: initial == const LatLng(0, 0) ? 2 : 16,
+                  ),
+                  markers: markers,
+                  onTap: (pos) => setLocalState(() => selected = pos),
+                  zoomControlsEnabled: true,
+                  myLocationButtonEnabled: true,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext, selected),
+                  child: const Text('Use location'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<String> _reverseGeocode(LatLng position) async {
+    try {
+      final uri = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json?latlng=${position.latitude},${position.longitude}&key=$_googleMapsApiKey',
+      );
+      final response = await http.get(uri);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final results = data['results'] as List<dynamic>?;
+        if (results != null && results.isNotEmpty) {
+          final formatted = results.first['formatted_address'] as String?;
+          if (formatted != null && formatted.trim().isNotEmpty) {
+            return formatted;
+          }
+        }
+      }
+    } catch (_) {
+      // fall through to coordinate-based label
+    }
+
+    return 'Selected location (${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)})';
   }
 
   void _confirmDeleteBin(BinModel bin) {

@@ -101,29 +101,44 @@ class FirestoreService {
 
   /// Bin Locations CRUD (for map features)
   Future<List<BinLocationModel>> getBinLocations() async {
-    final snap = await _db.collection('bin_locations').get();
+    final snap = await _db.collection(_binsCollection).get();
     return snap.docs
         .map((d) => BinLocationModel.fromMap({'id': d.id, ...d.data()}))
+        .where((bin) => bin.latitude != 0.0 || bin.longitude != 0.0)
         .toList(growable: false);
   }
 
   Stream<List<BinLocationModel>> binLocationsStream() {
-    return _db.collection('bin_locations').snapshots().map((snap) =>
-        snap.docs.map((d) => BinLocationModel.fromMap({'id': d.id, ...d.data()})).toList());
+    return _db.collection(_binsCollection).snapshots().map((snap) => snap.docs
+        .map((d) => BinLocationModel.fromMap({'id': d.id, ...d.data()}))
+        .where((bin) => bin.latitude != 0.0 || bin.longitude != 0.0)
+        .toList());
   }
 
   Future<void> addBinLocation(BinLocationModel bin) async {
-    final id = bin.id.isNotEmpty ? bin.id : _db.collection('bin_locations').doc().id;
-    await _db.collection('bin_locations').doc(id).set(bin.toMap());
+    final id = bin.id.isNotEmpty ? bin.id : _db.collection(_binsCollection).doc().id;
+    await _db.collection(_binsCollection).doc(id).set({
+      'binId': id,
+      'qrCode': id,
+      'locationName': bin.name,
+      'latitude': bin.latitude,
+      'longitude': bin.longitude,
+      'createdAt': DateTime.now(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> updateBinLocation(BinLocationModel bin) async {
     if (bin.id.isEmpty) throw Exception('Bin id required');
-    await _db.collection('bin_locations').doc(bin.id).set(bin.toMap(), SetOptions(merge: true));
+    await _db.collection(_binsCollection).doc(bin.id).set({
+      'locationName': bin.name,
+      'latitude': bin.latitude,
+      'longitude': bin.longitude,
+      'binId': bin.id,
+    }, SetOptions(merge: true));
   }
 
   Future<void> deleteBinLocation(String id) async {
-    await _db.collection('bin_locations').doc(id).delete();
+    await _db.collection(_binsCollection).doc(id).delete();
   }
 
   Future<UserModel?> getUser(String userId) async {
@@ -442,26 +457,54 @@ class FirestoreService {
             }).toList());
   }
 
-  Future<void> addBin(String binId, String locationName) async {
+  Future<void> addBin(
+    String binId,
+    String locationName, {
+    double? latitude,
+    double? longitude,
+  }) async {
     final qrCode = binId.trim();
     final docId = _safeBinDocId(qrCode);
+    final Map<String, dynamic> payload = {
+      'binId': docId,
+      'qrCode': qrCode,
+      'locationName': locationName,
+      'createdAt': DateTime.now(),
+    };
+
+    if (latitude != null && longitude != null) {
+      payload['latitude'] = latitude;
+      payload['longitude'] = longitude;
+    }
+
     await _db.collection(_binsCollection).doc(docId).set(
-      {
-        'binId': docId,
-        'qrCode': qrCode,
-        'locationName': locationName,
-        'createdAt': DateTime.now(),
-      },
+      payload,
       SetOptions(merge: true),
     );
+
   }
 
-  Future<void> updateBin(String binId, String locationName) async {
+  Future<void> updateBin(
+    String binId,
+    String locationName, {
+    double? latitude,
+    double? longitude,
+  }) async {
     final docId = _safeBinDocId(binId);
+    final Map<String, dynamic> payload = {
+      'locationName': locationName,
+      'binId': docId,
+    };
+
+    if (latitude != null && longitude != null) {
+      payload['latitude'] = latitude;
+      payload['longitude'] = longitude;
+    }
+
     await _db.collection(_binsCollection).doc(docId).set(
-      {'locationName': locationName, 'binId': docId},
-      SetOptions(merge: true),
-    );
+          payload,
+          SetOptions(merge: true),
+        );
   }
 
   Future<void> deleteBin(String binId) async {

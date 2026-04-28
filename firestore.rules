@@ -46,6 +46,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Bin locations used by the map and admin location picker.
+    match /bin_locations/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
     // Reward config: read by authenticated users, write by admins.
     match /reward_config/{configId} {
       allow read: if isAuthenticated();
