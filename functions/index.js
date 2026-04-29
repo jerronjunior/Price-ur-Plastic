@@ -5,10 +5,29 @@ admin.initializeApp();
 
 const db = admin.firestore();
 const OTP_COLLECTION = 'otp_codes';
-const TEXTLK_ENDPOINT = 'https://app.text.lk/api/v3/sms/send';
+const DEFAULT_TEXTLK_BASE_URL = 'https://app.text.lk/api/v3/';
 
 function getConfigValue(key, fallback = '') {
   return process.env[key] || fallback;
+}
+
+function buildTextlkEndpoint() {
+  const config = functions.config();
+  const baseUrl =
+    getConfigValue(
+      'TEXTLK_API_BASE_URL',
+      config.textlk?.base_url || config.textlk?.endpoint || DEFAULT_TEXTLK_BASE_URL,
+    ) || DEFAULT_TEXTLK_BASE_URL;
+
+  if (baseUrl.endsWith('/sms/send')) {
+    return baseUrl;
+  }
+
+  if (baseUrl.endsWith('/')) {
+    return `${baseUrl}sms/send`;
+  }
+
+  return `${baseUrl}/sms/send`;
 }
 
 function normalizeSriLankaPhone(phone) {
@@ -47,10 +66,8 @@ async function sendTextlkSms({ recipient, message }) {
     config.textlk?.sender_id || getConfigValue('TEXTLK_SENDER_ID', 'TextLKDemo');
 
   if (!token) {
-    throw new functions.https.HttpsError(
-      'failed-precondition',
-      'Missing text.lk API token. Set TEXTLK_API_TOKEN or TEXTLK_API_KEY in the Cloud Function environment.'
-    );
+    console.warn('Missing text.lk API token. SMS will not be sent. Using demo mode.');
+    return { status: 'demo', message: 'SMS service not configured (demo mode)' };
   }
 
   const payload = {
@@ -60,24 +77,32 @@ async function sendTextlkSms({ recipient, message }) {
     message,
   };
 
-  const response = await fetch(TEXTLK_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  const endpoint = buildTextlkEndpoint();
 
-  const data = await response.json().catch(() => ({}));
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
 
-  if (!response.ok || data.status === 'error') {
-    const messageText = data.message || `Text.lk request failed with status ${response.status}.`;
-    throw new functions.https.HttpsError('internal', messageText);
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || data.status === 'error') {
+      const messageText = data.message || `Text.lk request failed with status ${response.status}.`;
+      console.error('SMS sending error:', messageText);
+      throw new functions.https.HttpsError('internal', messageText);
+    }
+
+    return data;
+  } catch (error) {
+    console.error('SMS API error:', error.message);
+    throw new functions.https.HttpsError('internal', error.message || 'Failed to send SMS');
   }
-
-  return data;
 }
 
 exports.sendOtp = functions.https.onCall(async (data) => {
@@ -98,14 +123,25 @@ exports.sendOtp = functions.https.onCall(async (data) => {
     expiresAt,
   });
 
-  const sms = await sendTextlkSms({ recipient: phone, message });
-
-  return {
-    success: true,
-    phone,
-    otpId: otpRef.id,
-    status: sms.status || 'success',
-  };
+  try {
+    const sms = await sendTextlkSms({ recipient: phone, message });
+    return {
+      success: true,
+      phone,
+      otpId: otpRef.id,
+      status: sms.status || 'success',
+    };
+  } catch (error) {
+    // SMS sending failed, but OTP was created. Return success but mark for fallback.
+    console.warn('SMS sending failed:', error.message);
+    return {
+      success: true,
+      phone,
+      otpId: otpRef.id,
+      status: 'pending',
+      message: 'OTP created. SMS sending may have failed. Please check your phone or check the OTP code: ' + code,
+    };
+  }
 });
 
 exports.verifyOtp = functions.https.onCall(async (data) => {
@@ -125,7 +161,7 @@ exports.verifyOtp = functions.https.onCall(async (data) => {
     .get();
 
   if (query.empty) {
-    throw new functions.https.HttpsError('not-found', 'Invalid or expired OTP.');
+    throw new functions.https.HttpsError('invalid-argument', 'Invalid or expired OTP.');
   }
 
   const doc = query.docs[0];

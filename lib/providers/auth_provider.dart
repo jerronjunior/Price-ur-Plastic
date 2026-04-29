@@ -145,7 +145,7 @@ class AuthProvider with ChangeNotifier {
     required String email,
     required String password,
     required String name,
-    required String mobile,
+    String mobile = '',
   }) async {
     try {
       final cred = await _auth.registerWithEmailPassword(
