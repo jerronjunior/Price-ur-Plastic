@@ -145,6 +145,7 @@ class AuthProvider with ChangeNotifier {
     required String email,
     required String password,
     required String name,
+    required String mobile,
   }) async {
     try {
       final cred = await _auth.registerWithEmailPassword(
@@ -158,7 +159,7 @@ class AuthProvider with ChangeNotifier {
           userId: uid,
           name: name,
           email: email,
-          mobile: '',
+          mobile: mobile,
           totalPoints: 0,
           totalBottles: 0,
         ));
@@ -170,7 +171,7 @@ class AuthProvider with ChangeNotifier {
                 userId: uid,
                 name: name,
                 email: email,
-                mobile: '',
+                mobile: mobile,
                 totalPoints: 0,
                 totalBottles: 0,
               );

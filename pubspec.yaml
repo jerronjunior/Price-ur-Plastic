@@ -15,6 +15,7 @@ dependencies:
   firebase_auth: ^5.6.3
   cloud_firestore: ^5.6.12
   firebase_storage: ^12.4.10
+  cloud_functions: ^5.6.2
   
   # Scanning
   mobile_scanner: ^4.0.1

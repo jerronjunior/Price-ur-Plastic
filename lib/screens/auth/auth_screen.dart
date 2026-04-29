@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/sms_service.dart';
 
 /// Unified Auth Screen with Login/Register tabs.
 class AuthScreen extends StatefulWidget {
@@ -16,6 +18,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLogin = true;
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _mobileController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
@@ -27,59 +30,173 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _mobileController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  String _normalizeMobile(String value) {
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('94')) return digits;
+    if (digits.startsWith('0') && digits.length >= 10) {
+      return '94${digits.substring(1)}';
+    }
+    if (digits.length == 9) return '94$digits';
+    return digits;
+  }
+
+  Future<String?> _promptOtp() async {
+    final codeController = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Verify phone number'),
+            content: TextField(
+              controller: codeController,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: const InputDecoration(
+                labelText: 'OTP code',
+                hintText: 'Enter the 6-digit code',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(codeController.text.trim());
+                },
+                child: const Text('Verify'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      codeController.dispose();
+    }
+  }
+
+  Future<void> _registerWithOtp() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final rawMobile = _mobileController.text.trim();
+    final mobile = _normalizeMobile(rawMobile);
+    final authProvider = context.read<AuthProvider>();
+
     setState(() {
       _error = null;
       _loading = true;
     });
 
-    String? msg;
     try {
-      if (_isLogin) {
+      final smsService = SmsService();
+      final sent = await smsService.sendOtp(phone: mobile);
+      if (!sent) {
+        throw StateError('OTP send failed');
+      }
+
+      if (!mounted) return;
+
+      setState(() => _loading = false);
+      final otp = await _promptOtp();
+      if (otp == null || otp.isEmpty) {
+        return;
+      }
+
+      setState(() => _loading = true);
+      final verified = await smsService.verifyOtp(phone: mobile, otp: otp);
+      if (!verified) {
+        throw StateError('Invalid OTP');
+      }
+
+      final msg = await authProvider.register(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+            name: _nameController.text.trim(),
+            mobile: mobile,
+          );
+
+      if (!mounted) return;
+      setState(() => _loading = false);
+
+      if (msg != null) {
+        setState(() => _error = msg);
+        return;
+      }
+
+      setState(() {
+        _isLogin = true;
+        _nameController.clear();
+        _mobileController.clear();
+        _emailController.clear();
+        _passwordController.clear();
+        _confirmPasswordController.clear();
+        _error = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Phone verified. Registration successful. Please log in.'),
+        ),
+      );
+      context.go('/login');
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        if (e.code == 'not-found') {
+          _error = 'OTP service is not deployed yet. Re-auth Firebase CLI and deploy functions.';
+          return;
+        }
+        _error = e.message ?? e.details?.toString() ?? 'Could not send or verify the OTP.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_isLogin) {
+      if (!(_formKey.currentState?.validate() ?? false)) return;
+      setState(() {
+        _error = null;
+        _loading = true;
+      });
+
+      String? msg;
+      try {
         msg = await context.read<AuthProvider>().login(
               email: _emailController.text.trim(),
               password: _passwordController.text,
             );
-      } else {
-        msg = await context.read<AuthProvider>().register(
-              email: _emailController.text.trim(),
-              password: _passwordController.text,
-              name: _nameController.text.trim(),
-            );
+      } catch (_) {
+        msg = 'Login failed. Please try again.';
       }
-    } catch (_) {
-      msg = _isLogin ? 'Login failed. Please try again.' : 'Registration failed. Please try again.';
-    }
 
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (msg != null) {
-      setState(() => _error = msg);
-      return;
-    }
+      if (!mounted) return;
+      setState(() => _loading = false);
+      if (msg != null) {
+        setState(() => _error = msg);
+        return;
+      }
 
-    if (_isLogin) {
       context.go('/');
       return;
     }
 
-    setState(() {
-      _isLogin = true;
-      _passwordController.clear();
-      _confirmPasswordController.clear();
-      _error = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Registration successful. Please log in.')),
-    );
-    context.go('/login');
+    await _registerWithOtp();
   }
 
   Future<void> _forgotPassword() async {
@@ -287,6 +404,27 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                             validator: (v) {
                               if (v == null || v.trim().isEmpty) return 'Enter your name';
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _mobileController,
+                            keyboardType: TextInputType.phone,
+                            decoration: InputDecoration(
+                              labelText: 'Mobile number',
+                              hintText: '07XXXXXXXX',
+                              prefixIcon: const Icon(Icons.phone_outlined),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            validator: (v) {
+                              if (v == null || v.trim().isEmpty) {
+                                return 'Enter mobile number';
+                              }
+                              final digits = v.replaceAll(RegExp(r'\D'), '');
+                              if (digits.length < 9) return 'Enter a valid mobile number';
                               return null;
                             },
                           ),

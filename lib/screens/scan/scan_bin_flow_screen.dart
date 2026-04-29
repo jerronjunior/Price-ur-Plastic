@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
+import '../../services/sms_service.dart';
 import '../../models/recycled_bottle_model.dart';
 import 'insertion_detector_screen.dart';
 import 'scan_bottle_screen.dart';
@@ -81,6 +82,16 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
       // Log the bin scan
       await firestore.logBinScan(userId, binId);
+
+      final latestUser = await firestore.getUser(userId);
+      final mobile = latestUser?.mobile.trim() ?? '';
+      if (mobile.isNotEmpty) {
+        SmsService().sendBottleCount(
+          phone: mobile,
+          bottleCount: latestUser?.totalBottles ?? 0,
+          totalPoints: latestUser?.totalPoints ?? 0,
+        ).catchError((_) {});
+      }
 
       if (!mounted) return;
       setState(() {
