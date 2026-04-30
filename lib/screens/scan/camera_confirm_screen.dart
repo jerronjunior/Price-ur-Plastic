@@ -260,16 +260,6 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
     try {
       await firestore.saveRecycledBottle(bottle);
 
-      final latestUser = await firestore.getUser(userId);
-      final mobile = latestUser?.mobile.trim() ?? '';
-      if (mobile.isNotEmpty) {
-        SmsService().sendBottleCount(
-          phone: mobile,
-          bottleCount: latestUser?.totalBottles ?? 0,
-          totalPoints: latestUser?.totalPoints ?? 0,
-        ).catchError((_) {});
-      }
-
       if (!_disposed && mounted) widget.onSuccess();
     } catch (e) {
       if (!_disposed && mounted) {

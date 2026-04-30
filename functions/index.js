@@ -183,7 +183,9 @@ exports.sendBottleCount = functions.https.onCall(async (data) => {
   const bottleCount = Number(data?.bottleCount || 0);
   const totalPoints = Number(data?.totalPoints || 0);
 
-  const message = `EcoRecycle update: you have recycled ${bottleCount} bottles and earned ${totalPoints} points.`;
+  const message = bottleCount > 0
+    ? `EcoRecycle update: you added ${bottleCount} bottle${bottleCount === 1 ? '' : 's'} and earned ${totalPoints} points.`
+    : `EcoRecycle update: your recycling session is complete. Total points: ${totalPoints}.`;
   const sms = await sendTextlkSms({ recipient: phone, message });
 
   return {

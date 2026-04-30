@@ -83,16 +83,6 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       // Log the bin scan
       await firestore.logBinScan(userId, binId);
 
-      final latestUser = await firestore.getUser(userId);
-      final mobile = latestUser?.mobile.trim() ?? '';
-      if (mobile.isNotEmpty) {
-        SmsService().sendBottleCount(
-          phone: mobile,
-          bottleCount: latestUser?.totalBottles ?? 0,
-          totalPoints: latestUser?.totalPoints ?? 0,
-        ).catchError((_) {});
-      }
-
       if (!mounted) return;
       setState(() {
         _bottleCount++;
@@ -126,6 +116,15 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
       final firestore = context.read<FirestoreService>();
       final latestUser = await firestore.getUser(userId);
+      final mobile = latestUser?.mobile.trim() ?? '';
+
+      if (mobile.isNotEmpty && _bottleCount > 0) {
+        await SmsService().sendBottleCount(
+          phone: mobile,
+          bottleCount: _bottleCount,
+          totalPoints: latestUser?.totalPoints ?? auth.user?.totalPoints ?? 0,
+        ).catchError((_) {});
+      }
 
       if (!mounted) return;
       setState(() {
