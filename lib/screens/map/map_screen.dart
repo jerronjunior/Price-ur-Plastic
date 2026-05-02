@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:math' show cos, sqrt, pow, atan2, sin, pi;
+import 'dart:math' show cos, sqrt, atan2, sin, pi;
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:location/location.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -24,7 +23,6 @@ class _MapScreenState extends State<MapScreen> {
   final Set<Polyline> _polylines = {};
   LatLng? _userLatLng;
   List<BinModel> _bins = [];
-  BinModel? _selectedBin;
   StreamSubscription<List<BinModel>>? _binsSubscription;
   LatLng? _pendingCameraTarget;
   bool _hasCenteredMap = false;
@@ -113,7 +111,6 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _onBinTapped(BinModel bin) {
-    setState(() => _selectedBin = bin);
     _showBinBottomSheet(bin);
   }
 
