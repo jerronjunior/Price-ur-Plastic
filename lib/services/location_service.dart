@@ -2,6 +2,7 @@ import 'package:location/location.dart';
 
 class LocationService {
   final Location _loc = Location();
+  static LocationData? _cachedLocation;
 
   Future<bool> requestPermission() async {
     final enabled = await _loc.serviceEnabled();
@@ -22,11 +23,16 @@ class LocationService {
     try {
       final ok = await requestPermission();
       if (!ok) return null;
-      return await _loc.getLocation();
+      final loc = await _loc.getLocation();
+      _cachedLocation = loc;
+      return loc;
     } catch (_) {
       return null;
     }
   }
+
+  /// Returns the last cached location if available (synchronous, may be null).
+  LocationData? getCachedLocation() => _cachedLocation;
 
   Stream<LocationData> onLocationChanged() => _loc.onLocationChanged;
 }

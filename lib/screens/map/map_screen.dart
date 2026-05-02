@@ -26,34 +26,55 @@ class _MapScreenState extends State<MapScreen> {
   StreamSubscription<List<BinModel>>? _binsSubscription;
   LatLng? _pendingCameraTarget;
   bool _hasCenteredMap = false;
+  final Stopwatch _startupTimer = Stopwatch();
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _startupTimer.start();
+    // Start initialization in background so the map can render immediately
+    // If we have a cached location, show it immediately so the map centers faster
+    final cached = LocationService().getCachedLocation();
+    if (cached != null) {
+      _userLatLng = LatLng(cached.latitude!, cached.longitude!);
+      // add user marker right away
+      _markers.add(Marker(
+        markerId: const MarkerId('user'),
+        position: _userLatLng!,
+        infoWindow: const InfoWindow(title: 'You are here'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+      ));
+    }
+
+    _startBackgroundInit();
+  }
+  void _startBackgroundInit() {
+    // Fire-and-forget: run initialization without blocking the first frame
+    unawaited(_backgroundInit());
   }
 
-  Future<void> _init() async {
+  Future<void> _backgroundInit() async {
     final locService = LocationService();
     final fs = Provider.of<FirestoreService>(context, listen: false);
 
-    // Parallelize permission request and Firestore subscription
-    // Both can run simultaneously since they don't depend on each other
-    final results = await Future.wait([
-      locService.requestPermission(),
-      fs.getAllBinsStream().first,
-    ], eagerError: false);
-
-    final permissionOk = results[0] as bool;
-    if (!permissionOk) return;
-
-    // Now that permission is granted, get current location
-    final loc = await locService.getCurrentLocation();
-    if (loc != null) {
-      _updateUserLocation(LatLng(loc.latitude!, loc.longitude!));
+    final permissionOk = await locService.requestPermission();
+    if (!permissionOk) {
+      debugPrint('Map init: location permission denied');
+      return;
     }
 
-    // Subscribe to bin updates for real-time changes
+    // Get latest location (may take time) but don't block the UI
+    try {
+      final loc = await locService.getCurrentLocation();
+      if (loc != null && mounted) {
+        _updateUserLocation(LatLng(loc.latitude!, loc.longitude!));
+        debugPrint('Map init: got current location after ${_startupTimer.elapsedMilliseconds} ms');
+      }
+    } catch (e) {
+      debugPrint('Map init: failed to get current location: $e');
+    }
+
+    // Subscribe to bins updates (real-time). This will update markers when data arrives.
     _binsSubscription = fs.getAllBinsStream().listen((bins) {
       if (!mounted) return;
       setState(() {
@@ -61,10 +82,21 @@ class _MapScreenState extends State<MapScreen> {
         _updateBinMarkers();
       });
 
-      if (!_hasCenteredMap && _userLatLng == null && _bins.isNotEmpty) {
-        _centerMapOn(LatLng(_bins.first.latitude, _bins.first.longitude));
+      debugPrint('Map init: bins received (${bins.length}) after ${_startupTimer.elapsedMilliseconds} ms');
+
+      if (!_hasCenteredMap) {
+        if (_userLatLng != null) {
+          _centerMapOn(_userLatLng!);
+        } else if (_bins.isNotEmpty) {
+          _centerMapOn(LatLng(_bins.first.latitude, _bins.first.longitude));
+        }
       }
+    }, onError: (e) {
+      debugPrint('Map init: bins stream error: $e');
     });
+
+    // Mark overall startup time when we have at least one of location or bins
+    debugPrint('Map init: background init completed at ${_startupTimer.elapsedMilliseconds} ms');
   }
 
   void _updateUserLocation(LatLng pos) {
@@ -273,6 +305,7 @@ class _MapScreenState extends State<MapScreen> {
         markers: _markers,
         polylines: _polylines,
         onMapCreated: (g) {
+          debugPrint('Map widget created after ${_startupTimer.elapsedMilliseconds} ms');
           if (!_controller.isCompleted) {
             _controller.complete(g);
           }
