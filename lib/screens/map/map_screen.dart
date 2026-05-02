@@ -5,15 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
 import 'package:provider/provider.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/bin_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/location_service.dart';
-
-// Google Directions API key (used for route polylines).
-const String kGoogleMapsApiKey = 'AIzaSyCBmI_4GT9sOei5WWA8j-7XGnAI5yievmY';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -29,6 +25,9 @@ class _MapScreenState extends State<MapScreen> {
   LatLng? _userLatLng;
   List<BinModel> _bins = [];
   BinModel? _selectedBin;
+  StreamSubscription<List<BinModel>>? _binsSubscription;
+  LatLng? _pendingCameraTarget;
+  bool _hasCenteredMap = false;
 
   @override
   void initState() {
@@ -57,11 +56,16 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     // Subscribe to bin updates for real-time changes
-    fs.getAllBinsStream().listen((bins) {
+    _binsSubscription = fs.getAllBinsStream().listen((bins) {
+      if (!mounted) return;
       setState(() {
         _bins = bins;
         _updateBinMarkers();
       });
+
+      if (!_hasCenteredMap && _userLatLng == null && _bins.isNotEmpty) {
+        _centerMapOn(LatLng(_bins.first.latitude, _bins.first.longitude));
+      }
     });
   }
 
@@ -76,6 +80,24 @@ class _MapScreenState extends State<MapScreen> {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       ));
     });
+
+    _centerMapOn(pos);
+  }
+
+  Future<void> _centerMapOn(LatLng target) async {
+    _pendingCameraTarget = target;
+    if (!_controller.isCompleted) return;
+
+    final controller = await _controller.future;
+    if (!mounted) return;
+
+    _hasCenteredMap = true;
+    _pendingCameraTarget = null;
+    await controller.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: target, zoom: 15),
+      ),
+    );
   }
 
   void _updateBinMarkers() {
@@ -144,77 +166,104 @@ class _MapScreenState extends State<MapScreen> {
 
   double _deg2rad(double deg) => deg * (pi / 180);
 
+  Future<List<BinModel>> _loadBinsForNearest() async {
+    if (_bins.isNotEmpty) return List<BinModel>.from(_bins);
+
+    final fs = Provider.of<FirestoreService>(context, listen: false);
+    try {
+      final bins = await fs.getAllBinsStream().first;
+      if (!mounted) return const [];
+      setState(() {
+        _bins = bins;
+        _updateBinMarkers();
+      });
+      return bins;
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<void> _findNearest() async {
-    if (_userLatLng == null || _bins.isEmpty) return;
+    final userLocation = _userLatLng;
+    if (userLocation == null) {
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Current location is not available yet.')),
+      );
+      return;
+    }
+
+    final bins = await _loadBinsForNearest();
+    final usableBins = bins
+        .where((b) => b.latitude != 0.0 || b.longitude != 0.0)
+        .toList(growable: false);
+
+    if (usableBins.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No bin locations are available yet.')),
+        );
+      }
+      return;
+    }
+
     BinModel? nearest;
     double best = double.infinity;
-    for (final b in _bins) {
-      final d = _distanceMeters(_userLatLng!, LatLng(b.latitude, b.longitude));
+    for (final b in usableBins) {
+      final d = _distanceMeters(userLocation, LatLng(b.latitude, b.longitude));
       if (d < best) {
         best = d;
         nearest = b;
       }
     }
-    if (nearest != null) {
-      final c = await _controller.future;
-      c.animateCamera(CameraUpdate.newLatLng(LatLng(nearest.latitude, nearest.longitude)));
-      _onBinTapped(nearest);
+
+    if (nearest == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to determine the nearest bin.')),
+        );
+      }
+      return;
     }
+
+    final c = await _controller.future;
+    final target = LatLng(nearest.latitude, nearest.longitude);
+    await c.animateCamera(CameraUpdate.newCameraPosition(CameraPosition(target: target, zoom: 16)));
+    if (!mounted) return;
+    _onBinTapped(nearest);
   }
 
   Future<void> _getDirectionsTo(BinModel bin) async {
     if (_userLatLng == null) return;
-    if (kGoogleMapsApiKey == 'YOUR_GOOGLE_DIRECTIONS_API_KEY') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Set Google Directions API key in code.')));
-      return;
-    }
     final origin = '${_userLatLng!.latitude},${_userLatLng!.longitude}';
     final dest = '${bin.latitude},${bin.longitude}';
-    final url = Uri.parse('https://maps.googleapis.com/maps/api/directions/json?origin=$origin&destination=$dest&key=$kGoogleMapsApiKey');
-    final resp = await http.get(url);
-    if (resp.statusCode != 200) return;
-    final data = json.decode(resp.body) as Map<String, dynamic>;
-    if ((data['routes'] as List).isEmpty) return;
-    final points = data['routes'][0]['overview_polyline']['points'] as String;
-    final decoded = _decodePolyline(points);
-    final poly = Polyline(
-      polylineId: const PolylineId('route'),
-      points: decoded,
-      color: Colors.blue,
-      width: 5,
+    final url = Uri.https(
+      'www.google.com',
+      '/maps/dir/',
+      {
+        'api': '1',
+        'origin': origin,
+        'destination': dest,
+        'travelmode': 'driving',
+      },
     );
-    setState(() {
-      _polylines.clear();
-      _polylines.add(poly);
-    });
+
+    final launched = await launchUrl(
+      url,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open directions.')),
+      );
+    }
   }
 
-  List<LatLng> _decodePolyline(String encoded) {
-    final List<LatLng> poly = [];
-    int index = 0, len = encoded.length;
-    int lat = 0, lng = 0;
-    while (index < len) {
-      int b, shift = 0, result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-      final p = LatLng(lat / 1E5, lng / 1E5);
-      poly.add(p);
-    }
-    return poly;
+  @override
+  void dispose() {
+    _binsSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -223,10 +272,22 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(title: const Text('Explore Locations')),
       body: GoogleMap(
         initialCameraPosition: CameraPosition(target: _userLatLng ?? const LatLng(0,0), zoom: 14),
-        myLocationEnabled: false,
+        myLocationEnabled: _userLatLng != null,
         markers: _markers,
         polylines: _polylines,
-        onMapCreated: (g) => _controller.complete(g),
+        onMapCreated: (g) {
+          if (!_controller.isCompleted) {
+            _controller.complete(g);
+          }
+
+          if (_pendingCameraTarget != null) {
+            _centerMapOn(_pendingCameraTarget!);
+          } else if (_userLatLng != null) {
+            _centerMapOn(_userLatLng!);
+          } else if (_bins.isNotEmpty) {
+            _centerMapOn(LatLng(_bins.first.latitude, _bins.first.longitude));
+          }
+        },
       ),
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
@@ -243,8 +304,6 @@ class _MapScreenState extends State<MapScreen> {
               final l = await LocationService().getCurrentLocation();
               if (l != null) {
                 final pos = LatLng(l.latitude!, l.longitude!);
-                final c = await _controller.future;
-                c.animateCamera(CameraUpdate.newLatLng(pos));
                 _updateUserLocation(pos);
               }
             },

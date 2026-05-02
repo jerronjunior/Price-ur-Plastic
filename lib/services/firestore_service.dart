@@ -464,7 +464,7 @@ class FirestoreService {
     double? longitude,
   }) async {
     final qrCode = binId.trim();
-    final docId = _safeBinDocId(qrCode);
+    final docId = _db.collection(_binsCollection).doc().id;
     final Map<String, dynamic> payload = {
       'binId': docId,
       'qrCode': qrCode,

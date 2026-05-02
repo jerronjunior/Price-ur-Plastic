@@ -270,7 +270,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
 
   void _showAddBinDialog({String? prefilledQrValue}) {
     final binIdController = TextEditingController(text: prefilledQrValue ?? '');
-    final locationController = TextEditingController();
+    final nameController = TextEditingController();
     LatLng? selectedLocation;
 
     showDialog(
@@ -303,12 +303,11 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
-                  onPressed: () async {
-                    final picked = await _pickLocationFromMap();
+                controller: nameController,
                     if (picked == null) return;
-                    final name = await _reverseGeocode(picked);
-                    if (!dialogContext.mounted) return;
-                    selectedLocation = picked;
+                  labelText: 'Bin Name',
+                  hintText: 'Enter a name for this bin',
+                  prefixIcon: Icon(Icons.label),
                     locationController.text = name;
                     (dialogContext as Element).markNeedsBuild();
                   },
@@ -316,6 +315,30 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
                   label: const Text('Select location from map'),
                 ),
               ),
+            ],
+          ),
+        actions: [
+          TextButton(
+                    (dialogContext as Element).markNeedsBuild();
+                  },
+                  icon: const Icon(Icons.map),
+                  label: Text(
+                    selectedLocation == null
+                        ? 'Select location from map'
+                        : 'Location selected: ${selectedLocation!.latitude.toStringAsFixed(5)}, ${selectedLocation!.longitude.toStringAsFixed(5)}',
+                  ),
+                ),
+              ),
+              if (selectedLocation != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Saved coordinates: ${selectedLocation!.latitude.toStringAsFixed(6)}, ${selectedLocation!.longitude.toStringAsFixed(6)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -327,11 +350,11 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
           ElevatedButton(
             onPressed: () async {
               final binId = binIdController.text.trim();
-              final location = locationController.text.trim();
+              final binName = nameController.text.trim();
 
-              if (binId.isEmpty || location.isEmpty || selectedLocation == null) {
+              if (binId.isEmpty || binName.isEmpty || selectedLocation == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter QR and pick a location from the map')),
+                  const SnackBar(content: Text('Please enter QR, bin name, and pick a location from the map')),
                 );
                 return;
               }
@@ -339,7 +362,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               try {
                 await _firestoreService.addBin(
                   binId,
-                  location,
+                  binName,
                   latitude: selectedLocation!.latitude,
                   longitude: selectedLocation!.longitude,
                 );
@@ -347,7 +370,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
                   Navigator.pop(dialogContext);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Bin, QR, and location saved successfully'),
+                      content: Text('Bin saved successfully'),
                     ),
                   );
                 }
@@ -367,7 +390,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
   }
 
   void _showEditBinDialog(BinModel bin) {
-    final locationController = TextEditingController(text: bin.locationName);
+    final nameController = TextEditingController(text: bin.locationName);
     LatLng? selectedLocation;
 
     showDialog(
@@ -381,19 +404,18 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               TextField(
                 enabled: false,
                 decoration: InputDecoration(
-                  labelText: 'Bin ID',
-                  hintText: bin.binId,
+                  labelText: 'QR Code',
+                  hintText: bin.qrCode,
                   prefixIcon: const Icon(Icons.qr_code),
                 ),
               ),
               const SizedBox(height: 16),
               TextField(
-                controller: locationController,
-                readOnly: true,
+                controller: nameController,
                 decoration: const InputDecoration(
-                  labelText: 'Location Name',
-                  hintText: 'Select from map',
-                  prefixIcon: Icon(Icons.location_on),
+                  labelText: 'Bin Name',
+                  hintText: 'Enter a name for this bin',
+                  prefixIcon: Icon(Icons.label),
                 ),
               ),
               const SizedBox(height: 10),
@@ -403,16 +425,28 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
                   onPressed: () async {
                     final picked = await _pickLocationFromMap();
                     if (picked == null) return;
-                    final name = await _reverseGeocode(picked);
                     if (!dialogContext.mounted) return;
                     selectedLocation = picked;
-                    locationController.text = name;
                     (dialogContext as Element).markNeedsBuild();
                   },
                   icon: const Icon(Icons.map),
-                  label: const Text('Select location from map'),
+                  label: Text(
+                    selectedLocation == null
+                        ? 'Select location from map'
+                        : 'Location selected: ${selectedLocation!.latitude.toStringAsFixed(5)}, ${selectedLocation!.longitude.toStringAsFixed(5)}',
+                  ),
                 ),
               ),
+              if (selectedLocation != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Saved coordinates: ${selectedLocation!.latitude.toStringAsFixed(6)}, ${selectedLocation!.longitude.toStringAsFixed(6)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -423,11 +457,11 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              final location = locationController.text.trim();
+              final name = nameController.text.trim();
 
-              if (location.isEmpty) {
+              if (name.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Location cannot be empty')),
+                  const SnackBar(content: Text('Bin name cannot be empty')),
                 );
                 return;
               }
@@ -435,7 +469,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
               try {
                 await _firestoreService.updateBin(
                   bin.binId,
-                  location,
+                  name,
                   latitude: selectedLocation?.latitude,
                   longitude: selectedLocation?.longitude,
                 );
@@ -459,19 +493,6 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
       ),
     );
   }
-
-  Future<LatLng?> _pickLocationFromMap() async {
-    final location = Location();
-    LatLng initial = const LatLng(0, 0);
-
-    try {
-      final enabled = await location.serviceEnabled() || await location.requestService();
-      if (enabled) {
-        final permission = await location.hasPermission();
-        final granted = permission == PermissionStatus.granted ||
-            permission == PermissionStatus.grantedLimited ||
-            (permission == PermissionStatus.denied &&
-                await location.requestPermission() == PermissionStatus.granted);
         if (granted) {
           final current = await location.getLocation();
           if (current.latitude != null && current.longitude != null) {
