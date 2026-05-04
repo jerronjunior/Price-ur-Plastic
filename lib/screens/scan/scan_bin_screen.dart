@@ -1,15 +1,214 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'dart:typed_data';
+
 import 'package:camera/camera.dart';
-import 'package:provider/provider.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-import '../../core/theme.dart';
-import '../../models/bin_model.dart';
-import '../../services/firestore_service.dart';
-/// Scan bin QR code to get bin ID.
+import 'package:flutter/material.dart';
+
+enum BinType {
+  cocaCola,
+  cargills,
+  keells,
+  ecoSpindles,
+  unknown,
+}
+
+extension BinTypeX on BinType {
+  String get displayName {
+    switch (this) {
+      case BinType.cocaCola:
+        return 'Coca-Cola Give Back Life';
+      case BinType.cargills:
+        return 'Cargills Food City';
+      case BinType.keells:
+        return 'Keells Plasticcycle';
+      case BinType.ecoSpindles:
+        return 'Eco Spindles';
+      case BinType.unknown:
+        return 'Unknown Bin';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case BinType.cocaCola:
+        return const Color(0xFFE53935);
+      case BinType.cargills:
+        return const Color(0xFFC62828);
+      case BinType.keells:
+        return const Color(0xFF2E7D32);
+      case BinType.ecoSpindles:
+        return const Color(0xFF6A1B9A);
+      case BinType.unknown:
+        return Colors.grey;
+    }
+  }
+
+  String get emoji {
+    switch (this) {
+      case BinType.cocaCola:
+        return '🔴';
+      case BinType.cargills:
+        return '🔴';
+      case BinType.keells:
+        return '🟢';
+      case BinType.ecoSpindles:
+        return '🟣';
+      case BinType.unknown:
+        return '⚪';
+    }
+  }
+
+  String get storageValue {
+    switch (this) {
+      case BinType.cocaCola:
+        return 'coca_cola';
+      case BinType.cargills:
+        return 'cargills';
+      case BinType.keells:
+        return 'keells';
+      case BinType.ecoSpindles:
+        return 'eco_spindles';
+      case BinType.unknown:
+        return 'unknown';
+    }
+  }
+}
+
+class _BinColorDetector {
+  static const int _cols = 12;
+  static const int _rows = 9;
+  static const int _minCells = 8;
+
+  static const int _lockFrames = 6;
+  int _streak = 0;
+  bool _locked = false;
+  BinType _lockedType = BinType.unknown;
+
+  BinType detectedType = BinType.unknown;
+  bool hasDetection = false;
+  int redCells = 0;
+  int greenCells = 0;
+  int purpleCells = 0;
+
+  void update(CameraImage image) {
+    final int fw = image.width;
+    final int fh = image.height;
+
+    final Uint8List yPlane = image.planes[0].bytes;
+    final Uint8List? uPlane = image.planes.length > 1 ? image.planes[1].bytes : null;
+    final Uint8List? vPlane = image.planes.length > 2 ? image.planes[2].bytes : null;
+
+    final int uStride = image.planes.length > 1 ? image.planes[1].bytesPerRow : fw ~/ 2;
+    final int vStride = image.planes.length > 2 ? image.planes[2].bytesPerRow : fw ~/ 2;
+
+    final int cellW = fw ~/ _cols;
+    final int cellH = fh ~/ _rows;
+
+    int rCells = 0;
+    int gCells = 0;
+    int pCells = 0;
+
+    for (int row = 0; row < _rows; row++) {
+      for (int col = 0; col < _cols; col++) {
+        final int x0 = col * cellW;
+        final int y0 = row * cellH;
+        final int x1 = (x0 + cellW).clamp(0, fw).toInt();
+        final int y1 = (y0 + cellH).clamp(0, fh).toInt();
+
+        double sumY = 0;
+        double sumU = 0;
+        double sumV = 0;
+        int cnt = 0;
+
+        for (int py = y0; py < y1; py += 6) {
+          for (int px = x0; px < x1; px += 6) {
+            final int yi = py * fw + px;
+            if (yi >= yPlane.length) continue;
+
+            sumY += yPlane[yi];
+
+            if (uPlane != null && vPlane != null) {
+              final int uvi = (py ~/ 2) * uStride + (px ~/ 2);
+              final int vvi = (py ~/ 2) * vStride + (px ~/ 2);
+              if (uvi < uPlane.length) sumU += uPlane[uvi];
+              if (vvi < vPlane.length) sumV += vPlane[vvi];
+            }
+            cnt++;
+          }
+        }
+
+        if (cnt == 0) continue;
+        final double mY = sumY / cnt;
+        final double mU = uPlane != null ? sumU / cnt : 128;
+        final double mV = vPlane != null ? sumV / cnt : 128;
+
+        if (mY >= 40 && mY <= 130 && mV >= 155 && mV <= 215 && mU >= 70 && mU <= 120) {
+          rCells++;
+        } else if (mY >= 40 && mY <= 145 && mV >= 80 && mV <= 128 && mU >= 135 && mU <= 190) {
+          gCells++;
+        } else if (mY >= 20 && mY <= 88 && mV >= 105 && mV <= 138 && mU >= 125 && mU <= 162) {
+          pCells++;
+        }
+      }
+    }
+
+    redCells = rCells;
+    greenCells = gCells;
+    purpleCells = pCells;
+
+    BinType winner = BinType.unknown;
+    int maxCells = _minCells - 1;
+
+    if (rCells > maxCells) {
+      maxCells = rCells;
+      winner = BinType.cocaCola;
+    }
+    if (gCells > maxCells) {
+      maxCells = gCells;
+      winner = BinType.keells;
+    }
+    if (pCells > maxCells) {
+      winner = BinType.ecoSpindles;
+    }
+
+    if (winner != BinType.unknown) {
+      if (winner == _lockedType || !_locked) {
+        _streak = (_streak + 1).clamp(0, _lockFrames + 1).toInt();
+        _lockedType = winner;
+      } else {
+        _streak = 1;
+        _lockedType = winner;
+        _locked = false;
+      }
+
+      if (_streak >= _lockFrames && !_locked) {
+        _locked = true;
+      }
+
+      detectedType = _lockedType;
+      hasDetection = _locked;
+    } else {
+      _streak = (_streak - 1).clamp(0, _lockFrames).toInt();
+      if (_streak == 0) {
+        _locked = false;
+        _lockedType = BinType.unknown;
+        detectedType = BinType.unknown;
+        hasDetection = false;
+      }
+    }
+  }
+
+  void reset() {
+    _streak = 0;
+    _locked = false;
+    _lockedType = BinType.unknown;
+    detectedType = BinType.unknown;
+    hasDetection = false;
+    redCells = 0;
+    greenCells = 0;
+    purpleCells = 0;
+  }
+}
+
 class ScanBinScreen extends StatefulWidget {
   const ScanBinScreen({
     super.key,
@@ -17,623 +216,469 @@ class ScanBinScreen extends StatefulWidget {
     required this.onBack,
   });
 
-  final void Function(String binId) onScanned;
+  final void Function(String binType) onScanned;
   final VoidCallback onBack;
 
   @override
   State<ScanBinScreen> createState() => _ScanBinScreenState();
 }
 
-class _ScanBinScreenState extends State<ScanBinScreen> {
-  static bool get _isDesktopPlatform =>
-      !kIsWeb &&
-      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+class _ScanBinScreenState extends State<ScanBinScreen> with TickerProviderStateMixin {
+  CameraController? _cam;
+  bool _cameraReady = false;
+  bool _processingFrame = false;
+  int _frameCount = 0;
+  bool _confirmed = false;
 
-  static CameraFacing get _defaultFacing =>
-      CameraFacing.back;
+  final _BinColorDetector _detector = _BinColorDetector();
 
-  final MobileScannerController _controller = MobileScannerController(
-    autoStart: false,
-    detectionSpeed: DetectionSpeed.unrestricted,
-    formats: const [
-      BarcodeFormat.qrCode,
-      BarcodeFormat.code128,
-      BarcodeFormat.code39,
-      BarcodeFormat.ean13,
-      BarcodeFormat.ean8,
-      BarcodeFormat.upcA,
-      BarcodeFormat.upcE,
-    ],
-    facing: _defaultFacing,
-    torchEnabled: false,
-  );
-
-  bool _cameraStarting = false;
-  bool _switchingCamera = false;
-  bool _desktopCameraReady = false;
-  bool _desktopAnalyzing = false;
-  bool _processing = false;
-  String? _error;
-  String? _cameraError;
-  String? _cameraInfo;
-  final TextEditingController _manualCodeCtrl = TextEditingController();
-
-  CameraController? _desktopCameraController;
-  List<CameraDescription> _desktopCameras = const [];
-  int _desktopCameraIndex = 0;
-  Timer? _desktopScanTimer;
-  StreamSubscription<BarcodeCapture>? _desktopBarcodeSub;
+  late AnimationController _pulseCtrl;
 
   @override
   void initState() {
     super.initState();
-    if (_isDesktopPlatform) {
-      _setupDesktopScanner();
-    } else {
-      _startScannerWithFallback();
-    }
-  }
-
-  Future<void> _setupDesktopScanner() async {
-    _desktopBarcodeSub ??= _controller.barcodes.listen(_onDetect);
-    await _initDesktopCamera();
-  }
-
-  String _buildCameraErrorMessage(Object error) {
-    final details = error.toString();
-    final lower = details.toLowerCase();
-
-    if (lower.contains('permission') || lower.contains('notallowed')) {
-      return 'Camera permission denied. Enable camera access in Windows Privacy Settings for desktop apps.';
-    }
-    if (lower.contains('notfound') || lower.contains('unavailable')) {
-      return 'No usable camera was found. Check camera connection and close other apps that might be using it.';
-    }
-    return 'Camera is unavailable. $details';
-  }
-
-  Future<void> _startScannerWithFallback() async {
-    if (_isDesktopPlatform) {
-      await _initDesktopCamera();
-      return;
-    }
-
-    if (_cameraStarting) {
-      return;
-    }
-
-    _cameraStarting = true;
-    if (mounted) {
-      setState(() {
-        _cameraInfo = 'Starting camera...';
-        _cameraError = null;
-      });
-    }
-
-    final fallbackFacing =
-        _defaultFacing == CameraFacing.front ? CameraFacing.back : CameraFacing.front;
-
-    try {
-      await _controller.start(cameraFacingOverride: _defaultFacing);
-      if (!mounted) return;
-      setState(() {
-        _cameraInfo = null;
-        _cameraError = null;
-      });
-    } catch (primaryError) {
-      debugPrint('Primary scanner start failed: $primaryError');
-      try {
-        await _controller.start(cameraFacingOverride: fallbackFacing);
-        if (!mounted) return;
-        setState(() {
-          _cameraInfo = 'Primary camera unavailable. Switched to alternate camera.';
-          _cameraError = null;
-        });
-      } catch (fallbackError) {
-        if (!mounted) return;
-        setState(() {
-          _cameraInfo = null;
-          _cameraError = _buildCameraErrorMessage(fallbackError);
-        });
-      }
-    } finally {
-      _cameraStarting = false;
-      if (mounted) setState(() {});
-    }
-  }
-
-  Future<void> _retryCamera() async {
-    if (_isDesktopPlatform) {
-      await _initDesktopCamera();
-      return;
-    }
-
-    try {
-      await _controller.stop();
-    } catch (_) {}
-    await _startScannerWithFallback();
-  }
-
-  Future<void> _switchCameraManually() async {
-    if (_isDesktopPlatform) {
-      await _switchDesktopCamera();
-      return;
-    }
-
-    if (_switchingCamera) return;
-
-    _switchingCamera = true;
-    if (mounted) {
-      setState(() {
-        _cameraInfo = 'Switching camera...';
-        _cameraError = null;
-      });
-    }
-
-    try {
-      await _controller.switchCamera();
-      if (!mounted) return;
-      setState(() {
-        _cameraInfo = 'Camera switched successfully.';
-        _cameraError = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _cameraInfo = null;
-        _cameraError = _buildCameraErrorMessage(e);
-      });
-    } finally {
-      _switchingCamera = false;
-      if (mounted) setState(() {});
-    }
-  }
-
-  Future<void> _initDesktopCamera({int? forcedIndex}) async {
-    if (_cameraStarting) return;
-    _cameraStarting = true;
-
-    if (mounted) {
-      setState(() {
-        _cameraInfo = 'Starting laptop camera...';
-        _cameraError = null;
-      });
-    }
-
-    try {
-      _desktopCameras = await availableCameras();
-      if (_desktopCameras.isEmpty) {
-        throw CameraException('no_camera', 'No camera found on this device.');
-      }
-
-      if (forcedIndex != null) {
-        _desktopCameraIndex = forcedIndex % _desktopCameras.length;
-      } else {
-        final back = _desktopCameras.indexWhere(
-          (c) => c.lensDirection == CameraLensDirection.back,
-        );
-        _desktopCameraIndex = back >= 0 ? back : 0;
-      }
-
-      final controller = CameraController(
-        _desktopCameras[_desktopCameraIndex],
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
-
-      await controller.initialize();
-
-      if (!mounted) {
-        await controller.dispose();
-        return;
-      }
-
-      await _desktopCameraController?.dispose();
-      _desktopCameraController = controller;
-
-      setState(() {
-        _desktopCameraReady = true;
-        _cameraError = null;
-        _cameraInfo = 'Camera ready. Point it at the QR code.';
-      });
-
-      _startDesktopScanLoop();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _desktopCameraReady = false;
-        _cameraInfo = null;
-        _cameraError = _buildCameraErrorMessage(e);
-      });
-    } finally {
-      _cameraStarting = false;
-      if (mounted) setState(() {});
-    }
-  }
-
-  void _startDesktopScanLoop() {
-    _desktopScanTimer?.cancel();
-    _desktopScanTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      _captureAndAnalyzeDesktopFrame();
-    });
-  }
-
-  Future<void> _captureAndAnalyzeDesktopFrame() async {
-    final controller = _desktopCameraController;
-    if (!_isDesktopPlatform ||
-        _desktopAnalyzing ||
-        _processing ||
-        !_desktopCameraReady ||
-        controller == null ||
-        !controller.value.isInitialized) {
-      return;
-    }
-
-    _desktopAnalyzing = true;
-    try {
-      final shot = await controller.takePicture();
-      await _controller.analyzeImage(shot.path);
-      try {
-        final f = File(shot.path);
-        if (f.existsSync()) f.deleteSync();
-      } catch (_) {}
-    } catch (e) {
-      debugPrint('Desktop frame scan failed: $e');
-    } finally {
-      _desktopAnalyzing = false;
-    }
-  }
-
-  Future<void> _switchDesktopCamera() async {
-    if (_switchingCamera) return;
-    if (_desktopCameras.isEmpty) {
-      await _initDesktopCamera();
-      return;
-    }
-
-    _switchingCamera = true;
-    try {
-      final next = (_desktopCameraIndex + 1) % _desktopCameras.length;
-      await _initDesktopCamera(forcedIndex: next);
-    } finally {
-      _switchingCamera = false;
-      if (mounted) setState(() {});
-    }
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _initCamera();
   }
 
   @override
   void dispose() {
-    _desktopScanTimer?.cancel();
-    _desktopBarcodeSub?.cancel();
-    _desktopCameraController?.dispose();
-    _manualCodeCtrl.dispose();
-    _controller.dispose();
+    _pulseCtrl.dispose();
+    _cam?.stopImageStream();
+    _cam?.dispose();
     super.dispose();
   }
 
-  Future<void> _handleDetectedCode(String code) async {
-    if (_processing) return;
-
-    debugPrint('Bin scan detected value: $code');
-
-    setState(() {
-      _processing = true;
-      _error = null;
-      _cameraInfo = null;
-    });
-
+  Future<void> _initCamera() async {
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) return;
+    final camera = cameras.firstWhere(
+      (c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => cameras.first,
+    );
+    _cam = CameraController(
+      camera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.yuv420,
+    );
     try {
-      final firestore = context.read<FirestoreService>();
-      final bin = await firestore.getBin(code);
+      await _cam!.initialize();
       if (!mounted) return;
-      if (bin != null) {
-        widget.onScanned(bin.binId);
-        return;
-      }
-
-      final shouldAdd = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Bin Not Found'),
-              content: Text('Add this QR as a new bin?\n\nBin ID: $code'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Add Bin'),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-
-      if (!mounted) return;
-      if (shouldAdd) {
-        await firestore.setBin(
-          BinModel(
-            binId: code,
-            qrCode: code,
-            locationName: 'User Added Bin',
-          ),
-        );
-        if (!mounted) return;
-        widget.onScanned(code);
-      } else {
-        setState(() {
-          _error = 'Unknown bin. Please scan or enter a registered bin code.';
-          _processing = false;
-        });
-      }
+      setState(() => _cameraReady = true);
+      await _cam!.startImageStream(_onFrame);
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = 'Failed to validate bin code. Please try again.';
-        _processing = false;
-      });
-      debugPrint('Bin validation error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Camera error: $e')));
     }
   }
 
-  Future<void> _onDetect(BarcodeCapture capture) async {
-    final barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
-    String? code;
-    for (final b in barcodes) {
-      final value = _extractCodeFromBarcode(b);
-      if (value != null && value.isNotEmpty) {
-        code = value;
-        break;
+  void _onFrame(CameraImage image) {
+    _frameCount++;
+    if (_frameCount % 2 != 0 || _processingFrame || _confirmed) return;
+    _processingFrame = true;
+    try {
+      _detector.update(image);
+      if (mounted) setState(() {});
+
+      if (_detector.hasDetection && _detector.detectedType != BinType.unknown) {
+        _onBinDetected(_detector.detectedType);
       }
+    } finally {
+      _processingFrame = false;
     }
-    if (code == null || code.isEmpty) return;
-    await _handleDetectedCode(code);
   }
 
-  String? _extractCodeFromBarcode(Barcode barcode) {
-    final String? direct = (barcode.rawValue ?? barcode.displayValue)?.trim();
-    if (direct != null && direct.isNotEmpty) return direct;
+  Future<void> _onBinDetected(BinType type) async {
+    if (_confirmed) return;
+    _confirmed = true;
+    await _cam?.stopImageStream();
 
-    final bytes = barcode.rawBytes;
-    if (bytes == null || bytes.isEmpty) return null;
+    if (!mounted) return;
 
-    try {
-      final utf8Value = utf8.decode(bytes, allowMalformed: true).trim();
-      if (utf8Value.isNotEmpty) return utf8Value;
-    } catch (_) {}
-
-    try {
-      final latin1Value = latin1.decode(bytes, allowInvalid: true).trim();
-      if (latin1Value.isNotEmpty) return latin1Value;
-    } catch (_) {}
-
-    return null;
-  }
-
-  Future<void> _enterCodeManually() async {
-    if (_processing) return;
-    _manualCodeCtrl.text = '';
-    final String? entered = await showDialog<String>(
+    final BinType? confirmedType = await showModalBottomSheet<BinType>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Enter Bin Code Manually'),
-        content: TextField(
-          controller: _manualCodeCtrl,
-          autofocus: true,
-          textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(
-            hintText: 'Paste or type QR value',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(_manualCodeCtrl.text.trim()),
-            child: const Text('Continue'),
-          ),
-        ],
+      isDismissible: false,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _BinConfirmSheet(
+        detectedType: type,
+        onConfirm: (finalType) => Navigator.pop(context, finalType),
+        onRetry: () => Navigator.pop(context),
       ),
     );
 
-    final code = entered?.trim();
-    if (code == null || code.isEmpty) return;
-    await _handleDetectedCode(code);
+    if (!mounted) return;
+
+    if (confirmedType != null) {
+      widget.onScanned(confirmedType.storageValue);
+    } else {
+      _confirmed = false;
+      _detector.reset();
+      await _cam?.startImageStream(_onFrame);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Scan Bin QR'),
+        backgroundColor: Colors.black,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: widget.onBack,
         ),
+        centerTitle: true,
+        title: const Text(
+          'Scan Bin',
+          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w500),
+        ),
       ),
-      body: Stack(
-        children: [
-          if (_isDesktopPlatform)
-            if (_desktopCameraReady && _desktopCameraController != null)
-              SizedBox.expand(child: CameraPreview(_desktopCameraController!))
-            else
-              Container(
-                color: Colors.black,
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(horizontal: 24),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (!_cameraReady || _cam == null || !_cam!.value.isInitialized) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF67E8A8)));
+    }
+
+    return LayoutBuilder(
+      builder: (ctx, box) {
+        final Size size = Size(box.maxWidth, box.maxHeight);
+        final BinType type = _detector.detectedType;
+        final bool locked = _detector.hasDetection;
+        final Color ringColor = locked ? type.color : Colors.white38;
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(child: CameraPreview(_cam!)),
+            Container(color: Colors.black.withValues(alpha: 0.12)),
+            Center(
+              child: AnimatedBuilder(
+                animation: _pulseCtrl,
+                builder: (_, __) {
+                  final double pulse = _pulseCtrl.value;
+                  return Container(
+                    width: size.width * 0.80,
+                    height: size.width * 0.80,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: ringColor.withValues(alpha: locked ? 0.85 + pulse * 0.15 : 0.40),
+                        width: locked ? 4.0 : 2.0,
+                      ),
+                      boxShadow: locked
+                          ? [
+                              BoxShadow(
+                                color: type.color.withValues(alpha: 0.25 + pulse * 0.15),
+                                blurRadius: 20 + pulse * 10,
+                                spreadRadius: 2,
+                              )
+                            ]
+                          : null,
+                    ),
+                  );
+                },
+              ),
+            ),
+            Positioned(
+              left: size.width * 0.10,
+              top: size.height * 0.10,
+              right: size.width * 0.10,
+              bottom: size.height * 0.25,
+              child: CustomPaint(
+                painter: _CornerPainter(
+                  color: locked ? type.color : Colors.white54,
+                  isLocked: locked,
+                ),
+              ),
+            ),
+            Positioned(
+              top: 20,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: locked
+                      ? Container(
+                          key: ValueKey(type),
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: type.color.withValues(alpha: 0.90),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(type.emoji, style: const TextStyle(fontSize: 18)),
+                              const SizedBox(width: 8),
+                              Text(
+                                type.displayName,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Container(
+                          key: const ValueKey('scanning'),
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.60),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            'Scanning for bin...',
+                            style: TextStyle(color: Colors.white70, fontSize: 13),
+                          ),
+                        ),
+                ),
+              ),
+            ),
+            if (!locked)
+              Positioned(
+                bottom: 120,
+                left: 24,
+                right: 24,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _cellCount('🔴', _detector.redCells, Colors.red),
+                    _cellCount('🟢', _detector.greenCells, Colors.green),
+                    _cellCount('🟣', _detector.purpleCells, Colors.purple),
+                  ],
+                ),
+              ),
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: 24,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.62),
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.videocam_off,
-                      color: Colors.white,
-                      size: 40,
-                    ),
-                    const SizedBox(height: 12),
                     const Text(
-                      'Laptop camera unavailable.',
+                      'Point camera at the recycling bin',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                      ),
+                      style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(
-                      _cameraError ?? 'Please allow camera access and retry.',
+                      'Works with 🔴 Coca-Cola / Cargills  •  🟢 Keells  •  🟣 Eco Spindles',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white70),
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 11),
                     ),
                   ],
                 ),
-              )
-          else
-            MobileScanner(
-              controller: _controller,
-              onDetect: _onDetect,
-              errorBuilder: (context, error, child) {
-                if (_cameraError == null) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted) return;
-                    setState(() {
-                      _cameraError = _buildCameraErrorMessage(error);
-                    });
-                  });
-                }
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
-                return Container(
-                  color: Colors.black,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.videocam_off,
-                        color: Colors.white,
-                        size: 40,
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Camera is unavailable.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _cameraError ?? 'Please allow camera permission and try again.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          if (_cameraStarting)
-            const Center(
-              child: CircularProgressIndicator(color: Colors.white),
-            ),
-          Positioned(
-            right: 16,
-            top: 16,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _switchingCamera ? null : _switchCameraManually,
-                  icon: const Icon(Icons.cameraswitch, color: Colors.white, size: 18),
-                  label: Text(
-                    _switchingCamera ? 'Switching...' : 'Switch',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _cameraStarting ? null : _retryCamera,
-                  icon: const Icon(Icons.refresh, color: Colors.white, size: 18),
-                  label: Text(
-                    _cameraStarting ? 'Starting...' : 'Retry',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
+  Widget _cellCount(String emoji, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        '$emoji $count cells',
+        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+class _CornerPainter extends CustomPainter {
+  const _CornerPainter({required this.color, required this.isLocked});
+
+  final Color color;
+  final bool isLocked;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = isLocked ? 3.5 : 2.0
+      ..strokeCap = StrokeCap.round;
+
+    const double arm = 22.0;
+    final double w = size.width;
+    final double h = size.height;
+
+    canvas.drawLine(const Offset(0, arm), const Offset(0, 0), paint);
+    canvas.drawLine(const Offset(0, 0), const Offset(arm, 0), paint);
+
+    canvas.drawLine(Offset(w - arm, 0), Offset(w, 0), paint);
+    canvas.drawLine(Offset(w, 0), Offset(w, arm), paint);
+
+    canvas.drawLine(Offset(0, h - arm), Offset(0, h), paint);
+    canvas.drawLine(Offset(0, h), Offset(arm, h), paint);
+
+    canvas.drawLine(Offset(w, h - arm), Offset(w, h), paint);
+    canvas.drawLine(Offset(w, h), Offset(w - arm, h), paint);
+  }
+
+  @override
+  bool shouldRepaint(_CornerPainter old) => old.color != color || old.isLocked != isLocked;
+}
+
+class _BinConfirmSheet extends StatefulWidget {
+  const _BinConfirmSheet({
+    required this.detectedType,
+    required this.onConfirm,
+    required this.onRetry,
+  });
+
+  final BinType detectedType;
+  final void Function(BinType) onConfirm;
+  final VoidCallback onRetry;
+
+  @override
+  State<_BinConfirmSheet> createState() => _BinConfirmSheetState();
+}
+
+class _BinConfirmSheetState extends State<_BinConfirmSheet> {
+  late BinType _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.detectedType;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
-          if (_cameraInfo != null && _cameraError == null)
-            Positioned(
-              left: 24,
-              right: 24,
-              top: 24,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(10),
+          const SizedBox(height: 16),
+          const Text('Bin Detected!', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('Is this the correct bin? Correct it if needed.', style: TextStyle(fontSize: 13, color: Colors.grey)),
+          const SizedBox(height: 16),
+          ...BinType.values.where((t) => t != BinType.unknown).map(
+                (t) => _BinOption(
+                  type: t,
+                  selected: _selected == t,
+                  onTap: () => setState(() => _selected = t),
                 ),
-                child: Text(
-                  _cameraInfo!,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
+              ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => widget.onConfirm(_selected),
+              icon: const Icon(Icons.check_circle),
+              label: const Text('Confirm Bin'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _selected.color,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
-          if (_error != null)
-            Positioned(
-              left: 24,
-              right: 24,
-              bottom: 48,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.error.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          else
-            Positioned(
-              left: 24,
-              right: 24,
-              bottom: 48,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Point your camera at the recycling bin QR code',
-                      style: TextStyle(color: Colors.white),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _processing ? null : _enterCodeManually,
-                      child: const Text('Enter code manually'),
-                    ),
-                  ],
-                ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: widget.onRetry,
+              icon: const Icon(Icons.camera_alt_outlined),
+              label: const Text('Scan Again'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.grey.shade700,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _BinOption extends StatelessWidget {
+  const _BinOption({
+    required this.type,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final BinType type;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? type.color.withValues(alpha: 0.10) : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? type.color : Colors.grey.shade200,
+            width: selected ? 2.0 : 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            Text(type.emoji, style: const TextStyle(fontSize: 22)),
+            const SizedBox(width: 12),
+            Text(
+              type.displayName,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: selected ? type.color : Colors.black87,
+              ),
+            ),
+            const Spacer(),
+            if (selected) Icon(Icons.check_circle, color: type.color, size: 20),
+          ],
+        ),
       ),
     );
   }

@@ -123,7 +123,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
           phone: mobile,
           bottleCount: _bottleCount,
           totalPoints: latestUser?.totalPoints ?? auth.user?.totalPoints ?? 0,
-        ).catchError((_) {});
+        ).catchError((_) => false);
       }
 
       if (!mounted) return;
