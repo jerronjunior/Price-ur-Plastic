@@ -32,12 +32,10 @@ class _MapScreenState extends State<MapScreen> {
   void initState() {
     super.initState();
     _startupTimer.start();
-    // Start initialization in background so the map can render immediately
-    // If we have a cached location, show it immediately so the map centers faster
+
     final cached = LocationService().getCachedLocation();
-    if (cached != null) {
+    if (cached != null && cached.latitude != null && cached.longitude != null) {
       _userLatLng = LatLng(cached.latitude!, cached.longitude!);
-      // add user marker right away
       _markers.add(Marker(
         markerId: const MarkerId('user'),
         position: _userLatLng!,
@@ -46,36 +44,13 @@ class _MapScreenState extends State<MapScreen> {
       ));
     }
 
+    _subscribeToBins();
     _startBackgroundInit();
   }
-  void _startBackgroundInit() {
-    // Fire-and-forget: run initialization without blocking the first frame
-    unawaited(_backgroundInit());
-  }
 
-  Future<void> _backgroundInit() async {
-    final locService = LocationService();
+  void _subscribeToBins() {
     final fs = Provider.of<FirestoreService>(context, listen: false);
-
-    final permissionOk = await locService.requestPermission();
-    if (!permissionOk) {
-      debugPrint('Map init: location permission denied');
-      return;
-    }
-
-    // Get latest location (may take time) but don't block the UI
-    try {
-      final loc = await locService.getCurrentLocation();
-      if (loc != null && mounted) {
-        _updateUserLocation(LatLng(loc.latitude!, loc.longitude!));
-        debugPrint('Map init: got current location after ${_startupTimer.elapsedMilliseconds} ms');
-      }
-    } catch (e) {
-      debugPrint('Map init: failed to get current location: $e');
-    }
-
-    // Subscribe to bins updates (real-time). This will update markers when data arrives.
-    _binsSubscription = fs.getAllBinsStream().listen((bins) {
+    _binsSubscription ??= fs.getAllBinsStream().listen((bins) {
       if (!mounted) return;
       setState(() {
         _bins = bins;
@@ -94,8 +69,25 @@ class _MapScreenState extends State<MapScreen> {
     }, onError: (e) {
       debugPrint('Map init: bins stream error: $e');
     });
+  }
 
-    // Mark overall startup time when we have at least one of location or bins
+  void _startBackgroundInit() {
+    unawaited(_backgroundInit());
+  }
+
+  Future<void> _backgroundInit() async {
+    final locService = LocationService();
+
+    try {
+      final loc = await locService.getCurrentLocation();
+      if (loc != null && mounted && loc.latitude != null && loc.longitude != null) {
+        _updateUserLocation(LatLng(loc.latitude!, loc.longitude!));
+        debugPrint('Map init: got current location after ${_startupTimer.elapsedMilliseconds} ms');
+      }
+    } catch (e) {
+      debugPrint('Map init: failed to get current location: $e');
+    }
+
     debugPrint('Map init: background init completed at ${_startupTimer.elapsedMilliseconds} ms');
   }
 
@@ -147,7 +139,9 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _showBinBottomSheet(BinModel bin) {
-    final dist = _userLatLng == null ? null : _distanceMeters(_userLatLng!, LatLng(bin.latitude, bin.longitude));
+    final dist = _userLatLng == null
+        ? null
+        : _distanceMeters(_userLatLng!, LatLng(bin.latitude, bin.longitude));
     showModalBottomSheet(
       context: context,
       builder: (_) => Padding(
@@ -158,24 +152,26 @@ class _MapScreenState extends State<MapScreen> {
           children: [
             Text(bin.locationName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            if (dist != null) Text('${(dist/1000).toStringAsFixed(2)} km away'),
+            if (dist != null) Text('${(dist / 1000).toStringAsFixed(2)} km away'),
             const SizedBox(height: 12),
-            Row(children: [
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _getDirectionsTo(bin);
-                },
-                child: const Text('Get Directions'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-                child: const Text('Close'),
-              ),
-            ])
+            Row(
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _getDirectionsTo(bin);
+                  },
+                  child: const Text('Get Directions'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Close'),
+                ),
+              ],
+            )
           ],
         ),
       ),
@@ -183,13 +179,13 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   double _distanceMeters(LatLng a, LatLng b) {
-    const earth = 6371000; // meters
+    const earth = 6371000;
     final dLat = _deg2rad(b.latitude - a.latitude);
     final dLon = _deg2rad(b.longitude - a.longitude);
     final lat1 = _deg2rad(a.latitude);
     final lat2 = _deg2rad(b.latitude);
-    final h = (sin(dLat/2) * sin(dLat/2)) + cos(lat1) * cos(lat2) * (sin(dLon/2) * sin(dLon/2));
-    final c = 2 * atan2(sqrt(h), sqrt(1-h));
+    final h = (sin(dLat / 2) * sin(dLat / 2)) + cos(lat1) * cos(lat2) * (sin(dLon / 2) * sin(dLon / 2));
+    final c = 2 * atan2(sqrt(h), sqrt(1 - h));
     return earth * c;
   }
 
@@ -223,9 +219,7 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final bins = await _loadBinsForNearest();
-    final usableBins = bins
-        .where((b) => b.latitude != 0.0 || b.longitude != 0.0)
-        .toList(growable: false);
+    final usableBins = bins.where((b) => b.latitude != 0.0 || b.longitude != 0.0).toList(growable: false);
 
     if (usableBins.isEmpty) {
       if (mounted) {
@@ -300,7 +294,7 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Explore Locations')),
       body: GoogleMap(
-        initialCameraPosition: CameraPosition(target: _userLatLng ?? const LatLng(0,0), zoom: 14),
+        initialCameraPosition: CameraPosition(target: _userLatLng ?? const LatLng(0, 0), zoom: 14),
         myLocationEnabled: _userLatLng != null,
         markers: _markers,
         polylines: _polylines,
@@ -332,7 +326,7 @@ class _MapScreenState extends State<MapScreen> {
             heroTag: 'loc',
             onPressed: () async {
               final l = await LocationService().getCurrentLocation();
-              if (l != null) {
+              if (l != null && l.latitude != null && l.longitude != null) {
                 final pos = LatLng(l.latitude!, l.longitude!);
                 _updateUserLocation(pos);
               }

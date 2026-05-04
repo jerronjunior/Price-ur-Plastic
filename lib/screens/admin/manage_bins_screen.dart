@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:location/location.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/theme.dart';
 import '../../models/bin_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/location_service.dart';
 
 /// Admin screen to manage recycling bins.
 class ManageBinsScreen extends StatefulWidget {
@@ -479,27 +479,10 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
   }
 
   Future<LatLng?> _pickLocationFromMap() async {
-    final location = Location();
-    LatLng initial = const LatLng(0, 0);
-
-    try {
-      final enabled = await location.serviceEnabled() || await location.requestService();
-      if (enabled) {
-        final permission = await location.hasPermission();
-        final granted = permission == PermissionStatus.granted ||
-            permission == PermissionStatus.grantedLimited ||
-            (permission == PermissionStatus.denied &&
-                await location.requestPermission() == PermissionStatus.granted);
-        if (granted) {
-          final current = await location.getLocation();
-          if (current.latitude != null && current.longitude != null) {
-            initial = LatLng(current.latitude!, current.longitude!);
-          }
-        }
-      }
-    } catch (_) {
-      // Use fallback initial position.
-    }
+    final cached = LocationService().getCachedLocation();
+    final initial = (cached != null && cached.latitude != null && cached.longitude != null)
+        ? LatLng(cached.latitude!, cached.longitude!)
+        : const LatLng(0, 0);
 
     LatLng selected = initial;
 
@@ -530,7 +513,7 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
                   markers: markers,
                   onTap: (pos) => setLocalState(() => selected = pos),
                   zoomControlsEnabled: true,
-                  myLocationButtonEnabled: true,
+                  myLocationButtonEnabled: false,
                 ),
               ),
               actions: [
