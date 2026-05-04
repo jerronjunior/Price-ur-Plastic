@@ -6,398 +6,262 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
-// _SlotTracker
-//
-// Finds the bin slot (flap) position in the camera frame every frame using
-// only the Y-plane (luminance) from the YUV420 image — no ML, no packages.
-//
-// WHY THIS WORKS FOR YOUR BIN:
-//   The arrow flap is tan/amber (Y ≈ 150–200).
-//   The bin body is dark purple/maroon (Y ≈ 30–80).
-//   The cage interior is yellow/lit (Y ≈ 120–180).
-//   By scanning a grid of cells and finding the HIGHEST contrast region,
-//   we reliably locate the flap zone even as the camera moves.
-//
-// HOW IT WORKS:
-//   1. Divide the upper 70% of the frame into a 9×6 grid of cells.
-//   2. Compute mean brightness of each cell (sampled every 6 pixels).
-//   3. Find the cell with the peak brightness — that is the flap.
-//   4. Low-pass filter (α=0.12) the found position to avoid jitter.
-//   5. Expose slotNormX, slotNormY (0.0–1.0) as the tracked position.
-//
-// FALLBACK:
-//   If the brightest cell is below a minimum threshold (too dark → phone
-//   not pointing at bin), returns the last known position (or center).
-// ══════════════════════════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════════════════════════
-// _SlotTracker  v3  —  Pixel-level centroid accuracy
-//
-// Finds the EXACT center of the tan/brown flap by computing a weighted
-// centroid across every qualifying pixel — not a coarse grid cell.
-//
-// WHY CENTROID IS MORE ACCURATE THAN GRID:
-//   A 11×8 grid cell covers ~9% horizontally × ~7% vertically.
-//   The crosshair can be up to half a cell width off = 4.5% away from center.
-//   On a 400px wide phone screen that's ±18px of error — visibly wrong.
-//
-//   Centroid uses every sampled pixel. If 300 pixels qualify as "tan flap"
-//   and they're spread across x=120..200, the centroid is exactly at x=160.
-//   Accuracy is bounded by sample step (4px) not cell size (~40px).
-//
-// THREE-PASS ALGORITHM:
-//
-//   Pass 1 — Full-frame Y scan (every 8px):
-//     Compute mean Y of the entire search region.
-//     This gives us the "ambient" brightness to set an adaptive threshold.
-//
-//   Pass 2 — Qualifying pixel collection (every 4px):
-//     A pixel qualifies as "tan flap" if ALL of:
-//       • Y ∈ [_minY, _maxY]         — bright but not sky/paper
-//       • V > _minV                  — warm tone (tan/amber, not purple/white)
-//       • Y > ambientY + _deltaY     — brighter than scene average
-//     Collect (px, py, weight=Y) for qualifying pixels.
-//
-//   Pass 3 — Weighted centroid:
-//     centroidX = Σ(px × Y) / Σ(Y)
-//     centroidY = Σ(py × Y) / Σ(Y)
-//     Heavier weight on brighter pixels → center of the brightest part of flap.
-//
-// LOCK MECHANISM (unchanged from v2):
-//   Seeking: α = 0.20  (snaps to flap quickly)
-//   Locked:  α = 0.02  (barely moves — 8 consistent frames to lock)
-//   Noise rejection: ignores detections >15% from lock center
+// _SlotTracker  v3 — pixel-level centroid (unchanged, works well)
 // ══════════════════════════════════════════════════════════════════════════════
 class _SlotTracker {
-  // Search region: upper 65% of frame
   static const double _scanTop    = 0.02;
   static const double _scanBottom = 0.65;
-
-  // Tan/amber flap Y range (bin body is Y≈30-80, white paper is Y≈200-240)
-  static const double _minY   = 88.0;
-  static const double _maxY   = 205.0;
-
-  // V channel warmth: tan is warm (V>130), purple bin is cool (V≈110-125),
-  // white paper is neutral (V≈128)
-  static const double _minV   = 130.0;
-
-  // Minimum pixels qualifying as "tan flap" for a valid detection
-  static const int    _minPixels = 20;
-
-  // Adaptive threshold: pixel must be this much brighter than scene mean
-  static const double _deltaY = 8.0;
-
-  // Lock mechanism
+  static const double _minY       = 88.0;
+  static const double _maxY       = 205.0;
+  static const double _minV       = 130.0;
+  static const int    _minPixels  = 20;
+  static const double _deltaY     = 8.0;
   static const int    _lockFrames  = 4;
   static const double _seekAlpha   = 0.35;
   static const double _lockedAlpha = 0.05;
   static const double _unlockDist  = 0.20;
 
-  // ── Public ─────────────────────────────────────────────────────────────────
   double slotNormX = 0.50;
   double slotNormY = 0.28;
   bool   hasLock   = false;
 
-  // ── Internal ───────────────────────────────────────────────────────────────
-  int    _streak   = 0;
-  bool   _locked   = false;
-  double _lockX    = 0.50;
-  double _lockY    = 0.28;
+  int    _streak = 0;
+  bool   _locked = false;
+  double _lockX  = 0.50;
+  double _lockY  = 0.28;
 
   void update(CameraImage image) {
     final int fw = image.width;
     final int fh = image.height;
-
     final Uint8List yPlane = image.planes[0].bytes;
     final Uint8List? vPlane =
         image.planes.length > 2 ? image.planes[2].bytes : null;
-
-    // UV planes are half-resolution in YUV420
     final int uvRowStride = image.planes.length > 2
-        ? image.planes[2].bytesPerRow
-        : (fw ~/ 2);
+        ? image.planes[2].bytesPerRow : (fw ~/ 2);
 
-    final int py0 = (_scanTop    * fh).toInt();
+    final int py0 = (_scanTop * fh).toInt();
     final int py1 = (_scanBottom * fh).toInt();
 
-    // ── Pass 1: Compute adaptive ambient brightness ──────────────────────────
-    // Sample coarsely (every 8px) to get scene mean Y quickly.
-    double ambientSum = 0;
-    int    ambientCnt = 0;
+    // Pass 1: ambient brightness
+    double ambientSum = 0; int ambientCnt = 0;
     for (int py = py0; py < py1; py += 8) {
       for (int px = 0; px < fw; px += 8) {
         final int yi = py * fw + px;
-        if (yi < yPlane.length) {
-          ambientSum += yPlane[yi];
-          ambientCnt++;
-        }
+        if (yi < yPlane.length) { ambientSum += yPlane[yi]; ambientCnt++; }
       }
     }
     final double ambientY = ambientCnt > 0 ? ambientSum / ambientCnt : 100;
     final double threshold = ambientY + _deltaY;
 
-    // ── Pass 2 + 3: Collect qualifying pixels and compute weighted centroid ──
+    // Pass 2+3: weighted centroid of tan flap pixels
     double wSumX = 0, wSumY = 0, wTotal = 0;
-    int    pixelCount = 0;
-
+    int pixelCount = 0;
     for (int py = py0; py < py1; py += 4) {
       for (int px = 0; px < fw; px += 4) {
         final int yi = py * fw + px;
         if (yi >= yPlane.length) continue;
-
         final double yVal = yPlane[yi].toDouble();
-
-        // Y range check
-        if (yVal < _minY || yVal > _maxY) continue;
-
-        // Must be brighter than ambient
-        if (yVal < threshold) continue;
-
-        // V channel warmth check (only if UV planes available)
+        if (yVal < _minY || yVal > _maxY || yVal < threshold) continue;
         if (vPlane != null) {
           final int vi = (py ~/ 2) * uvRowStride + (px ~/ 2);
-          if (vi < vPlane.length) {
-            final double vVal = vPlane[vi].toDouble();
-            if (vVal < _minV) continue;
-          }
+          if (vi < vPlane.length && vPlane[vi].toDouble() < _minV) continue;
         }
-
-        // This pixel qualifies — add to weighted centroid
-        wSumX    += px * yVal;
-        wSumY    += py * yVal;
-        wTotal   += yVal;
-        pixelCount++;
+        wSumX += px * yVal; wSumY += py * yVal;
+        wTotal += yVal; pixelCount++;
       }
     }
 
     final bool detected = pixelCount >= _minPixels && wTotal > 0;
-
     if (!detected) {
       _streak = (_streak - 1).clamp(0, _lockFrames);
       if (_streak == 0) { _locked = false; hasLock = false; }
-      return; // keep last position
+      return;
     }
 
-    // ── Exact centroid in normalised coords ──────────────────────────────────
     final double rawX = (wSumX / wTotal) / fw;
     final double rawY = (wSumY / wTotal) / fh;
 
-    // ── Noise rejection: ignore if too far from lock ─────────────────────────
     if (_locked) {
       final double d = _hypot(rawX - _lockX, rawY - _lockY);
-      if (d > _unlockDist) {
-        // Probably noise / specular reflection. Keep locked position.
-        hasLock = true;
-        return;
-      }
+      if (d > _unlockDist) { hasLock = true; return; }
     }
 
-    // ── Lock state machine ───────────────────────────────────────────────────
     _streak = (_streak + 1).clamp(0, _lockFrames + 1);
     if (_streak >= _lockFrames && !_locked) {
-      _locked = true;
-      _lockX  = slotNormX;
-      _lockY  = slotNormY;
+      _locked = true; _lockX = slotNormX; _lockY = slotNormY;
     }
-
     final double alpha = _locked ? _lockedAlpha : _seekAlpha;
     slotNormX += (rawX - slotNormX) * alpha;
     slotNormY += (rawY - slotNormY) * alpha;
-
-    // Drift lock reference very slowly so it adapts if phone moves permanently
-    if (_locked) {
-      _lockX += (rawX - _lockX) * 0.008;
-      _lockY += (rawY - _lockY) * 0.008;
-    }
-
+    if (_locked) { _lockX += (rawX - _lockX) * 0.008; _lockY += (rawY - _lockY) * 0.008; }
     hasLock = true;
   }
 
   double _hypot(double a, double b) => sqrt(a * a + b * b);
 
   void reset() {
-    slotNormX = 0.50;
-    slotNormY = 0.28;
-    hasLock   = false;
-    _locked   = false;
-    _lockX    = 0.50;
-    _lockY    = 0.28;
-    _streak   = 0;
+    slotNormX = 0.50; slotNormY = 0.28;
+    hasLock = false; _locked = false;
+    _lockX = 0.50; _lockY = 0.28; _streak = 0;
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// _FlapEngine  (unchanged)
+// _FlapEngine
+//
+// HOW THE COUNTING WORKS (simple version):
+//
+//   The bin slot has a tan/brown flap with a downward arrow on it.
+//   When a bottle is inserted, it pushes the flap → flap swings open.
+//   The flap blocks light → the zone goes DARK for ~0.5–2 seconds.
+//   When the bottle falls through, the flap closes → zone goes BRIGHT again.
+//
+//   BRIGHT → DARK (≥500ms) → BRIGHT AGAIN = 1 bottle counted ✅
+//
+// SHAKE REJECTION:
+//   A reference zone beside the flap is also monitored.
+//   Camera shake changes BOTH zones equally.
+//   A real bottle only darkens the FLAP zone.
+//   → If both change = camera shake = ignored ❌
+//   → If only flap zone changes = real bottle = counted ✅
+//
+// TIMING:
+//   _minHiddenMs = 500   minimum time flap must stay dark (rejects fast shadows)
+//   _maxHiddenMs = 3000  maximum time (longer = hand blocking, not a bottle)
+//   _cooldownMs  = 2500  wait before allowing next count (no double-count)
 // ══════════════════════════════════════════════════════════════════════════════
-enum _FlapState { idle, open }
+enum _FlapState {
+  idle,   // flap is visible (bright) — waiting for bottle
+  hidden, // flap is dark — bottle is going through
+}
 
 class _FlapEngine {
-  Rect zone           = const Rect.fromLTRB(0.25, 0.10, 0.75, 0.65);
-  Rect referenceZone  = const Rect.fromLTRB(0.78, 0.20, 0.96, 0.55);
+  // Detection zones — updated every frame to follow the tracked slot
+  Rect zone          = const Rect.fromLTRB(0.25, 0.10, 0.75, 0.65);
+  Rect referenceZone = const Rect.fromLTRB(0.78, 0.20, 0.96, 0.55);
 
+  // Calibration baselines
   double baselineBrightness          = 0;
   double baselineReferenceBrightness = 0;
   bool   isCalibrated                = false;
-  double darkThresholdFraction       = 0.25;
 
+  // How much darker than baseline = "flap is hidden"
+  // 0.25 = zone must drop 25% below baseline
+  // Increase if false triggers; decrease if real bottles are missed
+  double darkThresholdFraction = 0.25;
+
+  // Shake rejection: if reference zone changes by more than this → camera moved
   static const double _shakeRejectFraction = 0.12;
 
-  _FlapState state                = _FlapState.idle;
-  double     currentBrightness    = 0;
+  // ── Timing ─────────────────────────────────────────────────────────────────
+  // Minimum ms flap must stay dark to count — rejects fast shadows
+  static const int _minHiddenMs = 500;
+  // Maximum ms — if dark longer, it's a hand blocking not a bottle
+  static const int _maxHiddenMs = 3000;
+  // Cooldown after each count — prevents double counting
+  static const int _cooldownMs  = 2500;
+
+  // State
+  _FlapState state              = _FlapState.idle;
+  double     currentBrightness = 0;
   double     currentReferenceBrightness = 0;
-  bool       lastRejectedByShake  = false;
-  DateTime?  _flapOpenTime;
-  bool       _countedThisOpen     = false;
-
-  static const int _minFlapOpenMs = 0;
-  static const int _maxFlapOpenMs = 3000;
-  static const int _cooldownMs    = 2500;
-
-  // Noise guard: require sustained open/close and meaningful darkness drop.
-  static const int _minOpenFrames = 1;
-  static const int _minCloseFrames = 1;
-  static const double _minOpenDropFraction = 0.20;
-  static const double _minOpenDropAbsolute = 10.0;
-
-  DateTime? _lastCount;
-  int _openFrames = 0;
-  int _closeFrames = 0;
-  double _minBrightnessDuringOpen = double.infinity;
+  bool       lastRejectedByShake = false;
+  DateTime?  _hiddenSince;
+  DateTime?  _lastCount;
 
   bool get inCooldown {
     if (_lastCount == null) return false;
     return DateTime.now().difference(_lastCount!).inMilliseconds < _cooldownMs;
   }
 
-  double get darkThreshold => baselineBrightness * (1.0 - darkThresholdFraction);
+  // The brightness level below which we say "flap is hidden/dark"
+  double get darkThreshold =>
+      baselineBrightness * (1.0 - darkThresholdFraction);
 
+  // ── Main detection — called every processed camera frame ──────────────────
+  //
+  // Returns TRUE when a bottle insertion is confirmed.
+  // This is the ONLY place that triggers a count.
+  //
   bool processFrame(CameraImage image) {
     if (!isCalibrated || inCooldown) return false;
 
-    currentBrightness          = _zoneBrightness(image, zone);
-    currentReferenceBrightness = _zoneBrightness(image, referenceZone);
+    // Measure brightness of flap zone and reference zone
+    currentBrightness          = _brightness(image, zone);
+    currentReferenceBrightness = _brightness(image, referenceZone);
 
-    final bool flapOpen = currentBrightness < darkThreshold;
-
+    // ── Shake check ──────────────────────────────────────────────────────────
+    // If the reference zone also changed a lot → camera moved, not a bottle
     if (baselineReferenceBrightness > 0) {
       final double refChange =
           (currentReferenceBrightness - baselineReferenceBrightness).abs() /
           baselineReferenceBrightness;
       if (refChange > _shakeRejectFraction) {
         lastRejectedByShake = true;
-        state = _FlapState.idle;
-        _flapOpenTime = null;
+        // Reset state — don't count anything while shaking
+        state       = _FlapState.idle;
+        _hiddenSince = null;
         return false;
       }
     }
-
     lastRejectedByShake = false;
 
-    switch (state) {
-      case _FlapState.idle:
-        if (flapOpen) {
-          _openFrames += 1;
-          _closeFrames = 0;
-          _minBrightnessDuringOpen =
-              currentBrightness < _minBrightnessDuringOpen
-                  ? currentBrightness
-                  : _minBrightnessDuringOpen;
+    // Is the flap currently dark (hidden by bottle)?
+    final bool flapHidden = currentBrightness < darkThreshold;
 
-          if (_openFrames >= _minOpenFrames) {
-            state = _FlapState.open;
-            _flapOpenTime = DateTime.now();
-            _countedThisOpen = false;
-          }
-        } else {
-          _openFrames = 0;
-          _closeFrames = 0;
-          _minBrightnessDuringOpen = double.infinity;
+    switch (state) {
+
+      // ── IDLE: flap is visible, waiting for a bottle ─────────────────────
+      case _FlapState.idle:
+        if (flapHidden) {
+          // Flap just went dark — bottle is entering
+          state        = _FlapState.hidden;
+          _hiddenSince = DateTime.now();
         }
         break;
-      case _FlapState.open:
-        if (flapOpen) {
-          _openFrames += 1;
-          _closeFrames = 0;
-          _minBrightnessDuringOpen =
-              currentBrightness < _minBrightnessDuringOpen
-                  ? currentBrightness
-                  : _minBrightnessDuringOpen;
 
-          final int openMs = _flapOpenTime != null
-              ? DateTime.now().difference(_flapOpenTime!).inMilliseconds
-              : 0;
-
-          final double drop = baselineBrightness - _minBrightnessDuringOpen;
-          final double dropFraction =
-              baselineBrightness > 0 ? drop / baselineBrightness : 0;
-          final bool meaningfulOcclusion =
-              dropFraction >= _minOpenDropFraction &&
-              drop >= _minOpenDropAbsolute;
-
-          if (!_countedThisOpen &&
-              openMs >= _minFlapOpenMs &&
-              meaningfulOcclusion) {
-            _countedThisOpen = true;
-            state = _FlapState.idle;
-            _flapOpenTime = null;
-            _openFrames = 0;
-            _closeFrames = 0;
-            _minBrightnessDuringOpen = double.infinity;
-            _lastCount = DateTime.now();
-            return true;
+      // ── HIDDEN: flap is dark, bottle is passing through ─────────────────
+      case _FlapState.hidden:
+        if (flapHidden) {
+          // Still dark — check if it's been too long (hand blocking)
+          final int hiddenMs = DateTime.now()
+              .difference(_hiddenSince!)
+              .inMilliseconds;
+          if (hiddenMs > _maxHiddenMs) {
+            // Dark for too long = hand or object blocking, not a bottle
+            state        = _FlapState.idle;
+            _hiddenSince = null;
           }
+          // Otherwise keep waiting — bottle is still passing through
         } else {
-          final int openMs = _flapOpenTime != null
-              ? DateTime.now().difference(_flapOpenTime!).inMilliseconds
-              : 0;
+          // ✅ Flap just became visible again — bottle has dropped in!
+          final int hiddenMs = DateTime.now()
+              .difference(_hiddenSince!)
+              .inMilliseconds;
 
-          final double drop = baselineBrightness - _minBrightnessDuringOpen;
-          final double dropFraction =
-              baselineBrightness > 0 ? drop / baselineBrightness : 0;
-          final bool meaningfulOcclusion =
-              dropFraction >= _minOpenDropFraction &&
-              drop >= _minOpenDropAbsolute;
+          state        = _FlapState.idle;
+          _hiddenSince = null;
 
-          if (openMs < _maxFlapOpenMs && meaningfulOcclusion) {
-            state = _FlapState.idle;
-            _flapOpenTime = null;
-            _openFrames = 0;
-            _closeFrames = 0;
-            _minBrightnessDuringOpen = double.infinity;
-            _countedThisOpen = false;
-            _lastCount = DateTime.now();
-            return true;
+          if (hiddenMs < _minHiddenMs) {
+            // Was dark for too short — just a shadow or flicker, not a bottle
+            return false;
           }
 
-          _closeFrames += 1;
-          if (_closeFrames >= _minCloseFrames) {
-            state = _FlapState.idle;
-            _flapOpenTime = null;
-            _openFrames = 0;
-            _closeFrames = 0;
-            _minBrightnessDuringOpen = double.infinity;
-            _countedThisOpen = false;
-          }
-        }
-        if (_flapOpenTime != null &&
-            DateTime.now()
-                    .difference(_flapOpenTime!)
-                    .inMilliseconds >
-                _maxFlapOpenMs) {
-          state = _FlapState.idle;
-          _flapOpenTime = null;
-          _openFrames = 0;
-          _closeFrames = 0;
-          _minBrightnessDuringOpen = double.infinity;
-          _countedThisOpen = false;
+          // Perfect: flap was dark for 500ms–3000ms then reopened = bottle in!
+          _lastCount = DateTime.now();
+          return true; // ✅ COUNT +1
         }
         break;
     }
     return false;
   }
 
+  // ── Calibration ───────────────────────────────────────────────────────────
+  // Called 25 times with the flap visible and slot empty.
+  // Learns what "normal brightness" looks like.
   void addCalibrationSample(CameraImage image) {
-    final double b = _zoneBrightness(image, zone);
-    final double r = _zoneBrightness(image, referenceZone);
+    final double b = _brightness(image, zone);
+    final double r = _brightness(image, referenceZone);
     if (baselineBrightness == 0) {
       baselineBrightness          = b;
       baselineReferenceBrightness = r;
@@ -411,7 +275,8 @@ class _FlapEngine {
     isCalibrated = baselineBrightness > 10;
   }
 
-  double _zoneBrightness(CameraImage image, Rect z) {
+  // ── Zone brightness helper ────────────────────────────────────────────────
+  double _brightness(CameraImage image, Rect z) {
     final int fw = image.width;
     final int fh = image.height;
     final Uint8List yPlane = image.planes[0].bytes;
@@ -419,8 +284,7 @@ class _FlapEngine {
     final int y0 = (z.top    * fh).toInt().clamp(0, fh - 1);
     final int x1 = (z.right  * fw).toInt().clamp(0, fw - 1);
     final int y1 = (z.bottom * fh).toInt().clamp(0, fh - 1);
-    double sum = 0;
-    int count  = 0;
+    double sum = 0; int count = 0;
     for (int py = y0; py < y1; py += 4) {
       for (int px = x0; px < x1; px += 4) {
         final int idx = py * fw + px;
@@ -431,13 +295,9 @@ class _FlapEngine {
   }
 
   void reset() {
-    state = _FlapState.idle;
-    _flapOpenTime = null;
+    state              = _FlapState.idle;
+    _hiddenSince       = null;
     lastRejectedByShake = false;
-    _openFrames = 0;
-    _closeFrames = 0;
-    _minBrightnessDuringOpen = double.infinity;
-    _countedThisOpen = false;
   }
 }
 
@@ -465,35 +325,29 @@ class InsertionDetectorScreen extends StatefulWidget {
 
 class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-  // ── Camera ─────────────────────────────────────────────────────────────────
+
   CameraController? _cam;
-  bool _cameraReady    = false;
+  bool _cameraReady     = false;
   bool _processingFrame = false;
-  int  _frameCount     = 0;
-  bool _detected       = false;
-  bool _hasSeenLock = false;
+  int  _frameCount      = 0;
+  bool _detected        = false;
 
-  // ── Detection engine ────────────────────────────────────────────────────────
   final _FlapEngine  _engine  = _FlapEngine();
-
-  // ── Slot tracker (replaces accelerometer) ───────────────────────────────────
-  // Every camera frame the tracker scans the Y-plane brightness grid to find
-  // where the bright tan/amber flap is and smoothly updates slotNormX/Y.
   final _SlotTracker _tracker = _SlotTracker();
 
-  // ── Calibration ────────────────────────────────────────────────────────────
-  bool _calibrating        = false;
-  int  _calibrationFrames  = 0;
+  bool _calibrating       = false;
+  int  _calibrationFrames = 0;
   static const int _calibrationFrameCount = 25;
 
-  // ── Timeout ────────────────────────────────────────────────────────────────
+  // Lock must be stable for this many frames before detection starts
+  // Prevents false counts right when lock is first acquired
+  int _stableFrames = 0;
+  static const int _requiredStableFrames = 8;
+
   Timer? _timeoutTimer;
   late int _remainingSeconds;
 
-  // ── Dot march animation ─────────────────────────────────────────────────────
   late AnimationController _dotCtrl;
-
-  // ── Flash on count ──────────────────────────────────────────────────────────
   late AnimationController _flashCtrl;
   bool _showFlash = false;
 
@@ -504,14 +358,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _remainingSeconds = widget.timeoutSeconds;
 
     _dotCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
+        vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat();
 
     _flashCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    );
+        vsync: this, duration: const Duration(milliseconds: 500));
 
     _startTimeout();
     _initCamera();
@@ -550,7 +401,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
 
-    // Always use the back camera — prefer back, fall back to first available
     final camera = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.back,
       orElse: () => cameras.first,
@@ -565,23 +415,22 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     try {
       await _cam!.initialize();
-
-      // Keep preview at neutral optical zoom (1.0) when supported.
       try {
-        final minZoom = await _cam!.getMinZoomLevel();
-        final maxZoom = await _cam!.getMaxZoomLevel();
-        final neutralZoom = (minZoom <= 1.0 && maxZoom >= 1.0) ? 1.0 : minZoom;
-        await _cam!.setZoomLevel(neutralZoom);
+        final min = await _cam!.getMinZoomLevel();
+        final max = await _cam!.getMaxZoomLevel();
+        await _cam!.setZoomLevel(
+            (min <= 1.0 && max >= 1.0) ? 1.0 : min);
       } catch (_) {}
 
       if (!mounted) return;
       setState(() {
-        _cameraReady         = true;
-        _calibrating         = true;
-        _calibrationFrames   = 0;
+        _cameraReady                        = true;
+        _calibrating                        = true;
+        _calibrationFrames                  = 0;
+        _stableFrames                       = 0;
         _engine.baselineBrightness          = 0;
         _engine.baselineReferenceBrightness = 0;
-        _engine.isCalibrated = false;
+        _engine.isCalibrated                = false;
         _engine.reset();
         _tracker.reset();
       });
@@ -593,125 +442,126 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
+  // ── Frame processing ────────────────────────────────────────────────────────
   void _onFrame(CameraImage image) {
     _frameCount++;
+    // Process every 2nd frame (~15fps) — fast enough, saves battery
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
 
     try {
-      // ── Always update slot tracker every frame ──────────────────────────────
-      // The tracker is lightweight (just Y-plane brightness grid scan).
-      // It runs regardless of calibration state so the arc starts moving
-      // as soon as the camera opens.
+      // 1. Update slot tracker — finds where the tan flap is in the frame
       _tracker.update(image);
 
+      // 2. Track how many consecutive frames we have had a stable lock
       if (_tracker.hasLock) {
-        _hasSeenLock = true;
+        _stableFrames++;
+      } else {
+        _stableFrames = 0;
+        // Lost the slot — reset calibration so we re-calibrate when it returns
+        if (_engine.isCalibrated) {
+          _engine.reset();
+          _engine.baselineBrightness          = 0;
+          _engine.baselineReferenceBrightness = 0;
+          _engine.isCalibrated                = false;
+          _calibrating                        = true;
+          _calibrationFrames                  = 0;
+        }
       }
 
-      // Keep detection windows centered on the tracked slot point.
-      _syncDetectionZonesToTrackedSlot();
+      // 3. Keep detection zones centered on the tracked slot
+      _syncZones();
 
-      // ── Calibration mode ────────────────────────────────────────────────────
+      // 4. Calibration mode — learn the baseline brightness of the flap
       if (_calibrating) {
-        if (!_tracker.hasLock) {
-          if (mounted) {
-            setState(() {});
-          }
-          return;
-        }
+        // Only calibrate when tracker has a stable lock on the flap
+        if (!_tracker.hasLock) { if (mounted) setState(() {}); return; }
 
         _engine.addCalibrationSample(image);
         _calibrationFrames++;
+
         if (_calibrationFrames >= _calibrationFrameCount) {
           _engine.finalizeCalibration();
-          if (mounted) {
-            setState(() {
-              _calibrating       = false;
-              _calibrationFrames = 0;
-            });
-          }
-        }
-        // Trigger UI refresh so arc starts updating during calibration too
-        if (mounted) {
-          setState(() {});
+          if (mounted) setState(() {
+            _calibrating       = false;
+            _calibrationFrames = 0;
+          });
+        } else {
+          if (mounted) setState(() {});
         }
         return;
       }
 
-      // ── Detection mode ───────────────────────────────────────────────────────
-      if (!_engine.isCalibrated || !_hasSeenLock) {
-        if (mounted) {
-          setState(() {});
-        }
+      // 5. Not ready to detect yet — wait for stable lock
+      if (!_engine.isCalibrated ||
+          !_tracker.hasLock ||
+          _stableFrames < _requiredStableFrames) {
+        if (mounted) setState(() {});
         return;
       }
 
-      if (!_tracker.hasLock) {
+      // 6. ✅ MAIN DETECTION — this is where bottles are counted
+      //    processFrame() returns true ONLY when:
+      //    - The flap zone went dark (bottle covering it)
+      //    - Stayed dark for 500ms–3000ms
+      //    - Then went bright again (bottle dropped in)
+      //    - Camera wasn't shaking during this time
+      final bool bottleCounted = _engine.processFrame(image);
+      if (mounted) setState(() {});
+
+      if (bottleCounted) {
         _detected = true;
         _timeoutTimer?.cancel();
+
+        // Flash animation
         _showFlash = true;
         _flashCtrl.forward(from: 0).then((_) {
-          if (mounted) {
-            setState(() => _showFlash = false);
-          }
+          if (mounted) setState(() => _showFlash = false);
         });
+
+        // Small delay so user sees the flash, then call onDetected
         Future.delayed(const Duration(milliseconds: 350), () {
           if (mounted) widget.onDetected();
         });
-        return;
-      }
-
-      if (mounted) {
-        setState(() {});
       }
     } finally {
       _processingFrame = false;
     }
   }
 
-  void _syncDetectionZonesToTrackedSlot() {
+  // Keep detection zone tightly around the tracked slot
+  void _syncZones() {
     final double cx = _tracker.slotNormX.clamp(0.08, 0.92);
     final double cy = _tracker.slotNormY.clamp(0.08, 0.62);
-
-    const double zoneW = 0.14;
-    const double zoneH = 0.16;
-    const double halfW = zoneW / 2;
-    const double halfH = zoneH / 2;
+    const double zW = 0.14, zH = 0.16;
 
     _engine.zone = Rect.fromLTRB(
-      (cx - halfW).clamp(0.02, 0.84),
-      (cy - halfH).clamp(0.02, 0.70),
-      (cx + halfW).clamp(0.16, 0.98),
-      (cy + halfH).clamp(0.06, 0.78),
+      (cx - zW / 2).clamp(0.02, 0.84),
+      (cy - zH / 2).clamp(0.02, 0.70),
+      (cx + zW / 2).clamp(0.16, 0.98),
+      (cy + zH / 2).clamp(0.06, 0.78),
     );
 
-    // Use a nearby patch as a shake/reference brightness anchor.
-    const double refOffsetX = 0.18;
-    const double refW = 0.12;
-    const double refH = 0.16;
-    final double refCx = (cx + refOffsetX).clamp(0.10, 0.92);
-
+    const double rOffX = 0.18, rW = 0.12, rH = 0.16;
+    final double rcx = (cx + rOffX).clamp(0.10, 0.92);
     _engine.referenceZone = Rect.fromLTRB(
-      (refCx - refW / 2).clamp(0.02, 0.86),
-      (cy - refH / 2).clamp(0.02, 0.70),
-      (refCx + refW / 2).clamp(0.14, 0.98),
-      (cy + refH / 2).clamp(0.06, 0.80),
+      (rcx - rW / 2).clamp(0.02, 0.86),
+      (cy  - rH / 2).clamp(0.02, 0.70),
+      (rcx + rW / 2).clamp(0.14, 0.98),
+      (cy  + rH / 2).clamp(0.06, 0.80),
     );
   }
 
   String get _statusText {
-    if (_calibrating)                     return 'Calibrating…';
-    if (_engine.lastRejectedByShake)      return 'Hold camera steady';
-    if (!_engine.isCalibrated)            return 'Getting ready…';
-    if (!_tracker.hasLock)                return 'Point camera at the bin slot';
-    if (_engine.state == _FlapState.open) return 'Detecting…';
-    return 'Slot locked — insert bottle';
+    if (_calibrating)                         return 'Calibrating…';
+    if (_engine.lastRejectedByShake)          return 'Hold camera steady';
+    if (!_engine.isCalibrated)                return 'Getting ready…';
+    if (!_tracker.hasLock)                    return 'Point camera at the bin slot';
+    if (_stableFrames < _requiredStableFrames) return 'Locking on slot…';
+    if (_engine.state == _FlapState.hidden)   return 'Bottle detected…';
+    return 'Ready — insert bottle now';
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Build
-  // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -721,13 +571,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         elevation: 0,
         centerTitle: true,
         iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
-          'Insert Bottle',
-          style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w500),
-        ),
+        title: const Text('Insert Bottle',
+            style: TextStyle(color: Colors.white,
+                fontSize: 22, fontWeight: FontWeight.w500)),
       ),
       body: _buildBody(),
     );
@@ -741,52 +587,42 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     return LayoutBuilder(builder: (ctx, box) {
       final Size size = Size(box.maxWidth, box.maxHeight);
+
       final double targetX =
-        (_tracker.slotNormX.clamp(0.0, 1.0) * size.width)
-          .clamp(size.width * 0.05, size.width * 0.95);
+          (_tracker.slotNormX.clamp(0.0, 1.0) * size.width)
+              .clamp(size.width * 0.05, size.width * 0.95);
       final double targetY =
-        (_tracker.slotNormY.clamp(0.0, 1.0) * size.height)
-          .clamp(size.height * 0.05, size.height * 0.95);
+          (_tracker.slotNormY.clamp(0.0, 1.0) * size.height)
+              .clamp(size.height * 0.05, size.height * 0.95);
 
       return Stack(fit: StackFit.expand, children: [
-        // ── Camera preview (same visual style as QR scan page) ───────────
-        Positioned.fill(
-          child: CameraPreview(_cam!),
-        ),
 
-        // ── Very subtle overlay so dots pop against camera feed ───────────
+        // Camera preview
+        Positioned.fill(child: CameraPreview(_cam!)),
         Container(color: Colors.black.withValues(alpha: 0.08)),
 
-        // ── Count flash ───────────────────────────────────────────────────
+        // White flash when bottle counted
         if (_showFlash)
           AnimatedBuilder(
             animation: _flashCtrl,
             builder: (_, __) => Opacity(
               opacity: (1.0 - _flashCtrl.value).clamp(0.0, 1.0),
-              child: Container(
-                  color: Colors.white.withValues(alpha: 0.35)),
+              child: Container(color: Colors.white.withValues(alpha: 0.40)),
             ),
           ),
 
-        // ── Game-style rotating 3D arrow ──────────────────────────────────
+        // 3D game arrow pointing at the slot
         AnimatedBuilder(
           animation: _dotCtrl,
           builder: (context, _) {
-            final Offset pivot = Offset(size.width * 0.50, size.height * 0.72);
-
-            // Compute deviation angle from "pointing straight up" (north).
-            // atan2(dx, -dy) = 0 when slot is directly above pivot,
-            // positive when slot is to the right, negative when to the left.
+            final Offset pivot =
+                Offset(size.width * 0.50, size.height * 0.72);
             final double dx = targetX - pivot.dx;
             final double dy = targetY - pivot.dy;
-            final double deviationFromNorth = atan2(dx, -dy);
-
-            // AMPLIFY the deviation: small camera movement → big tail swing.
-            // Factor 3.0 means a 5° real shift becomes a 15° arrow rotation.
-            // Clamped so the arrow never spins more than ~140° from straight up.
+            final double deviation = atan2(dx, -dy);
             const double amplification = 3.0;
-            final double angle = (deviationFromNorth * amplification)
-                .clamp(-pi * 0.78, pi * 0.78);
+            final double angle =
+                (deviation * amplification).clamp(-pi * 0.78, pi * 0.78);
 
             return CustomPaint(
               size: size,
@@ -794,15 +630,16 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 pivot:       pivot,
                 angle:       angle,
                 animValue:   _dotCtrl.value,
-                isDetecting: _engine.state == _FlapState.open,
-                hasLock:     _tracker.hasLock,
+                isDetecting: _engine.state == _FlapState.hidden,
+                hasLock:     _tracker.hasLock &&
+                    _stableFrames >= _requiredStableFrames,
                 target:      Offset(targetX, targetY),
               ),
             );
           },
         ),
 
-        // ── Countdown ─────────────────────────────────────────────────────
+        // Countdown timer
         Positioned(
           top: 18, left: 0, right: 0,
           child: Center(
@@ -813,30 +650,24 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 color: Colors.black.withValues(alpha: 0.52),
                 borderRadius: BorderRadius.circular(18),
               ),
-              child: Text(
-                '$_remainingSeconds',
-                style: TextStyle(
-                  color: _remainingSeconds <= 5
-                      ? Colors.redAccent
-                      : Colors.white,
-                  fontSize: 32,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              child: Text('$_remainingSeconds',
+                  style: TextStyle(
+                    color: _remainingSeconds <= 5
+                        ? Colors.redAccent : Colors.white,
+                    fontSize: 32, fontWeight: FontWeight.w700,
+                  )),
             ),
           ),
         ),
 
-        // ── Calibration bar ───────────────────────────────────────────────
+        // Calibration progress bar
         if (_calibrating)
           Positioned(
             top: 108, left: 32, right: 32,
             child: Column(children: [
-              const Text(
-                'Calibrating — keep slot clear',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
-                textAlign: TextAlign.center,
-              ),
+              const Text('Calibrating — keep slot visible and clear',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                  textAlign: TextAlign.center),
               const SizedBox(height: 6),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
@@ -850,8 +681,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ]),
           ),
 
-        // ── Shake / lock warning ──────────────────────────────────────────
-        if (_engine.lastRejectedByShake || (!_tracker.hasLock && !_calibrating))
+        // Shake warning / no lock warning
+        if (!_calibrating &&
+            (_engine.lastRejectedByShake || !_tracker.hasLock))
           Positioned(
             top: 108, left: 0, right: 0,
             child: Center(
@@ -867,8 +699,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                     _engine.lastRejectedByShake
                         ? Icons.warning_amber
                         : Icons.center_focus_weak,
-                    color: Colors.white70,
-                    size: 14,
+                    color: Colors.white70, size: 14,
                   ),
                   const SizedBox(width: 6),
                   Text(
@@ -883,28 +714,25 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-        // ── Status label ──────────────────────────────────────────────────
+        // Status label
         Positioned(
           bottom: 88, left: 0, right: 0,
           child: Center(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
-              child: Text(
-                _statusText,
-                key: ValueKey(_statusText),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
-                ),
-              ),
+              child: Text(_statusText,
+                  key: ValueKey(_statusText),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white, fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
+                  )),
             ),
           ),
         ),
 
-        // ── Bottom instruction ────────────────────────────────────────────
+        // Bottom instruction
         Positioned(
           left: 24, right: 24, bottom: 20,
           child: Container(
@@ -915,52 +743,20 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Text(
-              'Arc auto-aims at the slot. Insert the bottle when the arc lands on it.',
+              'Point camera at the bin slot.\nInsert bottle — count increases when the flap opens then closes.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                  color: Colors.white70, fontSize: 13, height: 1.3),
+                  color: Colors.white70, fontSize: 13, height: 1.4),
             ),
           ),
         ),
       ]);
     });
   }
-
 }
 
-
 // ══════════════════════════════════════════════════════════════════════════════
-// _GameArrowPainter
-//
-// Draws a 3D upward-pointing arrow (like the reference image) that ROTATES
-// around a fixed pivot to always aim its tip at the bin slot.
-//
-// BEHAVIOR:
-//   • Pivot point is fixed at screen center-bottom area.
-//   • Angle = atan2(slot - pivot) + π/2  (because arrow art points UP/north).
-//   • Camera moves RIGHT → slot moves LEFT in frame → angle rotates CCW →
-//     tip swings left, tail swings right.  Exactly like a game compass.
-//
-// 3D ARROW DESIGN (matches the reference image):
-//
-//         ▲   ← tip (points at slot)
-//        ╱ ╲
-//       ╱   ╲  ← triangle head (front face, vivid red)
-//      ╱_____╲
-//      |     |  ← trapezoid body (narrower at top, wider at bottom)
-//      |     |
-//      |_____|
-//      ▔▔▔▔▔▔▔  ← flat base rectangle
-//      ░░░░░░░  ← 3D bottom face (dark, offset down-right)
-//
-//   LEFT FACE:  dark strip visible on the left edge of body+base
-//   BOTTOM:     dark rectangle below the base (3D platform effect)
-//   HIGHLIGHT:  bright strip on right edge of head (light source from right)
-//
-// STATES:
-//   No lock  → 35% opacity, slow wobble animation
-//   Locked   → full opacity, stable, "SLOT" label at tip
-//   Detecting → orange color, pulsing scale, "INSERT!" label
+// _GameArrowPainter (unchanged)
 // ══════════════════════════════════════════════════════════════════════════════
 class _GameArrowPainter extends CustomPainter {
   const _GameArrowPainter({
@@ -973,11 +769,11 @@ class _GameArrowPainter extends CustomPainter {
   });
 
   final Offset pivot;
-  final double angle;       // radians: angle to rotate the arrow
-  final double animValue;   // 0→1 animation cycle
+  final double angle;
+  final double animValue;
   final bool   isDetecting;
   final bool   hasLock;
-  final Offset target;      // screen position of bin slot (for label placement)
+  final Offset target;
 
   static const Color _red       = Color(0xFFE53935);
   static const Color _orange    = Color(0xFFFF6B35);
@@ -985,161 +781,94 @@ class _GameArrowPainter extends CustomPainter {
   static const Color _darkest   = Color(0xFF3E0000);
   static const Color _highlight = Color(0xFFFF8A80);
 
-  Color get _main  => isDetecting ? _orange : _red;
-  Color get _dark  => isDetecting ? const Color(0xFF8B3000) : _darkRed;
-  Color get _edge  => isDetecting ? const Color(0xFF3E1500) : _darkest;
-  double get _globalOpacity => hasLock ? 0.93 : 0.38;
-  static const double _arrowOpacityMultiplier = 0.30;
+  Color  get _main => isDetecting ? _orange : _red;
+  Color  get _dark => isDetecting ? const Color(0xFF8B3000) : _darkRed;
+  Color  get _edge => isDetecting ? const Color(0xFF3E1500) : _darkest;
+  double get _go   => hasLock ? 0.93 : 0.38;
+  static const double _ao = 0.30;
 
   @override
   void paint(Canvas canvas, Size size) {
-    // ── Pulsing scale when detecting ─────────────────────────────────────────
-    final double pulseScale = isDetecting
-        ? 1.0 + sin(animValue * pi * 4) * 0.06
-        : 1.0;
+    final double pulse = isDetecting
+        ? 1.0 + sin(animValue * pi * 4) * 0.06 : 1.0;
 
     canvas.save();
     canvas.translate(pivot.dx, pivot.dy);
-    // Strictly track the angle — no wobble, accuracy is more important
     canvas.rotate(angle);
-    canvas.scale(pulseScale, pulseScale);
-
+    canvas.scale(pulse, pulse);
     _drawArrow(canvas);
-
     canvas.restore();
-
-    // ── Target ring at the slot position ─────────────────────────────────────
-    _drawTargetRing(canvas);
+    _drawRing(canvas);
   }
 
-  // ── Arrow drawn pointing UP, centered at (0,0) ───────────────────────────
   void _drawArrow(Canvas canvas) {
-    // Arrow dimensions (all relative to center at origin)
-    const double arrowTotalH = 160.0;
-    const double headH       = 62.0;  // triangle head height
-    const double headHW      = 52.0;  // head half-width at shoulder
-    const double bodyTopHW   = 22.0;  // body half-width at top
-    const double bodyBotHW   = 28.0;  // body half-width at bottom
-    const double bodyH       = 72.0;  // body trapezoid height
-    const double baseH       = 18.0;  // base rectangle height
-    const double depth       = 8.0;   // 3D depth offset
+    const double tipY      = -96.0;
+    const double shoulderY = -34.0;
+    const double bodyBotY  =  38.0;
+    const double baseBotY  =  56.0;
+    const double headHW    =  52.0;
+    const double bodyTopHW =  22.0;
+    const double bodyBotHW =  28.0;
+    const double depth     =   8.0;
+    final double o = _go * _ao;
 
-    // Y coordinates (0 = pivot center, negative = upward = toward tip)
-    // Arrow is centered vertically: tip at -arrowTotalH*0.6, base at +arrowTotalH*0.4
-    const double tipY       = -arrowTotalH * 0.60;
-    const double shoulderY  = tipY + headH;
-    const double bodyBotY   = shoulderY + bodyH;
-    const double baseBotY   = bodyBotY + baseH;
+    canvas.drawPath(
+      Path()
+        ..moveTo(-bodyBotHW, baseBotY) ..lineTo(bodyBotHW, baseBotY)
+        ..lineTo(bodyBotHW + depth, baseBotY + depth)
+        ..lineTo(-bodyBotHW + depth, baseBotY + depth) ..close(),
+      Paint()..color = _edge.withValues(alpha: 0.85 * o));
 
-    final double o = _globalOpacity * _arrowOpacityMultiplier; // arrow-only opacity
+    canvas.drawPath(
+      Path()
+        ..moveTo(-bodyTopHW, shoulderY)
+        ..lineTo(-bodyTopHW - depth, shoulderY + depth)
+        ..lineTo(-bodyBotHW - depth, bodyBotY + depth)
+        ..lineTo(-bodyBotHW, bodyBotY) ..close(),
+      Paint()..color = _dark.withValues(alpha: 0.80 * o));
 
-    // ── 3D BACK FACES (drawn first — behind the front face) ──────────────────
-
-    // Bottom face of base (3D platform, visible below)
-    final Path bottomFace = Path()
-      ..moveTo(-bodyBotHW,          baseBotY)
-      ..lineTo( bodyBotHW,          baseBotY)
-      ..lineTo( bodyBotHW + depth,  baseBotY + depth)
-      ..lineTo(-bodyBotHW + depth,  baseBotY + depth)
-      ..close();
-    canvas.drawPath(bottomFace, Paint()..color = _edge.withValues(alpha: 0.85 * o));
-
-    // Left side face of body (dark strip on the left)
-    final Path leftFace = Path()
-      ..moveTo(-bodyTopHW,          shoulderY)
-      ..lineTo(-bodyTopHW - depth,  shoulderY + depth)
-      ..lineTo(-bodyBotHW - depth,  bodyBotY  + depth)
-      ..lineTo(-bodyBotHW,          bodyBotY)
-      ..close();
-    canvas.drawPath(leftFace, Paint()..color = _dark.withValues(alpha: 0.80 * o));
-
-    // Left side face of base
-    final Path leftBase = Path()
-      ..moveTo(-bodyBotHW,          bodyBotY)
-      ..lineTo(-bodyBotHW - depth,  bodyBotY  + depth)
-      ..lineTo(-bodyBotHW - depth,  baseBotY  + depth)
-      ..lineTo(-bodyBotHW,          baseBotY)
-      ..close();
-    canvas.drawPath(leftBase, Paint()..color = _edge.withValues(alpha: 0.80 * o));
-
-    // ── FRONT FACE — main red arrow shape ────────────────────────────────────
     final Path front = Path()
-      // Head triangle
-      ..moveTo(0,          tipY)          // tip (top point)
-      ..lineTo( headHW,    shoulderY)     // right shoulder
-      ..lineTo( bodyTopHW, shoulderY)     // right neck
-      // Body right side
-      ..lineTo( bodyBotHW, bodyBotY)      // right body bottom
-      // Base
-      ..lineTo( bodyBotHW, baseBotY)      // right base bottom
-      ..lineTo(-bodyBotHW, baseBotY)      // left base bottom
-      // Body left side
-      ..lineTo(-bodyBotHW, bodyBotY)      // left body bottom
-      ..lineTo(-bodyTopHW, shoulderY)     // left neck
-      ..lineTo(-headHW,    shoulderY)     // left shoulder
+      ..moveTo(0, tipY)
+      ..lineTo(headHW, shoulderY) ..lineTo(bodyTopHW, shoulderY)
+      ..lineTo(bodyBotHW, bodyBotY) ..lineTo(bodyBotHW, baseBotY)
+      ..lineTo(-bodyBotHW, baseBotY) ..lineTo(-bodyBotHW, bodyBotY)
+      ..lineTo(-bodyTopHW, shoulderY) ..lineTo(-headHW, shoulderY)
       ..close();
+    canvas.drawPath(front,
+        Paint()..color = _main.withValues(alpha: 0.96 * o));
 
-    canvas.drawPath(front, Paint()..color = _main.withValues(alpha: 0.96 * o));
-
-    // ── RIGHT HIGHLIGHT on head (light from right) ────────────────────────────
-    final Path rightHl = Path()
-      ..moveTo(0,        tipY)
-      ..lineTo(headHW,   shoulderY)
-      ..lineTo(headHW * 0.55, shoulderY)
-      ..close();
     canvas.drawPath(
-      rightHl,
-      Paint()..color = _highlight.withValues(alpha: 0.35 * o),
-    );
+      Path()
+        ..moveTo(0, tipY) ..lineTo(headHW, shoulderY)
+        ..lineTo(headHW * 0.55, shoulderY) ..close(),
+      Paint()..color = _highlight.withValues(alpha: 0.35 * o));
 
-    // ── INNER BODY SHADING — slight darker center of body for depth ───────────
-    // Subtle gradient effect by drawing a narrow darker strip down the center
-    final Path centerShade = Path()
-      ..moveTo(-4, shoulderY)
-      ..lineTo( 4, shoulderY)
-      ..lineTo( bodyBotHW * 0.25, baseBotY)
-      ..lineTo(-bodyBotHW * 0.25, baseBotY)
-      ..close();
-    canvas.drawPath(
-      centerShade,
-      Paint()..color = _dark.withValues(alpha: 0.12 * o),
-    );
-
-    // ── OUTLINE stroke for crispness ─────────────────────────────────────────
-    canvas.drawPath(
-      front,
+    canvas.drawPath(front,
       Paint()
         ..color = Colors.black.withValues(alpha: hasLock ? 0.82 : 0.68)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.2
-        ..strokeJoin = StrokeJoin.round,
-    );
+        ..strokeJoin = StrokeJoin.round);
   }
 
-  // ── Target ring drawn at the actual slot position ─────────────────────────
-  void _drawTargetRing(Canvas canvas) {
+  void _drawRing(Canvas canvas) {
     final double pulse = isDetecting
         ? 0.5 + sin(animValue * pi * 5) * 0.5
-        : hasLock
-            ? 0.5 + sin(animValue * pi * 2) * 0.3
-            : 0.2;
+        : hasLock ? 0.5 + sin(animValue * pi * 2) * 0.3 : 0.2;
 
     final Color rc = isDetecting ? _orange : _red;
     final double r = 20.0 + pulse * 8;
-    final double o = _globalOpacity;
+    final double o = _go;
 
-    // Ring
     canvas.drawCircle(target, r,
       Paint()
         ..color = rc.withValues(alpha: (0.78 + pulse * 0.22) * o)
         ..style = PaintingStyle.stroke
         ..strokeWidth = hasLock ? 2.8 : 1.5);
 
-    // Center dot
     canvas.drawCircle(target, hasLock ? 4.5 : 2.5,
-      Paint()..color = rc.withValues(alpha: 0.95 * o));
+        Paint()..color = rc.withValues(alpha: 0.95 * o));
 
-    // Crosshair
     final double arm = hasLock ? 13.0 : 8.0;
     const double gap = 6.0;
     final Paint lp = Paint()
@@ -1155,20 +884,17 @@ class _GameArrowPainter extends CustomPainter {
     canvas.drawLine(Offset(target.dx + gap, target.dy),
         Offset(target.dx + gap + arm, target.dy), lp);
 
-    // Label
     if (hasLock) {
-      final String label = isDetecting ? 'INSERT!' : 'SLOT';
+      final String label = isDetecting ? 'BOTTLE IN!' : 'SLOT READY';
       final tp = TextPainter(
-        text: TextSpan(
-          text: label,
+        text: TextSpan(text: label,
           style: TextStyle(
             color: rc.withValues(alpha: 0.85 * o),
             fontSize: isDetecting ? 12 : 10,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.5,
             shadows: const [Shadow(color: Colors.black87, blurRadius: 5)],
-          ),
-        ),
+          )),
         textDirection: TextDirection.ltr,
       )..layout();
       tp.paint(canvas,
@@ -1178,10 +904,7 @@ class _GameArrowPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GameArrowPainter old) =>
-      old.pivot       != pivot       ||
-      old.angle       != angle       ||
-      old.animValue   != animValue   ||
-      old.isDetecting != isDetecting ||
-      old.hasLock     != hasLock     ||
-      old.target      != target;
+      old.pivot != pivot || old.angle != angle ||
+      old.animValue != animValue || old.isDetecting != isDetecting ||
+      old.hasLock != hasLock || old.target != target;
 }
