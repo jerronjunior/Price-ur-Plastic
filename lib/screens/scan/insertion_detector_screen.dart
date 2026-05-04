@@ -5,8 +5,10 @@ import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+import 'slot_motion_detection_impl.dart';
+
 // ══════════════════════════════════════════════════════════════════════════════
-// _SlotTracker  v3 — pixel-level centroid (unchanged, works well)
+// _SlotTracker  v3 — pixel-level centroid (finds the tan flap position)
 // ══════════════════════════════════════════════════════════════════════════════
 class _SlotTracker {
   static const double _scanTop    = 0.02;
@@ -21,7 +23,7 @@ class _SlotTracker {
   static const double _lockedAlpha = 0.05;
   static const double _unlockDist  = 0.20;
 
-  double slotNormX = 0.50;
+  double slotNormX = 0.50; // normalised in RAW CAMERA image coords
   double slotNormY = 0.28;
   bool   hasLock   = false;
 
@@ -42,7 +44,6 @@ class _SlotTracker {
     final int py0 = (_scanTop * fh).toInt();
     final int py1 = (_scanBottom * fh).toInt();
 
-    // Pass 1: ambient brightness
     double ambientSum = 0; int ambientCnt = 0;
     for (int py = py0; py < py1; py += 8) {
       for (int px = 0; px < fw; px += 8) {
@@ -53,7 +54,6 @@ class _SlotTracker {
     final double ambientY = ambientCnt > 0 ? ambientSum / ambientCnt : 100;
     final double threshold = ambientY + _deltaY;
 
-    // Pass 2+3: weighted centroid of tan flap pixels
     double wSumX = 0, wSumY = 0, wTotal = 0;
     int pixelCount = 0;
     for (int py = py0; py < py1; py += 4) {
@@ -93,8 +93,66 @@ class _SlotTracker {
     final double alpha = _locked ? _lockedAlpha : _seekAlpha;
     slotNormX += (rawX - slotNormX) * alpha;
     slotNormY += (rawY - slotNormY) * alpha;
-    if (_locked) { _lockX += (rawX - _lockX) * 0.008; _lockY += (rawY - _lockY) * 0.008; }
+    if (_locked) {
+      _lockX += (rawX - _lockX) * 0.008;
+      _lockY += (rawY - _lockY) * 0.008;
+    }
     hasLock = true;
+  }
+
+  // ── KEY FIX: Convert camera-space coords → screen-space coords ─────────────
+  //
+  // Camera images come from the sensor in LANDSCAPE orientation.
+  // The phone is held in PORTRAIT.  CameraPreview rotates the display
+  // automatically, but the raw CameraImage bytes are NOT rotated.
+  //
+  // For sensorOrientation = 90 (most Android back cameras):
+  //   camera_x  →  screen_y          (camera's X axis = top→bottom on screen)
+  //   camera_y  →  screen_x flipped  (camera's Y axis = right→left on screen)
+  //
+  // Formula for 90°:  screenX = 1 - camY,  screenY = camX
+  // Formula for 270°: screenX = camY,       screenY = 1 - camX
+  // Formula for 0°/180°: identity / flip
+  //
+  Offset toScreenOffset(Size screenSize, int sensorOrientation) {
+    final double cx = slotNormX;
+    final double cy = slotNormY;
+    double sx, sy;
+    switch (sensorOrientation) {
+      case 90:
+        sx = 1.0 - cy;
+        sy = cx;
+        break;
+      case 270:
+        sx = cy;
+        sy = 1.0 - cx;
+        break;
+      case 180:
+        sx = 1.0 - cx;
+        sy = 1.0 - cy;
+        break;
+      default: // 0 — iOS, or already portrait sensor
+        sx = cx;
+        sy = cy;
+    }
+    return Offset(
+      sx.clamp(0.05, 0.95) * screenSize.width,
+      sy.clamp(0.05, 0.90) * screenSize.height,
+    );
+  }
+
+  // Also expose the slot region in camera-normalised coords for the
+  // motion detector (it needs camera-space, not screen-space).
+  // The slot region is a rectangle centred on the tracked point.
+  ({double left, double top, double width, double height}) get cameraRegion {
+    const double hw = 0.18; // half-width in camera coords
+    const double hh = 0.15; // half-height in camera coords
+    return (
+      left:   (slotNormX - hw).clamp(0.0, 0.80),
+      top:    (slotNormY - hh).clamp(0.0, 0.80),
+      width:  hw * 2,
+      height: hh * 2,
+    );
   }
 
   double _hypot(double a, double b) => sqrt(a * a + b * b);
@@ -107,202 +165,21 @@ class _SlotTracker {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// _FlapEngine
-//
-// HOW THE COUNTING WORKS (simple version):
-//
-//   The bin slot has a tan/brown flap with a downward arrow on it.
-//   When a bottle is inserted, it pushes the flap → flap swings open.
-//   The flap blocks light → the zone goes DARK for ~0.5–2 seconds.
-//   When the bottle falls through, the flap closes → zone goes BRIGHT again.
-//
-//   BRIGHT → DARK (≥500ms) → BRIGHT AGAIN = 1 bottle counted ✅
-//
-// SHAKE REJECTION:
-//   A reference zone beside the flap is also monitored.
-//   Camera shake changes BOTH zones equally.
-//   A real bottle only darkens the FLAP zone.
-//   → If both change = camera shake = ignored ❌
-//   → If only flap zone changes = real bottle = counted ✅
-//
-// TIMING:
-//   _minHiddenMs = 500   minimum time flap must stay dark (rejects fast shadows)
-//   _maxHiddenMs = 3000  maximum time (longer = hand blocking, not a bottle)
-//   _cooldownMs  = 2500  wait before allowing next count (no double-count)
-// ══════════════════════════════════════════════════════════════════════════════
-enum _FlapState {
-  idle,   // flap is visible (bright) — waiting for bottle
-  hidden, // flap is dark — bottle is going through
-}
-
-class _FlapEngine {
-  // Detection zones — updated every frame to follow the tracked slot
-  Rect zone          = const Rect.fromLTRB(0.25, 0.10, 0.75, 0.65);
-  Rect referenceZone = const Rect.fromLTRB(0.78, 0.20, 0.96, 0.55);
-
-  // Calibration baselines
-  double baselineBrightness          = 0;
-  double baselineReferenceBrightness = 0;
-  bool   isCalibrated                = false;
-
-  // How much darker than baseline = "flap is hidden"
-  // 0.25 = zone must drop 25% below baseline
-  // Increase if false triggers; decrease if real bottles are missed
-  double darkThresholdFraction = 0.25;
-
-  // Shake rejection: if reference zone changes by more than this → camera moved
-  static const double _shakeRejectFraction = 0.12;
-
-  // ── Timing ─────────────────────────────────────────────────────────────────
-  // Minimum ms flap must stay dark to count — rejects fast shadows
-  static const int _minHiddenMs = 500;
-  // Maximum ms — if dark longer, it's a hand blocking not a bottle
-  static const int _maxHiddenMs = 3000;
-  // Cooldown after each count — prevents double counting
-  static const int _cooldownMs  = 2500;
-
-  // State
-  _FlapState state              = _FlapState.idle;
-  double     currentBrightness = 0;
-  double     currentReferenceBrightness = 0;
-  bool       lastRejectedByShake = false;
-  DateTime?  _hiddenSince;
-  DateTime?  _lastCount;
-
-  bool get inCooldown {
-    if (_lastCount == null) return false;
-    return DateTime.now().difference(_lastCount!).inMilliseconds < _cooldownMs;
-  }
-
-  // The brightness level below which we say "flap is hidden/dark"
-  double get darkThreshold =>
-      baselineBrightness * (1.0 - darkThresholdFraction);
-
-  // ── Main detection — called every processed camera frame ──────────────────
-  //
-  // Returns TRUE when a bottle insertion is confirmed.
-  // This is the ONLY place that triggers a count.
-  //
-  bool processFrame(CameraImage image) {
-    if (!isCalibrated || inCooldown) return false;
-
-    // Measure brightness of flap zone and reference zone
-    currentBrightness          = _brightness(image, zone);
-    currentReferenceBrightness = _brightness(image, referenceZone);
-
-    // ── Shake check ──────────────────────────────────────────────────────────
-    // If the reference zone also changed a lot → camera moved, not a bottle
-    if (baselineReferenceBrightness > 0) {
-      final double refChange =
-          (currentReferenceBrightness - baselineReferenceBrightness).abs() /
-          baselineReferenceBrightness;
-      if (refChange > _shakeRejectFraction) {
-        lastRejectedByShake = true;
-        // Reset state — don't count anything while shaking
-        state       = _FlapState.idle;
-        _hiddenSince = null;
-        return false;
-      }
-    }
-    lastRejectedByShake = false;
-
-    // Is the flap currently dark (hidden by bottle)?
-    final bool flapHidden = currentBrightness < darkThreshold;
-
-    switch (state) {
-
-      // ── IDLE: flap is visible, waiting for a bottle ─────────────────────
-      case _FlapState.idle:
-        if (flapHidden) {
-          // Flap just went dark — bottle is entering
-          state        = _FlapState.hidden;
-          _hiddenSince = DateTime.now();
-        }
-        break;
-
-      // ── HIDDEN: flap is dark, bottle is passing through ─────────────────
-      case _FlapState.hidden:
-        if (flapHidden) {
-          // Still dark — check if it's been too long (hand blocking)
-          final int hiddenMs = DateTime.now()
-              .difference(_hiddenSince!)
-              .inMilliseconds;
-          if (hiddenMs > _maxHiddenMs) {
-            // Dark for too long = hand or object blocking, not a bottle
-            state        = _FlapState.idle;
-            _hiddenSince = null;
-          }
-          // Otherwise keep waiting — bottle is still passing through
-        } else {
-          // ✅ Flap just became visible again — bottle has dropped in!
-          final int hiddenMs = DateTime.now()
-              .difference(_hiddenSince!)
-              .inMilliseconds;
-
-          state        = _FlapState.idle;
-          _hiddenSince = null;
-
-          if (hiddenMs < _minHiddenMs) {
-            // Was dark for too short — just a shadow or flicker, not a bottle
-            return false;
-          }
-
-          // Perfect: flap was dark for 500ms–3000ms then reopened = bottle in!
-          _lastCount = DateTime.now();
-          return true; // ✅ COUNT +1
-        }
-        break;
-    }
-    return false;
-  }
-
-  // ── Calibration ───────────────────────────────────────────────────────────
-  // Called 25 times with the flap visible and slot empty.
-  // Learns what "normal brightness" looks like.
-  void addCalibrationSample(CameraImage image) {
-    final double b = _brightness(image, zone);
-    final double r = _brightness(image, referenceZone);
-    if (baselineBrightness == 0) {
-      baselineBrightness          = b;
-      baselineReferenceBrightness = r;
-    } else {
-      baselineBrightness          = baselineBrightness * 0.7 + b * 0.3;
-      baselineReferenceBrightness = baselineReferenceBrightness * 0.7 + r * 0.3;
-    }
-  }
-
-  void finalizeCalibration() {
-    isCalibrated = baselineBrightness > 10;
-  }
-
-  // ── Zone brightness helper ────────────────────────────────────────────────
-  double _brightness(CameraImage image, Rect z) {
-    final int fw = image.width;
-    final int fh = image.height;
-    final Uint8List yPlane = image.planes[0].bytes;
-    final int x0 = (z.left   * fw).toInt().clamp(0, fw - 1);
-    final int y0 = (z.top    * fh).toInt().clamp(0, fh - 1);
-    final int x1 = (z.right  * fw).toInt().clamp(0, fw - 1);
-    final int y1 = (z.bottom * fh).toInt().clamp(0, fh - 1);
-    double sum = 0; int count = 0;
-    for (int py = y0; py < y1; py += 4) {
-      for (int px = x0; px < x1; px += 4) {
-        final int idx = py * fw + px;
-        if (idx < yPlane.length) { sum += yPlane[idx]; count++; }
-      }
-    }
-    return count > 0 ? sum / count : 128;
-  }
-
-  void reset() {
-    state              = _FlapState.idle;
-    _hiddenSince       = null;
-    lastRejectedByShake = false;
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
 // InsertionDetectorScreen
+//
+// WHAT CHANGED vs the old version:
+//
+// 1. ARROW FIX — toScreenOffset() applies the sensor orientation transform
+//    so the arrow tip actually lands on the bin slot in the preview.
+//
+// 2. DETECTION FIX — uses SlotMotionDetectionImpl (frame-differencing +
+//    downward motion state machine) instead of the brightness-only FlapEngine.
+//    SlotMotionDetectionImpl works on both iOS and Android, and detects the
+//    actual motion of the bottle passing through — not just brightness changes.
+//
+// 3. DYNAMIC REGION — every time the slot tracker moves, the motion detector's
+//    region is updated to follow the slot, so detection always covers the
+//    correct part of the frame.
 // ══════════════════════════════════════════════════════════════════════════════
 class InsertionDetectorScreen extends StatefulWidget {
   const InsertionDetectorScreen({
@@ -326,27 +203,31 @@ class InsertionDetectorScreen extends StatefulWidget {
 class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
 
+  // ── Camera ─────────────────────────────────────────────────────────────────
   CameraController? _cam;
+  CameraDescription? _camDesc;
   bool _cameraReady     = false;
   bool _processingFrame = false;
   int  _frameCount      = 0;
   bool _detected        = false;
 
-  final _FlapEngine  _engine  = _FlapEngine();
+  // ── Slot tracker — finds where the flap is ─────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
 
-  bool _calibrating       = false;
-  int  _calibrationFrames = 0;
-  static const int _calibrationFrameCount = 25;
+  // ── Motion detector — detects bottle passing through ──────────────────────
+  SlotMotionDetectionImpl? _motionDetector;
+  bool _motionReady     = false; // calibrated and ready
+  bool _streamStarted   = false;
 
-  // Lock must be stable for this many frames before detection starts
-  // Prevents false counts right when lock is first acquired
-  int _stableFrames = 0;
+  // How many frames we've had lock before allowing detection
+  int  _stableFrames    = 0;
   static const int _requiredStableFrames = 8;
 
+  // ── Timeout ────────────────────────────────────────────────────────────────
   Timer? _timeoutTimer;
   late int _remainingSeconds;
 
+  // ── Animations ─────────────────────────────────────────────────────────────
   late AnimationController _dotCtrl;
   late AnimationController _flashCtrl;
   bool _showFlash = false;
@@ -374,7 +255,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _timeoutTimer?.cancel();
     _dotCtrl.dispose();
     _flashCtrl.dispose();
-    _cam?.stopImageStream();
+    _motionDetector?.dispose();
+    if (_streamStarted && _cam?.value.isStreamingImages == true) {
+      _cam?.stopImageStream();
+    }
     _cam?.dispose();
     super.dispose();
   }
@@ -401,13 +285,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
 
-    final camera = cameras.firstWhere(
+    _camDesc = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.back,
       orElse: () => cameras.first,
     );
 
     _cam = CameraController(
-      camera,
+      _camDesc!,
       ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
@@ -423,18 +307,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       } catch (_) {}
 
       if (!mounted) return;
-      setState(() {
-        _cameraReady                        = true;
-        _calibrating                        = true;
-        _calibrationFrames                  = 0;
-        _stableFrames                       = 0;
-        _engine.baselineBrightness          = 0;
-        _engine.baselineReferenceBrightness = 0;
-        _engine.isCalibrated                = false;
-        _engine.reset();
-        _tracker.reset();
-      });
+      setState(() { _cameraReady = true; _stableFrames = 0; });
+      _tracker.reset();
+      _buildMotionDetector();
+
       await _cam!.startImageStream(_onFrame);
+      _streamStarted = true;
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -442,125 +320,82 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
+  // Build / rebuild the motion detector with the current slot region
+  void _buildMotionDetector() {
+    _motionDetector?.dispose();
+    final r = _tracker.cameraRegion;
+    _motionDetector = SlotMotionDetectionImpl(
+      regionLeft:   r.left,
+      regionTop:    r.top,
+      regionWidth:  r.width,
+      regionHeight: r.height,
+      onReadyChanged: (ready) {
+        if (!mounted) return;
+        setState(() => _motionReady = ready);
+      },
+      onMotionDetected: _onBottleDetected,
+    );
+  }
+
+  // Called by SlotMotionDetectionImpl when a bottle passes through
+  void _onBottleDetected() {
+    if (_detected || !mounted) return;
+    if (_stableFrames < _requiredStableFrames) return;
+    _detected = true;
+    _timeoutTimer?.cancel();
+    _showFlash = true;
+    _flashCtrl.forward(from: 0).then((_) {
+      if (mounted) setState(() => _showFlash = false);
+    });
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (mounted) widget.onDetected();
+    });
+  }
+
   // ── Frame processing ────────────────────────────────────────────────────────
   void _onFrame(CameraImage image) {
     _frameCount++;
-    // Process every 2nd frame (~15fps) — fast enough, saves battery
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
 
     try {
-      // 1. Update slot tracker — finds where the tan flap is in the frame
+      // 1. Update slot tracker
       _tracker.update(image);
 
-      // 2. Track how many consecutive frames we have had a stable lock
+      // 2. Track stable lock frames
       if (_tracker.hasLock) {
         _stableFrames++;
+        // When lock first stabilises, rebuild motion detector with correct region
+        if (_stableFrames == _requiredStableFrames) {
+          _buildMotionDetector();
+        }
+        // Periodically update the region to follow the slot as camera moves
+        if (_stableFrames % 15 == 0) {
+          _buildMotionDetector();
+        }
       } else {
         _stableFrames = 0;
-        // Lost the slot — reset calibration so we re-calibrate when it returns
-        if (_engine.isCalibrated) {
-          _engine.reset();
-          _engine.baselineBrightness          = 0;
-          _engine.baselineReferenceBrightness = 0;
-          _engine.isCalibrated                = false;
-          _calibrating                        = true;
-          _calibrationFrames                  = 0;
-        }
       }
 
-      // 3. Keep detection zones centered on the tracked slot
-      _syncZones();
+      // 3. Feed frame to motion detector
+      _motionDetector?.processImage(image);
 
-      // 4. Calibration mode — learn the baseline brightness of the flap
-      if (_calibrating) {
-        // Only calibrate when tracker has a stable lock on the flap
-        if (!_tracker.hasLock) { if (mounted) setState(() {}); return; }
-
-        _engine.addCalibrationSample(image);
-        _calibrationFrames++;
-
-        if (_calibrationFrames >= _calibrationFrameCount) {
-          _engine.finalizeCalibration();
-          if (mounted) setState(() {
-            _calibrating       = false;
-            _calibrationFrames = 0;
-          });
-        } else {
-          if (mounted) setState(() {});
-        }
-        return;
-      }
-
-      // 5. Not ready to detect yet — wait for stable lock
-      if (!_engine.isCalibrated ||
-          !_tracker.hasLock ||
-          _stableFrames < _requiredStableFrames) {
-        if (mounted) setState(() {});
-        return;
-      }
-
-      // 6. ✅ MAIN DETECTION — this is where bottles are counted
-      //    processFrame() returns true ONLY when:
-      //    - The flap zone went dark (bottle covering it)
-      //    - Stayed dark for 500ms–3000ms
-      //    - Then went bright again (bottle dropped in)
-      //    - Camera wasn't shaking during this time
-      final bool bottleCounted = _engine.processFrame(image);
       if (mounted) setState(() {});
-
-      if (bottleCounted) {
-        _detected = true;
-        _timeoutTimer?.cancel();
-
-        // Flash animation
-        _showFlash = true;
-        _flashCtrl.forward(from: 0).then((_) {
-          if (mounted) setState(() => _showFlash = false);
-        });
-
-        // Small delay so user sees the flash, then call onDetected
-        Future.delayed(const Duration(milliseconds: 350), () {
-          if (mounted) widget.onDetected();
-        });
-      }
     } finally {
       _processingFrame = false;
     }
   }
 
-  // Keep detection zone tightly around the tracked slot
-  void _syncZones() {
-    final double cx = _tracker.slotNormX.clamp(0.08, 0.92);
-    final double cy = _tracker.slotNormY.clamp(0.08, 0.62);
-    const double zW = 0.14, zH = 0.16;
-
-    _engine.zone = Rect.fromLTRB(
-      (cx - zW / 2).clamp(0.02, 0.84),
-      (cy - zH / 2).clamp(0.02, 0.70),
-      (cx + zW / 2).clamp(0.16, 0.98),
-      (cy + zH / 2).clamp(0.06, 0.78),
-    );
-
-    const double rOffX = 0.18, rW = 0.12, rH = 0.16;
-    final double rcx = (cx + rOffX).clamp(0.10, 0.92);
-    _engine.referenceZone = Rect.fromLTRB(
-      (rcx - rW / 2).clamp(0.02, 0.86),
-      (cy  - rH / 2).clamp(0.02, 0.70),
-      (rcx + rW / 2).clamp(0.14, 0.98),
-      (cy  + rH / 2).clamp(0.06, 0.80),
-    );
-  }
-
+  // ── Status text ─────────────────────────────────────────────────────────────
   String get _statusText {
-    if (_calibrating)                         return 'Calibrating…';
-    if (_engine.lastRejectedByShake)          return 'Hold camera steady';
-    if (!_engine.isCalibrated)                return 'Getting ready…';
     if (!_tracker.hasLock)                    return 'Point camera at the bin slot';
     if (_stableFrames < _requiredStableFrames) return 'Locking on slot…';
-    if (_engine.state == _FlapState.hidden)   return 'Bottle detected…';
+    if (!_motionReady)                        return 'Calibrating motion…';
     return 'Ready — insert bottle now';
   }
+
+  // ── Sensor orientation ──────────────────────────────────────────────────────
+  int get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
 
   @override
   Widget build(BuildContext context) {
@@ -588,58 +423,61 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     return LayoutBuilder(builder: (ctx, box) {
       final Size size = Size(box.maxWidth, box.maxHeight);
 
-      final double targetX =
-          (_tracker.slotNormX.clamp(0.0, 1.0) * size.width)
-              .clamp(size.width * 0.05, size.width * 0.95);
-      final double targetY =
-          (_tracker.slotNormY.clamp(0.0, 1.0) * size.height)
-              .clamp(size.height * 0.05, size.height * 0.95);
+      // ── FIX: apply sensor orientation transform ───────────────────────────
+      final Offset target = _tracker.toScreenOffset(size, _sensorOrientation);
+
+      // Arrow pivot fixed at lower-center of screen
+      final Offset pivot = Offset(size.width * 0.50, size.height * 0.72);
+
+      // Angle from pivot to target — arrow tip points at the slot
+      final double dx = target.dx - pivot.dx;
+      final double dy = target.dy - pivot.dy;
+      final double deviation = atan2(dx, -dy); // 0 = straight up
+
+      // Amplify so small real movements = big visible arrow swings
+      const double amplification = 3.0;
+      final double angle =
+          (deviation * amplification).clamp(-pi * 0.78, pi * 0.78);
+
+      final bool lockedAndReady =
+          _tracker.hasLock &&
+          _stableFrames >= _requiredStableFrames &&
+          _motionReady;
 
       return Stack(fit: StackFit.expand, children: [
 
-        // Camera preview
+        // Camera
         Positioned.fill(child: CameraPreview(_cam!)),
         Container(color: Colors.black.withValues(alpha: 0.08)),
 
-        // White flash when bottle counted
+        // Flash on count
         if (_showFlash)
           AnimatedBuilder(
             animation: _flashCtrl,
             builder: (_, __) => Opacity(
               opacity: (1.0 - _flashCtrl.value).clamp(0.0, 1.0),
-              child: Container(color: Colors.white.withValues(alpha: 0.40)),
+              child: Container(
+                  color: Colors.white.withValues(alpha: 0.40)),
             ),
           ),
 
-        // 3D game arrow pointing at the slot
+        // 3D game arrow
         AnimatedBuilder(
           animation: _dotCtrl,
-          builder: (context, _) {
-            final Offset pivot =
-                Offset(size.width * 0.50, size.height * 0.72);
-            final double dx = targetX - pivot.dx;
-            final double dy = targetY - pivot.dy;
-            final double deviation = atan2(dx, -dy);
-            const double amplification = 3.0;
-            final double angle =
-                (deviation * amplification).clamp(-pi * 0.78, pi * 0.78);
-
-            return CustomPaint(
-              size: size,
-              painter: _GameArrowPainter(
-                pivot:       pivot,
-                angle:       angle,
-                animValue:   _dotCtrl.value,
-                isDetecting: _engine.state == _FlapState.hidden,
-                hasLock:     _tracker.hasLock &&
-                    _stableFrames >= _requiredStableFrames,
-                target:      Offset(targetX, targetY),
-              ),
-            );
-          },
+          builder: (context, _) => CustomPaint(
+            size: size,
+            painter: _GameArrowPainter(
+              pivot:       pivot,
+              angle:       angle,
+              animValue:   _dotCtrl.value,
+              isDetecting: _motionReady && lockedAndReady,
+              hasLock:     lockedAndReady,
+              target:      target,
+            ),
+          ),
         ),
 
-        // Countdown timer
+        // Countdown
         Positioned(
           top: 18, left: 0, right: 0,
           child: Center(
@@ -660,30 +498,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           ),
         ),
 
-        // Calibration progress bar
-        if (_calibrating)
-          Positioned(
-            top: 108, left: 32, right: 32,
-            child: Column(children: [
-              const Text('Calibrating — keep slot visible and clear',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: _calibrationFrames / _calibrationFrameCount,
-                  backgroundColor: Colors.white12,
-                  color: const Color(0xFF58D68D),
-                  minHeight: 5,
-                ),
-              ),
-            ]),
-          ),
-
-        // Shake warning / no lock warning
-        if (!_calibrating &&
-            (_engine.lastRejectedByShake || !_tracker.hasLock))
+        // Warning: no lock
+        if (!_tracker.hasLock)
           Positioned(
             top: 108, left: 0, right: 0,
             child: Center(
@@ -694,21 +510,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                   color: Colors.black.withValues(alpha: 0.72),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                    _engine.lastRejectedByShake
-                        ? Icons.warning_amber
-                        : Icons.center_focus_weak,
-                    color: Colors.white70, size: 14,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _engine.lastRejectedByShake
-                        ? 'Camera moved — hold steady'
-                        : 'Point camera at the bin slot',
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 12),
-                  ),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.center_focus_weak,
+                      color: Colors.white70, size: 14),
+                  SizedBox(width: 6),
+                  Text('Point camera at the bin slot',
+                      style: TextStyle(color: Colors.white70, fontSize: 12)),
                 ]),
               ),
             ),
@@ -734,19 +541,25 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
         // Bottom instruction
         Positioned(
-          left: 24, right: 24, bottom: 20,
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 20, vertical: 14),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.55),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Text(
-              'Point camera at the bin slot.\nInsert bottle — count increases when the flap opens then closes.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: Colors.white70, fontSize: 13, height: 1.4),
+          left: 0, right: 0, bottom: 0,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Text(
+                  'Arrow points at the bin slot.\nInsert bottle — counted automatically.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.white70, fontSize: 13, height: 1.4),
+                ),
+              ),
             ),
           ),
         ),
