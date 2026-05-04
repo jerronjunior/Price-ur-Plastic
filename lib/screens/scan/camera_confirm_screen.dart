@@ -8,7 +8,6 @@ import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/recycled_bottle_model.dart';
 import '../../services/firestore_service.dart';
-import '../../services/sms_service.dart';
 import 'slot_motion_detection.dart';
 
 /// Camera confirm screen: 10s countdown, slot-motion overlay, detect bottle insertion.

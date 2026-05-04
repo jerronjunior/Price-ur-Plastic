@@ -245,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             children: [
                               Expanded(
                                 child: _StatBox(
-                                  icon: '🧴',
+                                  imagePath: 'assets/images/logo.jpeg',
                                   value: '$bottles',
                                   label: 'BOTTLE COUNT',
                                 ),
@@ -423,12 +423,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _StatBox extends StatelessWidget {
   const _StatBox({
-    required this.icon,
+    this.icon,
+    this.imagePath,
     required this.value,
     required this.label,
   });
 
-  final String icon;
+  final String? icon;
+  final String? imagePath;
   final String value;
   final String label;
 
@@ -450,10 +452,18 @@ class _StatBox extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            icon,
-            style: const TextStyle(fontSize: 32),
-          ),
+          if (imagePath != null)
+            Image.asset(
+              imagePath!,
+              width: 36,
+              height: 36,
+              fit: BoxFit.contain,
+            )
+          else
+            Text(
+              icon ?? '',
+              style: const TextStyle(fontSize: 32),
+            ),
           const SizedBox(height: 12),
           Text(
             value,
