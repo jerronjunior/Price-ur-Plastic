@@ -238,8 +238,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const SizedBox(height: 16),
         _buildActionCard(
           'Manage Bins',
-          'Add, edit, or remove recycling bins',
-          Icons.qr_code_scanner,
+          'Add, edit, or remove recycling bin locations',
+          Icons.add_location_alt,
           AppTheme.primaryGreen,
           () => context.push('/admin/bins'),
         ),
@@ -274,7 +274,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(icon, size: 32, color: color),
@@ -348,7 +348,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   margin: const EdgeInsets.only(bottom: 10),
                   child: ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
+                      backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.12),
                       child: Text(
                         user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
                         style: const TextStyle(color: AppTheme.primaryBlue),
