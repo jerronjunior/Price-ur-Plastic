@@ -590,10 +590,26 @@ class FirestoreService {
 
   Stream<List<UserModel>> allUsersStream() {
     return _db.collection(_usersCollection).snapshots().map((snap) {
-      final users = snap.docs.map((doc) {
-        final map = doc.data();
-        return UserModel.fromMap((map['user_id'] ?? doc.id).toString(), map);
-      }).toList();
+      final users = <UserModel>[];
+      for (final doc in snap.docs) {
+        try {
+          final map = _asMap(doc.data());
+          final raw = UserModel.fromMap((map['user_id'] ?? doc.id).toString(), map);
+          // Skip admin users
+          final dynamic isAdminRaw = map['isAdmin'] ?? map['is_admin'];
+          final bool isAdmin = isAdminRaw is bool
+              ? isAdminRaw
+              : (isAdminRaw is num
+                  ? isAdminRaw != 0
+                  : (isAdminRaw is String
+                      ? (isAdminRaw.trim().toLowerCase() == 'true' ||
+                          isAdminRaw.trim() == '1' ||
+                          isAdminRaw.trim().toLowerCase() == 'yes')
+                      : false));
+          if (isAdmin) continue;
+          users.add(raw);
+        } catch (_) {}
+      }
       users.sort((a, b) => b.totalPoints.compareTo(a.totalPoints));
       return users;
     });
