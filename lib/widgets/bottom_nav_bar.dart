@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import '../core/theme.dart';
+import '../providers/auth_provider.dart';
 
 /// Shared bottom navigation bar widget
 class AppBottomNavBar extends StatelessWidget {
@@ -30,12 +32,14 @@ class AppBottomNavBar extends StatelessWidget {
             isActive: currentRoute == '/' || currentRoute == '/home',
             onTap: () => context.go('/'),
           ),
-          _BottomNavItem(
-            icon: Icons.leaderboard,
-            label: 'Leaderboard',
-            isActive: currentRoute == '/leaderboard',
-            onTap: () => context.go('/leaderboard'),
-          ),
+          // Hide leaderboard for admin users
+          if (!(context.watch<AuthProvider>().isAdmin ?? false))
+            _BottomNavItem(
+              icon: Icons.leaderboard,
+              label: 'Leaderboard',
+              isActive: currentRoute == '/leaderboard',
+              onTap: () => context.go('/leaderboard'),
+            ),
           _BottomNavItem(
             icon: Icons.qr_code_2,
             label: 'Scan',
