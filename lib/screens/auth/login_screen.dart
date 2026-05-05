@@ -47,7 +47,8 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = msg);
       return;
     }
-    context.go('/');
+    final isAdmin = context.read<AuthProvider>().isAdmin;
+    context.go(isAdmin ? '/admin' : '/');
   }
 
   Future<void> _forgotPassword() async {

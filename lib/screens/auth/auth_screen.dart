@@ -240,7 +240,8 @@ class _AuthScreenState extends State<AuthScreen> {
         return;
       }
 
-      context.go('/');
+      final isAdmin = context.read<AuthProvider>().isAdmin;
+      context.go(isAdmin ? '/admin' : '/');
       return;
     }
 

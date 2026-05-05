@@ -22,12 +22,28 @@ GoRouter createAppRouter(AuthProvider authProvider) {
     refreshListenable: GoRouterRefreshStream(authProvider.authStateChanges),
     redirect: (context, state) {
       final loggedIn = authProvider.isLoggedIn;
+      final isAdmin = authProvider.isAdmin;
       final location = state.matchedLocation;
       final onAuth = location == '/login' || location == '/register';
       final onStartup = location == '/splash' || location == '/welcome';
+      final onAdminRoute = location == '/admin' || location.startsWith('/admin/');
+      final onUserRoute = location == '/' ||
+          location == '/home' ||
+          location == '/scan' ||
+          location == '/scan-flow' ||
+          location == '/scan-bin' ||
+          location == '/leaderboard' ||
+          location == '/profile' ||
+          location == '/rewards' ||
+          location == '/map';
       if (onStartup) return null;
       if (!loggedIn && !onAuth) return '/login';
-      if (loggedIn && onAuth) return '/';
+      if (!loggedIn) return null;
+      if (isAdmin) {
+        if (onAuth || onUserRoute) return '/admin';
+        return null;
+      }
+      if (onAuth || onAdminRoute) return '/';
       return null;
     },
     routes: [

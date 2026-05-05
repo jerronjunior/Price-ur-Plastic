@@ -23,6 +23,7 @@ class AuthProvider with ChangeNotifier {
   String? get userId => _auth.currentUserId;
   UserModel? _user;
   UserModel? get user => _user;
+  bool get isAdmin => _user?.isAdmin ?? false;
 
   bool get isLoggedIn => userId != null;
 
