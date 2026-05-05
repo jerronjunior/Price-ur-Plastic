@@ -5,6 +5,7 @@ import '../../models/bin_location_model.dart';
 import '../../models/bin_model.dart';
 import '../../services/firestore_service.dart';
 import 'add_bin_screen.dart';
+import 'admin_add_bin_flow_screen.dart';
 
 /// Admin screen to manage recycling bins using map-based add/edit.
 class ManageBinsScreen extends StatefulWidget {
@@ -18,14 +19,23 @@ class _ManageBinsScreenState extends State<ManageBinsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
 
   Future<void> _openBinForm({BinModel? bin}) async {
-    final binLocation = bin == null
-        ? null
-        : BinLocationModel(
-            id: bin.binId,
-            name: bin.locationName,
-            latitude: bin.latitude,
-            longitude: bin.longitude,
-          );
+    // For adding new bins: use flow with QR scan first
+    if (bin == null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const AdminAddBinFlowScreen(),
+        ),
+      );
+      return;
+    }
+    
+    // For editing existing bins: go directly to form
+    final binLocation = BinLocationModel(
+      id: bin.binId,
+      name: bin.locationName,
+      latitude: bin.latitude,
+      longitude: bin.longitude,
+    );
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(

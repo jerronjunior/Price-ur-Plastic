@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:convert';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +9,7 @@ import 'package:http/http.dart' as http;
 import '../../core/theme.dart';
 import '../../models/bin_location_model.dart';
 import '../../services/firestore_service.dart';
+import 'bin_image_verification_screen.dart';
 
 class _LocationSuggestion {
   const _LocationSuggestion({
@@ -29,9 +32,14 @@ class _LocationSuggestion {
 }
 
 class AddBinScreen extends StatefulWidget {
-  const AddBinScreen({super.key, this.bin});
+  const AddBinScreen({
+    super.key,
+    this.bin,
+    this.scannedBinType,
+  });
 
   final BinLocationModel? bin;
+  final String? scannedBinType;
 
   @override
   State<AddBinScreen> createState() => _AddBinScreenState();
@@ -52,6 +60,10 @@ class _AddBinScreenState extends State<AddBinScreen> {
   bool _loading = false;
   bool _searching = false;
   String? _searchError;
+  
+  // Bin image verification
+  XFile? _capturedBinImage;
+  bool _verifyingImage = false;
 
   @override
   void initState() {
@@ -79,6 +91,34 @@ class _AddBinScreenState extends State<AddBinScreen> {
     _lat.dispose();
     _lng.dispose();
     super.dispose();
+  }
+
+  Future<void> _startBinImageVerification() async {
+    final result = await Navigator.of(context).push<XFile>(
+      MaterialPageRoute(
+        builder: (_) => BinImageVerificationScreen(
+          onImageCaptured: (image) {
+            Navigator.of(context).pop(image);
+          },
+          onBack: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      setState(() => _capturedBinImage = result);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bin image captured successfully!'),
+          backgroundColor: Color(0xFF4CAF50),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _clearBinImage() {
+    setState(() => _capturedBinImage = null);
   }
 
   Future<void> _save() async {
@@ -232,6 +272,47 @@ class _AddBinScreenState extends State<AddBinScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Show scanned bin type if available
+              if (widget.scannedBinType != null) ...[
+                Card(
+                  color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle,
+                          color: const Color(0xFF4CAF50),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Bin Scanned',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF4CAF50),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                widget.scannedBinType!,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               TextFormField(
                 controller: _search,
                 textInputAction: TextInputAction.search,
@@ -355,6 +436,97 @@ class _AddBinScreenState extends State<AddBinScreen> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 24),
+              // Bin Image Verification Section
+              Card(
+                color: _capturedBinImage != null
+                    ? const Color(0xFF4CAF50).withValues(alpha: 0.1)
+                    : Colors.grey.shade100,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            _capturedBinImage != null
+                                ? Icons.check_circle
+                                : Icons.camera_alt,
+                            color: _capturedBinImage != null
+                                ? const Color(0xFF4CAF50)
+                                : Colors.grey,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Bin Image Verification',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                Text(
+                                  _capturedBinImage != null
+                                      ? 'Image captured'
+                                      : 'Capture bin photo to verify',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_capturedBinImage != null) ...[
+                        const SizedBox(height: 12),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            File(_capturedBinImage!.path),
+                            height: 150,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retake'),
+                                onPressed: () => _startBinImageVerification(),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.close),
+                                label: const Text('Remove'),
+                                onPressed: _clearBinImage,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.camera_alt),
+                          label: const Text('Capture Bin Image'),
+                          onPressed: _startBinImageVerification,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primaryGreen,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
