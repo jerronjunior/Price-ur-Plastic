@@ -388,11 +388,31 @@ class FirestoreService {
         .orderBy('totalPoints', descending: true)
         .limit(10)
         .snapshots()
-        .map((snap) => snap.docs.map((doc) {
-              final map = doc.data();
-              final id = (map['user_id'] ?? doc.id).toString();
-              return UserModel.fromMap(id, map);
-            }).toList());
+        .map((snap) {
+          final list = <UserModel>[];
+          for (final doc in snap.docs) {
+            try {
+              final map = _asMap(doc.data());
+              final raw = _normalizeLeaderboardRow(map);
+              // determine admin flag robustly
+              final dynamic isAdminRaw = raw['isAdmin'];
+              final bool isAdmin = isAdminRaw is bool
+                  ? isAdminRaw
+                  : (isAdminRaw is num
+                      ? isAdminRaw != 0
+                      : (isAdminRaw is String
+                          ? (isAdminRaw.trim().toLowerCase() == 'true' ||
+                              isAdminRaw.trim() == '1' ||
+                              isAdminRaw.trim().toLowerCase() == 'yes')
+                          : false));
+              if (isAdmin) continue;
+
+              final id = (raw['user_id'] ?? doc.id).toString();
+              list.add(UserModel.fromMap(id, raw));
+            } catch (_) {}
+          }
+          return list;
+        });
   }
 
   Stream<List<UserModel>> leaderboardStreamAll() {
@@ -416,6 +436,18 @@ class FirestoreService {
               ? rawName
               : (emailPrefix.isNotEmpty ? emailPrefix : 'User');
           raw['email'] = rawEmail;
+          // skip admin users from leaderboard
+          final dynamic isAdminRaw = raw['isAdmin'];
+          final bool isAdmin = isAdminRaw is bool
+              ? isAdminRaw
+              : (isAdminRaw is num
+                  ? isAdminRaw != 0
+                  : (isAdminRaw is String
+                      ? (isAdminRaw.trim().toLowerCase() == 'true' ||
+                          isAdminRaw.trim() == '1' ||
+                          isAdminRaw.trim().toLowerCase() == 'yes')
+                      : false));
+          if (isAdmin) continue;
 
           all.add(UserModel.fromMap((raw['user_id'] ?? doc.id).toString(), raw));
         } catch (_) {}

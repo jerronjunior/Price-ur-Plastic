@@ -51,17 +51,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final hasUnread = context.watch<NotificationProvider>().hasUnread;
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: () async {
+            await context.read<AuthProvider>().logout();
+            if (!mounted) return;
+            context.go('/login');
+          },
+        ),
         title: const Text('Admin'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () async {
-              await context.read<AuthProvider>().logout();
-              if (!mounted) return;
-              context.go('/login');
-            },
-          ),
           IconButton(
             icon: Stack(
               clipBehavior: Clip.none,
