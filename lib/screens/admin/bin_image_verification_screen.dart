@@ -205,14 +205,17 @@ class _BinImageVerificationScreenState
         if (mounted) setState(() => _showFlash = false);
       });
 
-      // Stop image stream before navigating/pop to avoid dependents
+      // Stop image stream and fully dispose camera before navigating/pop
       try {
         await _cam?.stopImageStream();
       } catch (_) {}
 
-      Future.delayed(const Duration(milliseconds: 350), () {
-        if (mounted) widget.onImageCaptured(image);
-      });
+      try {
+        await _cam?.dispose();
+      } catch (_) {}
+
+      // Return the captured image to the caller now that the camera is cleaned up.
+      if (mounted) widget.onImageCaptured(image);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
