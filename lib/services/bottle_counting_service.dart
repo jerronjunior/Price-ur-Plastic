@@ -260,4 +260,61 @@ class BottleCountingService {
     _interpreter?.close();
     _isInitialized = false;
   }
+
+  /// Detect bottles from JPEG bytes (e.g., taken via CameraController.takePicture()).
+  Future<List<DetectedBottle>> detectBottlesFromJpeg(Uint8List jpegBytes) async {
+    if (!_isInitialized || _interpreter == null) return [];
+    try {
+      final decoded = img.decodeImage(jpegBytes);
+      if (decoded == null) return [];
+
+      final resized = img.copyResize(
+        decoded,
+        width: 300,
+        height: 300,
+        interpolation: img.Interpolation.linear,
+      );
+
+      final List<List<List<List<int>>>> tensorData =
+          List.generate(1, (_) {
+        return List.generate(300, (y) {
+          return List.generate(300, (x) {
+            final pixel = resized.getPixelSafe(x, y);
+            return [pixel.r as int, pixel.g as int, pixel.b as int];
+          });
+        });
+      });
+
+      final outputBoxes = List.generate(
+        1,
+        (_) => List.generate(10, (_) => List.filled(4, 0.0)),
+      );
+      final outputClasses = List.generate(
+        1,
+        (_) => List.filled(10, 0.0),
+      );
+      final outputScores = List.generate(
+        1,
+        (_) => List.filled(10, 0.0),
+      );
+      final outputCount = List.filled(1, 0.0);
+
+      final outputs = <int, Object>{
+        0: outputBoxes,
+        1: outputClasses,
+        2: outputScores,
+        3: outputCount,
+      };
+
+      _interpreter!.runForMultipleInputs([tensorData], outputs);
+
+      // Here we don't have original frame dimensions; treat as 1:1
+      final detections = _parseDetections(outputs, resized.width, resized.height);
+      _lastDetections = detections;
+      return detections;
+    } catch (e) {
+      print('Error detecting from jpeg: $e');
+      return [];
+    }
+  }
 }

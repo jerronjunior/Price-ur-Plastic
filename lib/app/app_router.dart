@@ -11,7 +11,6 @@ import '../screens/scan/scan_bin_flow_screen.dart';
 import '../screens/admin/admin_dashboard_screen.dart';
 import '../screens/admin/manage_bins_screen.dart';
 import '../screens/admin/manage_rewards_screen.dart';
-import '../screens/admin/bottle_counter_screen.dart';
 import '../screens/startup/splash_screen.dart';
 import '../screens/startup/welcome_screen.dart';
 import '../screens/map/map_screen.dart';
@@ -27,9 +26,8 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       final location = state.matchedLocation;
       final onAuth = location == '/login' || location == '/register';
       final onStartup = location == '/splash' || location == '/welcome';
-      final onAdminRoute = location == '/admin' ||
-          location.startsWith('/admin/') ||
-          location == '/bottle-counter';
+        final onAdminRoute = location == '/admin' ||
+          location.startsWith('/admin/');
       final onUserRoute = location == '/' ||
           location == '/home' ||
           location == '/scan' ||
@@ -113,10 +111,6 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       GoRoute(
         path: '/admin/rewards',
         builder: (_, __) => const ManageRewardsScreen(),
-      ),
-      GoRoute(
-        path: '/bottle-counter',
-        builder: (_, __) => const BottleCounterScreen(),
       ),
     ],
   );

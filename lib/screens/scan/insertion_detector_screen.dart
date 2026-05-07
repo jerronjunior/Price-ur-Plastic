@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import '../../services/bottle_counting_service.dart';
 
 import 'slot_motion_detection_impl.dart';
 
@@ -219,6 +220,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _motionReady     = false; // calibrated and ready
   bool _streamStarted   = false;
 
+  // Bottle counting service (for user insertion AR)
+  final BottleCountingService _bottleService = BottleCountingService();
+  bool _bottleServiceReady = false;
+  List<DetectedBottle> _lastDetections = [];
+  int _detectedCount = 0;
+
   // How many frames we've had lock before allowing detection
   int  _stableFrames    = 0;
   static const int _requiredStableFrames = 8;
@@ -256,6 +263,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _dotCtrl.dispose();
     _flashCtrl.dispose();
     _motionDetector?.dispose();
+    _bottleService.dispose();
     if (_streamStarted && _cam?.value.isStreamingImages == true) {
       _cam?.stopImageStream();
     }
@@ -308,6 +316,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
       if (!mounted) return;
       setState(() { _cameraReady = true; _stableFrames = 0; });
+      // Initialize bottle counting service asynchronously (best-effort)
+      _bottleService.initialize().then((ok) {
+        if (!mounted) return;
+        setState(() => _bottleServiceReady = ok);
+      });
       _tracker.reset();
       _buildMotionDetector();
 
@@ -347,9 +360,41 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _flashCtrl.forward(from: 0).then((_) {
       if (mounted) setState(() => _showFlash = false);
     });
+
+    // Run capture + bottle detection asynchronously (don't block motion pipeline)
+    _runDetectionCapture();
+
     Future.delayed(const Duration(milliseconds: 350), () {
       if (mounted) widget.onDetected();
     });
+  }
+
+  Future<void> _runDetectionCapture() async {
+    if (!_bottleServiceReady || _cam == null || !_cam!.value.isInitialized) return;
+    try {
+      if (_streamStarted && _cam!.value.isStreamingImages) {
+        await _cam!.stopImageStream();
+        _streamStarted = false;
+      }
+
+      final picture = await _cam!.takePicture();
+      final bytes = await picture.readAsBytes();
+      final dets = await _bottleService.detectBottlesFromJpeg(bytes);
+      if (!mounted) return;
+      setState(() {
+        _lastDetections = dets;
+        _detectedCount = dets.length;
+      });
+    } catch (e) {
+      // ignore detection errors
+    } finally {
+      try {
+        if (!_streamStarted && _cam != null && _cam!.value.isInitialized) {
+          await _cam!.startImageStream(_onFrame);
+          _streamStarted = true;
+        }
+      } catch (_) {}
+    }
   }
 
   // ── Frame processing ────────────────────────────────────────────────────────
@@ -563,6 +608,31 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
         ),
+        // Detection result badge
+        if (_detectedCount >= 0)
+          Positioned(
+            top: 18,
+            right: 18,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 300),
+              opacity: _detected ? 1.0 : (_lastDetections.isNotEmpty ? 1.0 : 0.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _detectedCount > 0 ? Colors.green.shade700 : Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(children: [
+                  Icon(_detectedCount > 0 ? Icons.check_circle : Icons.info, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text(
+                    _detectedCount > 0 ? 'Detected: $_detectedCount' : 'No bottles',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ]),
+              ),
+            ),
+          ),
       ]);
     });
   }

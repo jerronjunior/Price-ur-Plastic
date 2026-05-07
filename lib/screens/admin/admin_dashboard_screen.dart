@@ -246,14 +246,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        _buildActionCard(
-          'Bottle Counter AR',
-          'Real-time bottle detection with computer vision',
-          Icons.videocam,
-          const Color(0xFF9C27B0),
-          () => context.push('/bottle-counter'),
-        ),
-        const SizedBox(height: 12),
+        
         _buildActionCard(
           'Manage Bins',
           'Add, edit, or remove recycling bin locations',
