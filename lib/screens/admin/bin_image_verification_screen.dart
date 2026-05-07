@@ -205,6 +205,11 @@ class _BinImageVerificationScreenState
         if (mounted) setState(() => _showFlash = false);
       });
 
+      // Stop image stream before navigating/pop to avoid dependents
+      try {
+        await _cam?.stopImageStream();
+      } catch (_) {}
+
       Future.delayed(const Duration(milliseconds: 350), () {
         if (mounted) widget.onImageCaptured(image);
       });

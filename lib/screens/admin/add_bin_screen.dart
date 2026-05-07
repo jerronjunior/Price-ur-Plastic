@@ -96,11 +96,11 @@ class _AddBinScreenState extends State<AddBinScreen> {
   Future<void> _startBinImageVerification() async {
     final result = await Navigator.of(context).push<XFile>(
       MaterialPageRoute(
-        builder: (_) => BinImageVerificationScreen(
+        builder: (ctx) => BinImageVerificationScreen(
           onImageCaptured: (image) {
-            Navigator.of(context).pop(image);
+            Navigator.of(ctx).pop(image);
           },
-          onBack: () => Navigator.of(context).pop(),
+          onBack: () => Navigator.of(ctx).pop(),
         ),
       ),
     );
