@@ -76,7 +76,7 @@ class _AuthScreenState extends State<AuthScreen> {
               maxLength: 6,
               decoration: const InputDecoration(
                 labelText: 'OTP code',
-                hintText: '',
+                hintText: 'Enter the 6-digit code',
               ),
             ),
             actions: [
