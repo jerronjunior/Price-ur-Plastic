@@ -27,7 +27,8 @@ class _RewardsScreenState extends State<RewardsScreen>
   late Animation<double> _turnsAnimation;
 
   bool _showNotificationPanel = false;
-  final int _spinCost = 20;
+  // ── spinCost is now read from Firestore via StreamBuilder ──────────────────
+  // No longer hardcoded — changes in admin panel reflect here instantly
   bool _isSpinning = false;
   String? _lastResult;
   double _currentTurns = 0.0;
@@ -53,15 +54,16 @@ class _RewardsScreenState extends State<RewardsScreen>
     super.dispose();
   }
 
-  Future<void> _spin(List<String> prizes) async {
-    final user = context.read<AuthProvider>().user;
+  // ── spinCost passed as parameter from StreamBuilder ────────────────────────
+  Future<void> _spin(List<String> prizes, int spinCost) async {
+    final user   = context.read<AuthProvider>().user;
     final points = user?.totalPoints ?? 0;
 
-    if (points < _spinCost) {
+    if (points < spinCost) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Not enough points. Need 20 points.'),
+        SnackBar(
+          content: Text('Not enough points. Need $spinCost points.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -70,11 +72,11 @@ class _RewardsScreenState extends State<RewardsScreen>
 
     if (_isSpinning || prizes.isEmpty) return;
 
-    final selectedIndex = math.Random().nextInt(prizes.length);
-    final selectedPrize = prizes[selectedIndex];
-    final segmentSize = 1 / prizes.length;
-    final segmentCenter = (selectedIndex + 0.5) * segmentSize;
-    final landingOffset = (1 - segmentCenter) % 1;
+    final selectedIndex  = math.Random().nextInt(prizes.length);
+    final selectedPrize  = prizes[selectedIndex];
+    final segmentSize    = 1 / prizes.length;
+    final segmentCenter  = (selectedIndex + 0.5) * segmentSize;
+    final landingOffset  = (1 - segmentCenter) % 1;
     final extraFullTurns = 6 + math.Random().nextInt(3);
 
     var targetTurns =
@@ -99,7 +101,7 @@ class _RewardsScreenState extends State<RewardsScreen>
     });
 
     try {
-      await context.read<AuthProvider>().updateTotalPoints(points - _spinCost);
+      await context.read<AuthProvider>().updateTotalPoints(points - spinCost);
 
       await _spinController.forward(from: 0.0);
       _currentTurns = targetTurns;
@@ -126,7 +128,7 @@ class _RewardsScreenState extends State<RewardsScreen>
     if (_lastResult == null) return;
 
     final authProvider = context.read<AuthProvider>();
-    final userName =
+    final userName     =
         authProvider.user?.name ?? authProvider.firebaseUser?.email ?? 'User';
 
     context.read<NotificationProvider>().addRewardNotification(_lastResult!);
@@ -152,12 +154,10 @@ class _RewardsScreenState extends State<RewardsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final user = context.watch<AuthProvider>().user;
-    final hasUnread = context.watch<NotificationProvider>().hasUnread;
-    final points = user?.totalPoints ?? 0;
-    final canSpin = points >= _spinCost;
-    final eligibleSpins = points ~/ _spinCost;
-    final firestore = context.read<FirestoreService>();
+    final user     = context.watch<AuthProvider>().user;
+    final hasUnread= context.watch<NotificationProvider>().hasUnread;
+    final points   = user?.totalPoints ?? 0;
+    final firestore= context.read<FirestoreService>();
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -166,10 +166,12 @@ class _RewardsScreenState extends State<RewardsScreen>
         children: [
           Column(
             children: [
+              // ── Header ──────────────────────────────────────────────────
               Container(
                 width: double.infinity,
                 color: AppTheme.primaryBlue,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 20),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -189,7 +191,8 @@ class _RewardsScreenState extends State<RewardsScreen>
                       icon: Stack(
                         clipBehavior: Clip.none,
                         children: [
-                          const Icon(Icons.notifications, color: Colors.white),
+                          const Icon(Icons.notifications,
+                              color: Colors.white),
                           if (hasUnread)
                             const Positioned(
                               right: -1,
@@ -209,44 +212,65 @@ class _RewardsScreenState extends State<RewardsScreen>
                       ),
                       onPressed: () {
                         if (!_showNotificationPanel) {
-                          context.read<NotificationProvider>().markAllAsRead();
+                          context
+                              .read<NotificationProvider>()
+                              .markAllAsRead();
                         }
-                        setState(() {
-                          _showNotificationPanel = !_showNotificationPanel;
-                        });
+                        setState(() => _showNotificationPanel =
+                            !_showNotificationPanel);
                       },
                     ),
                   ],
                 ),
               ),
+
+              // ── StreamBuilder — reads ALL config live from Firestore ─────
+              // When admin changes spinCost / pointsPerBottle / wheelGifts
+              // in the web panel, this rebuilds automatically.
               Expanded(
                 child: StreamBuilder<RewardConfigModel>(
                   stream: firestore.rewardConfigStream(),
                   builder: (context, snapshot) {
-                    final prizes = snapshot.data?.wheelGifts.isNotEmpty == true
-                        ? snapshot.data!.wheelGifts
+                    // ── Extract every config value from Firestore ──────────
+                    final config  = snapshot.data;
+
+                    final prizes  = config?.wheelGifts.isNotEmpty == true
+                        ? config!.wheelGifts
                         : kDefaultWheelGifts;
+
+                    // All values now live — admin panel changes reflect here
+                    final spinCost         = config?.spinCost         ?? 20;
+                    final pointsPerBottle  = config?.pointsPerBottle  ?? 1;
+                    final maxBottlesPerDay = config?.maxBottlesPerDay  ?? 25;
+                    final cooldownSeconds  = config?.cooldownSeconds   ?? 20;
+
+                    final canSpin      = points >= spinCost;
+                    final eligibleSpins= points ~/ spinCost;
 
                     return SingleChildScrollView(
                       padding: const EdgeInsets.all(24),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+
+                          // ── Not enough points warning ──────────────────
                           if (!canSpin)
                             Container(
                               padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
                                 color: const Color(0xFFFFEBEE),
-                                border: Border.all(color: Colors.red.shade300),
+                                border: Border.all(
+                                    color: Colors.red.shade300),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(Icons.error, color: Colors.red.shade700),
+                                  Icon(Icons.error,
+                                      color: Colors.red.shade700),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Text(
-                                      'Not enough points! Need $_spinCost points.',
+                                      'Not enough points! Need $spinCost points.',
                                       style: TextStyle(
                                         color: Colors.red.shade700,
                                         fontWeight: FontWeight.w600,
@@ -256,22 +280,28 @@ class _RewardsScreenState extends State<RewardsScreen>
                                 ],
                               ),
                             ),
+
                           if (!canSpin) const SizedBox(height: 24),
+
+                          // ── Stats row ──────────────────────────────────
                           Container(
                             padding: const EdgeInsets.all(20),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              border: Border.all(color: Colors.grey.shade200),
+                              border: Border.all(
+                                  color: Colors.grey.shade200),
                               borderRadius: BorderRadius.circular(12),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.grey.withValues(alpha: 0.1),
+                                  color: Colors.grey
+                                      .withValues(alpha: 0.1),
                                   blurRadius: 8,
                                 ),
                               ],
                             ),
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                               children: [
                                 _StatItem(
                                   label: 'Total Points',
@@ -279,19 +309,61 @@ class _RewardsScreenState extends State<RewardsScreen>
                                   icon: '💰',
                                 ),
                                 _StatItem(
-                                  label: 'Per Spinning Cost',
-                                  value: '$_spinCost',
+                                  label: 'Per Spin Cost',
+                                  // ✅ Now reads from Firestore
+                                  value: '$spinCost',
                                   icon: '🎡',
                                 ),
                                 _StatItem(
-                                  label: 'Eligible Spinning Count',
+                                  label: 'Eligible Spins',
                                   value: '$eligibleSpins',
                                   icon: '🎯',
                                 ),
                               ],
                             ),
                           ),
+
+                          const SizedBox(height: 16),
+
+                          // ── Extra config info card ─────────────────────
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF1F8E9),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                  color: const Color(0xFFC8E6C9)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceEvenly,
+                              children: [
+                                _StatItem(
+                                  label: 'Pts / Bottle',
+                                  // ✅ Now reads from Firestore
+                                  value: '$pointsPerBottle',
+                                  icon: '♻️',
+                                ),
+                                _StatItem(
+                                  label: 'Max / Day',
+                                  // ✅ Now reads from Firestore
+                                  value: '$maxBottlesPerDay',
+                                  icon: '🍾',
+                                ),
+                                _StatItem(
+                                  label: 'Cooldown (s)',
+                                  // ✅ Now reads from Firestore
+                                  value: '$cooldownSeconds',
+                                  icon: '⏱️',
+                                ),
+                              ],
+                            ),
+                          ),
+
                           const SizedBox(height: 40),
+
+                          // ── Spin wheel ─────────────────────────────────
                           Center(
                             child: Stack(
                               alignment: Alignment.center,
@@ -299,7 +371,8 @@ class _RewardsScreenState extends State<RewardsScreen>
                                 AnimatedBuilder(
                                   animation: _celebrationController,
                                   builder: (context, _) {
-                                    final glow = _celebrationController.value;
+                                    final glow =
+                                        _celebrationController.value;
                                     return Container(
                                       width: 316,
                                       height: 316,
@@ -317,14 +390,16 @@ class _RewardsScreenState extends State<RewardsScreen>
                                         ),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: Colors.amber.withValues(
+                                            color: Colors.amber
+                                                .withValues(
                                               alpha: 0.18 + 0.42 * glow,
                                             ),
                                             blurRadius: 24 + 40 * glow,
                                             spreadRadius: 2 + 14 * glow,
                                           ),
                                           BoxShadow(
-                                            color: Colors.purple.withValues(
+                                            color: Colors.purple
+                                                .withValues(
                                               alpha: 0.10 + 0.25 * glow,
                                             ),
                                             blurRadius: 32 + 20 * glow,
@@ -368,7 +443,9 @@ class _RewardsScreenState extends State<RewardsScreen>
                               ],
                             ),
                           ),
+
                           const SizedBox(height: 14),
+
                           AnimatedSwitcher(
                             duration: const Duration(milliseconds: 250),
                             child: _isSpinning
@@ -385,19 +462,27 @@ class _RewardsScreenState extends State<RewardsScreen>
                                       )
                                     : const SizedBox.shrink()),
                           ),
+
                           const SizedBox(height: 40),
+
+                          // ── Spin button ────────────────────────────────
                           ElevatedButton(
-                            onPressed: _isSpinning ? null : () => _spin(prizes),
+                            onPressed: _isSpinning
+                                ? null
+                                : () => _spin(prizes, spinCost),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF4CAF50),
-                              disabledBackgroundColor: Colors.grey.shade400,
-                              padding: const EdgeInsets.symmetric(vertical: 18),
+                              disabledBackgroundColor:
+                                  Colors.grey.shade400,
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 18),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                             child: Text(
-                              'Spin ($_spinCost pts)',
+                              // ✅ Shows live spinCost from Firestore
+                              'Spin ($spinCost pts)',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -413,29 +498,23 @@ class _RewardsScreenState extends State<RewardsScreen>
               ),
             ],
           ),
+
           if (_showNotificationPanel)
             Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
+              right: 0, top: 0, bottom: 0,
               child: GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _showNotificationPanel = false;
-                  });
-                },
+                onTap: () => setState(
+                    () => _showNotificationPanel = false),
                 child: Container(
                   color: Colors.black.withValues(alpha: 0.3),
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(
-                      notifications:
-                          context.watch<NotificationProvider>().notifications,
-                      onClose: () {
-                        setState(() {
-                          _showNotificationPanel = false;
-                        });
-                      },
+                      notifications: context
+                          .watch<NotificationProvider>()
+                          .notifications,
+                      onClose: () => setState(
+                          () => _showNotificationPanel = false),
                     ),
                   ),
                 ),
@@ -446,6 +525,8 @@ class _RewardsScreenState extends State<RewardsScreen>
     );
   }
 }
+
+// ── Unchanged widgets below ────────────────────────────────────────────────
 
 class _StatItem extends StatelessWidget {
   const _StatItem({
@@ -477,10 +558,7 @@ class _StatItem extends StatelessWidget {
           Text(
             label,
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -496,9 +574,8 @@ class _SpinCurve extends Curve {
     if (t < 0.6) {
       return Curves.easeIn.transform(t / 0.6) * 0.75;
     }
-
-    final u = (t - 0.6) / 0.4;
-    final base = Curves.easeOutCubic.transform(u);
+    final u      = (t - 0.6) / 0.4;
+    final base   = Curves.easeOutCubic.transform(u);
     final wobble = math.sin(u * math.pi * 2.5) * 0.012 * (1 - u);
     return 0.75 + (base + wobble) * 0.25;
   }
@@ -522,22 +599,29 @@ class SpinWheelPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
-    final segCount = prizes.length;
-    final sweepAngle = (2 * math.pi) / segCount;
+    final center    = Offset(size.width / 2, size.height / 2);
+    final radius    = size.width / 2;
+    final segCount  = prizes.length;
+    final sweepAngle= (2 * math.pi) / segCount;
 
     final rimPaint = Paint()
       ..shader = RadialGradient(
-        colors: [Colors.white, const Color(0xFFE0E0E0), const Color(0xFFBDBDBD)],
+        colors: [
+          Colors.white,
+          const Color(0xFFE0E0E0),
+          const Color(0xFFBDBDBD)
+        ],
         stops: const [0.82, 0.93, 1.0],
-      ).createShader(Rect.fromCircle(center: center, radius: radius))
+      ).createShader(
+              Rect.fromCircle(center: center, radius: radius))
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, radius, rimPaint);
 
     for (int i = 0; i < segCount; i++) {
-      final startAngle = (i * 2 * math.pi) / segCount - math.pi / 2;
-      final colors = _segmentColors[i % _segmentColors.length];
+      final startAngle =
+          (i * 2 * math.pi) / segCount - math.pi / 2;
+      final colors =
+          _segmentColors[i % _segmentColors.length];
 
       final segPaint = Paint()
         ..shader = ui.Gradient.sweep(
@@ -552,37 +636,29 @@ class SpinWheelPainter extends CustomPainter {
 
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: radius - 6),
-        startAngle,
-        sweepAngle,
-        true,
-        segPaint,
+        startAngle, sweepAngle, true, segPaint,
       );
 
       final dividerPaint = Paint()
-        ..color = Colors.white.withValues(alpha: 0.9)
+        ..color       = Colors.white.withValues(alpha: 0.9)
         ..strokeWidth = 2.5
-        ..style = PaintingStyle.stroke;
+        ..style       = PaintingStyle.stroke;
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: radius - 6),
-        startAngle,
-        sweepAngle,
-        true,
-        dividerPaint,
+        startAngle, sweepAngle, true, dividerPaint,
       );
 
       final dotAngle = startAngle + sweepAngle / 2;
-      final dotPos = Offset(
+      final dotPos   = Offset(
         center.dx + (radius - 18) * math.cos(dotAngle),
         center.dy + (radius - 18) * math.sin(dotAngle),
       );
-      canvas.drawCircle(
-        dotPos,
-        5,
-        Paint()..color = Colors.white.withValues(alpha: 0.85),
-      );
-      canvas.drawCircle(dotPos, 3, Paint()..color = colors[1]);
+      canvas.drawCircle(dotPos, 5,
+          Paint()..color = Colors.white.withValues(alpha: 0.85));
+      canvas.drawCircle(dotPos, 3,
+          Paint()..color = colors[1]);
 
-      final textAngle = startAngle + sweepAngle / 2;
+      final textAngle  = startAngle + sweepAngle / 2;
       final textRadius = (radius - 6) * 0.60;
       final textOffset = Offset(
         center.dx + textRadius * math.cos(textAngle),
@@ -606,7 +682,8 @@ class SpinWheelPainter extends CustomPainter {
       )..layout();
       shadowPainter.paint(
         canvas,
-        Offset(-shadowPainter.width / 2 + 1, -shadowPainter.height / 2 + 1),
+        Offset(-shadowPainter.width / 2 + 1,
+               -shadowPainter.height / 2 + 1),
       );
 
       final tp = TextPainter(
@@ -621,7 +698,8 @@ class SpinWheelPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+      tp.paint(canvas,
+          Offset(-tp.width / 2, -tp.height / 2));
 
       canvas.restore();
     }
@@ -634,14 +712,14 @@ class SpinWheelPainter extends CustomPainter {
           Colors.white.withValues(alpha: 0.22),
           Colors.white.withValues(alpha: 0.0),
         ],
-      ).createShader(Rect.fromCircle(center: center, radius: radius - 6))
+      ).createShader(
+              Rect.fromCircle(center: center, radius: radius - 6))
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, radius - 6, glossPaint);
 
     const hubRadius = 32.0;
     canvas.drawCircle(
-      center + const Offset(2, 2),
-      hubRadius,
+      center + const Offset(2, 2), hubRadius,
       Paint()..color = Colors.black.withValues(alpha: 0.3),
     );
 
@@ -649,33 +727,33 @@ class SpinWheelPainter extends CustomPainter {
       ..shader = RadialGradient(
         center: const Alignment(-0.3, -0.4),
         radius: 0.9,
-        colors: [const Color(0xFF66BB6A), const Color(0xFF1B5E20)],
-      ).createShader(Rect.fromCircle(center: center, radius: hubRadius));
+        colors: [
+          const Color(0xFF66BB6A),
+          const Color(0xFF1B5E20)
+        ],
+      ).createShader(
+              Rect.fromCircle(center: center, radius: hubRadius));
     canvas.drawCircle(center, hubRadius, hubPaint);
 
-    canvas.drawCircle(
-      center,
-      hubRadius,
+    canvas.drawCircle(center, hubRadius,
       Paint()
-        ..color = Colors.white.withValues(alpha: 0.8)
+        ..color       = Colors.white.withValues(alpha: 0.8)
         ..strokeWidth = 2.5
-        ..style = PaintingStyle.stroke,
+        ..style       = PaintingStyle.stroke,
     );
 
     canvas.drawCircle(
-      center + const Offset(-6, -7),
-      10,
+      center + const Offset(-6, -7), 10,
       Paint()..color = Colors.white.withValues(alpha: 0.25),
     );
 
     final hubText = TextPainter(
-      text: const TextSpan(text: '🎡', style: TextStyle(fontSize: 26)),
+      text: const TextSpan(
+          text: '🎡', style: TextStyle(fontSize: 26)),
       textDirection: TextDirection.ltr,
     )..layout();
-    hubText.paint(
-      canvas,
-      center - Offset(hubText.width / 2, hubText.height / 2),
-    );
+    hubText.paint(canvas,
+        center - Offset(hubText.width / 2, hubText.height / 2));
   }
 
   @override
@@ -691,14 +769,14 @@ class PointerPainter extends CustomPainter {
     final shadowPath = Path()
       ..moveTo(cx + 1.5, 2)
       ..lineTo(size.width - 2, size.height - 4)
-      ..quadraticBezierTo(cx + 1.5, size.height + 4, cx + 1.5, size.height - 4)
+      ..quadraticBezierTo(
+          cx + 1.5, size.height + 4, cx + 1.5, size.height - 4)
       ..lineTo(2, size.height - 4)
-      ..quadraticBezierTo(cx + 1.5, size.height + 4, cx + 1.5, 2)
+      ..quadraticBezierTo(
+          cx + 1.5, size.height + 4, cx + 1.5, 2)
       ..close();
-    canvas.drawPath(
-      shadowPath,
-      Paint()..color = Colors.black.withValues(alpha: 0.28),
-    );
+    canvas.drawPath(shadowPath,
+        Paint()..color = Colors.black.withValues(alpha: 0.28));
 
     final arrowPath = Path()
       ..moveTo(cx, 0)
@@ -710,8 +788,12 @@ class PointerPainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [const Color(0xFFFF1744), const Color(0xFFB71C1C)],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+        colors: [
+          const Color(0xFFFF1744),
+          const Color(0xFFB71C1C)
+        ],
+      ).createShader(
+              Rect.fromLTWH(0, 0, size.width, size.height));
     canvas.drawPath(arrowPath, arrowPaint);
 
     final glossPath = Path()
@@ -719,24 +801,19 @@ class PointerPainter extends CustomPainter {
       ..lineTo(cx - 4, size.height * 0.55)
       ..lineTo(cx, size.height * 0.5)
       ..close();
-    canvas.drawPath(
-      glossPath,
-      Paint()..color = Colors.white.withValues(alpha: 0.30),
-    );
+    canvas.drawPath(glossPath,
+        Paint()..color = Colors.white.withValues(alpha: 0.30));
 
     canvas.drawPath(
       arrowPath,
       Paint()
-        ..color = Colors.white.withValues(alpha: 0.85)
+        ..color       = Colors.white.withValues(alpha: 0.85)
         ..strokeWidth = 1.5
-        ..style = PaintingStyle.stroke,
+        ..style       = PaintingStyle.stroke,
     );
 
-    canvas.drawCircle(
-      Offset(cx, 4),
-      3,
-      Paint()..color = Colors.white.withValues(alpha: 0.7),
-    );
+    canvas.drawCircle(Offset(cx, 4), 3,
+        Paint()..color = Colors.white.withValues(alpha: 0.7));
   }
 
   @override
@@ -757,11 +834,12 @@ class _WinBurst extends StatelessWidget {
         if (p <= 0 || p >= 1) return const SizedBox.shrink();
 
         final opacity = (1 - p).clamp(0.0, 1.0);
-        const angles = <double>[0, 45, 90, 135, 180, 225, 270, 315];
+        const angles = <double>[
+          0, 45, 90, 135, 180, 225, 270, 315
+        ];
 
         return SizedBox(
-          width: 320,
-          height: 320,
+          width: 320, height: 320,
           child: Stack(
             children: [
               for (final angle in angles)
