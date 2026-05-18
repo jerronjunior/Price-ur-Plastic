@@ -89,6 +89,24 @@ class FirestoreService {
     return Map<String, dynamic>.from(data as Map);
   }
 
+  bool _isTruthy(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final v = value.trim().toLowerCase();
+      return v == 'true' || v == '1' || v == 'yes';
+    }
+    return false;
+  }
+
+  String _formatHumanTime(DateTime now) {
+    return '${now.day.toString().padLeft(2, '0')}/'
+        '${now.month.toString().padLeft(2, '0')}/'
+        '${now.year} '
+        '${(now.hour % 12 == 0 ? 12 : now.hour % 12).toString()}:${now.minute.toString().padLeft(2, '0')} '
+        '${now.hour >= 12 ? 'PM' : 'AM'}';
+  }
+
   Future<void> setUser(UserModel user) async {
     await _db.collection(_usersCollection).doc(user.userId).set(
       {
@@ -380,6 +398,141 @@ class FirestoreService {
       'createdAt': now,
       'type': 'reward_win',
     });
+  }
+
+  Future<void> sendAdminMessage({
+    required String adminId,
+    required String message,
+    String? targetUserId,
+    String? targetUserName,
+  }) async {
+    final trimmedMessage = message.trim();
+    if (trimmedMessage.isEmpty) {
+      throw ArgumentError('Message cannot be empty.');
+    }
+
+    final now = DateTime.now();
+    final createdAt = Timestamp.fromDate(now);
+    final timeText = _formatHumanTime(now);
+
+    int recipients = 0;
+
+    if (targetUserId != null && targetUserId.trim().isNotEmpty) {
+      final userId = targetUserId.trim();
+      recipients = 1;
+      await _db.collection('notifications').add({
+        'userId': userId,
+        'title': 'Admin Message',
+        'subtitle': trimmedMessage,
+        'time': timeText,
+        'icon': 'notifications',
+        'color': '#1976D2',
+        'isRead': false,
+        'createdAt': createdAt,
+        'type': 'admin_message',
+        'sentBy': adminId,
+      });
+    } else {
+      final usersSnap = await _db.collection(_usersCollection).get();
+      final batch = _db.batch();
+
+      for (final doc in usersSnap.docs) {
+        final data = doc.data();
+        final isAdmin = _isTruthy(data['isAdmin'] ?? data['is_admin']);
+        if (isAdmin) continue;
+
+        final userId =
+            (data['user_id'] ?? data['uid'] ?? doc.id).toString().trim();
+        if (userId.isEmpty) continue;
+
+        recipients++;
+        final ref = _db.collection('notifications').doc();
+        batch.set(ref, {
+          'userId': userId,
+          'title': 'Admin Message',
+          'subtitle': trimmedMessage,
+          'time': timeText,
+          'icon': 'notifications',
+          'color': '#1976D2',
+          'isRead': false,
+          'createdAt': createdAt,
+          'type': 'admin_message',
+          'sentBy': adminId,
+        });
+      }
+
+      await batch.commit();
+    }
+
+    final String audienceLabel =
+        (targetUserId != null && targetUserId.trim().isNotEmpty)
+            ? (targetUserName?.trim().isNotEmpty == true
+                ? targetUserName!.trim()
+                : targetUserId.trim())
+            : 'All users';
+
+    await _db.collection('admin_notifications').add({
+      'title': 'Admin Message Sent',
+      'subtitle': trimmedMessage,
+      'time': timeText,
+      'icon': 'notifications',
+      'color': '#1976D2',
+      'isRead': false,
+      'createdAt': createdAt,
+      'type': 'admin_message',
+      'sentBy': adminId,
+      'audience': audienceLabel,
+      'recipients': recipients,
+    });
+  }
+
+  Stream<List<Map<String, dynamic>>> sentAdminMessagesStream({
+    String? adminId,
+    int limit = 30,
+  }) {
+    return _db
+        .collection('admin_notifications')
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((snap) {
+      final out = <Map<String, dynamic>>[];
+      for (final doc in snap.docs) {
+        final map = _asMap(doc.data());
+        if ((map['type'] ?? '').toString() != 'admin_message') continue;
+        if (adminId != null && adminId.isNotEmpty) {
+          final sentBy = (map['sentBy'] ?? '').toString();
+          if (sentBy != adminId) continue;
+        }
+        out.add({'id': doc.id, ...map});
+      }
+      return out;
+    });
+  }
+
+  Future<void> deleteSentAdminMessage(String id) async {
+    if (id.trim().isEmpty) return;
+    await _db.collection('admin_notifications').doc(id.trim()).delete();
+  }
+
+  Future<int> clearSentAdminMessages({String? adminId}) async {
+    Query<Map<String, dynamic>> query = _db
+        .collection('admin_notifications')
+        .where('type', isEqualTo: 'admin_message');
+
+    if (adminId != null && adminId.trim().isNotEmpty) {
+      query = query.where('sentBy', isEqualTo: adminId.trim());
+    }
+
+    final snap = await query.get();
+    if (snap.docs.isEmpty) return 0;
+
+    final batch = _db.batch();
+    for (final doc in snap.docs) {
+      batch.delete(doc.reference);
+    }
+    await batch.commit();
+    return snap.docs.length;
   }
 
   Stream<List<UserModel>> leaderboardStream() {

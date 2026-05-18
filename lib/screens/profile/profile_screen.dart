@@ -1,3 +1,4 @@
+// ignore_for_file: use_build_context_synchronously
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -49,6 +50,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _emailController = TextEditingController();
     _mobileController = TextEditingController();
     _syncControllersFromUser();
+    // Debug helper: call NotificationDebugTest.run(context) to inspect Firestore notifications.
+    // Enable this line when actively debugging notification issues.
+    // NotificationDebugTest.run(context);
   }
 
   @override
@@ -100,10 +104,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _uploadingImage = true);
 
       // Upload profile image to local app storage
-      final userId = context.read<AuthProvider>().userId;
+      // ignore: use_build_context_synchronously
+      final authProvider = context.read<AuthProvider>();
+      final userId = authProvider.userId;
+      // ignore: use_build_context_synchronously
+      final scaffold = ScaffoldMessenger.of(context);
       if (userId == null) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          scaffold.showSnackBar(
             const SnackBar(content: Text('Please log in again and try.')),
           );
         }
@@ -116,9 +124,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
 
       // Save image path in user profile.
-      await context.read<AuthProvider>().updateProfileImage(imageUrl);
+      await authProvider.updateProfileImage(imageUrl);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffold.showSnackBar(
           const SnackBar(content: Text('Profile picture updated!')),
         );
       }
@@ -156,6 +164,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            // ignore: use_build_context_synchronously
             Future<void> submit() async {
               final currentPassword = currentController.text;
               final newPassword = newController.text;
@@ -187,23 +196,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
               }
 
               setDialogState(() => submitting = true);
-              final msg =
-                  await this.context.read<AuthProvider>().changePassword(
-                        currentPassword: currentPassword,
-                        newPassword: newPassword,
-                      );
+              // ignore: use_build_context_synchronously
+              final authForChange = this.context.read<AuthProvider>();
+              // ignore: use_build_context_synchronously
+              final scaffoldForChange = ScaffoldMessenger.of(this.context);
+              // ignore: use_build_context_synchronously
+              final msg = await authForChange.changePassword(
+                currentPassword: currentPassword,
+                newPassword: newPassword,
+              );
               if (!mounted) return;
               setDialogState(() => submitting = false);
 
               if (msg != null) {
-                ScaffoldMessenger.of(this.context).showSnackBar(
+                scaffoldForChange.showSnackBar(
                   SnackBar(content: Text(msg), backgroundColor: Colors.red),
                 );
                 return;
               }
 
               Navigator.of(dialogContext).pop();
-              ScaffoldMessenger.of(this.context).showSnackBar(
+              scaffoldForChange.showSnackBar(
                 const SnackBar(
                   content: Text('Password changed successfully.'),
                   backgroundColor: Colors.green,
@@ -598,19 +611,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       return;
                                     }
 
+                                    // ignore: use_build_context_synchronously
+                                    final scaffoldForUpdate =
+                                        ScaffoldMessenger.of(context);
                                     try {
-                                      await context
-                                          .read<AuthProvider>()
-                                          .updateProfile(
-                                            name: fullName,
-                                            mobile: mobile,
-                                          );
+                                      // ignore: use_build_context_synchronously
+                                      final authForUpdate =
+                                          context.read<AuthProvider>();
+                                      await authForUpdate.updateProfile(
+                                        name: fullName,
+                                        mobile: mobile,
+                                      );
 
                                       setState(() => _isEditing = false);
 
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
+                                        scaffoldForUpdate.showSnackBar(
                                           const SnackBar(
                                             content: Text(
                                                 'Profile updated successfully!'),
@@ -620,8 +636,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       }
                                     } catch (e) {
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
+                                        scaffoldForUpdate.showSnackBar(
                                           SnackBar(
                                             content: Text(
                                                 'Failed to update profile: $e'),

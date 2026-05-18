@@ -41,6 +41,9 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+    // Debug helper: call NotificationDebugTest.run(context) to inspect Firestore notifications.
+    // It's safe to leave commented; enable only when debugging.
+    // NotificationDebugTest.run(context);
   }
 
   @override
