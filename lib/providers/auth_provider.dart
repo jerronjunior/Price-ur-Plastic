@@ -59,7 +59,9 @@ class AuthProvider with ChangeNotifier {
     // DEBUG: log when provider is disposed to help track premature disposal
     // (temporary; remove after debugging)
     // ignore: avoid_print
-    print('AuthProvider.dispose called; hasListeners=${hasListeners}, boundUserId=$_boundUserId');
+      print('AuthProvider.dispose called; hasListeners=${hasListeners}, boundUserId=$_boundUserId');
+      // ignore: avoid_print
+      print(StackTrace.current);
     _authStateSub?.cancel();
     _userProfileSub?.cancel();
     super.dispose();

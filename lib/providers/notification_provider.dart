@@ -156,6 +156,8 @@ class NotificationProvider with ChangeNotifier {
     // (temporary; remove after debugging)
     // ignore: avoid_print
     print('NotificationProvider.dispose called; activeUserId=$_activeUserId, isAdmin=$_isAdmin, hasListeners=${hasListeners}');
+    // ignore: avoid_print
+    print(StackTrace.current);
     _userSub?.cancel();
     _adminSub?.cancel();
     super.dispose();
