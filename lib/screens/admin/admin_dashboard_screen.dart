@@ -27,6 +27,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   bool _isLoadingStats = true;
   bool _sendingMessage = false;
 
+  late Stream<List<Map<String, dynamic>>> _sentMessagesStream;
+
   _AdminTab _activeTab = _AdminTab.alerts;
 
   String _sendTarget = 'specific';
@@ -41,6 +43,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   void initState() {
     super.initState();
     _loadStats();
+    final adminId = context.read<AuthProvider>().userId;
+    _sentMessagesStream = _firestoreService.sentAdminMessagesStream(adminId: adminId);
     _sentSearchController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -72,6 +76,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Future<void> _sendAdminMessage() async {
+    // Capture messenger BEFORE any await — stays valid across async gaps
     final messenger = ScaffoldMessenger.of(context);
     final auth = context.read<AuthProvider>();
 
@@ -101,35 +106,76 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       return;
     }
 
+    // Snapshot values before async gap so we don't depend on widget state
+    final sendTarget = _sendTarget;
+    final selectedUserId = _selectedUserId;
+    final selectedUserName = _selectedUserName;
+
     setState(() => _sendingMessage = true);
+
+    bool success = false;
+    Object? error;
+
     try {
       await _firestoreService.sendAdminMessage(
         adminId: adminId,
         message: message,
-        targetUserId: _sendTarget == 'specific' ? _selectedUserId : null,
-        targetUserName: _sendTarget == 'specific' ? _selectedUserName : null,
+        targetUserId: sendTarget == 'specific' ? selectedUserId : null,
+        targetUserName: sendTarget == 'specific' ? selectedUserName : null,
       );
-
-      if (!mounted) return;
-      setState(() {
-        _messageController.clear();
-        if (_sendTarget == 'specific') {
-          _selectedUserId = null;
-          _selectedUserName = null;
-        }
-      });
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Notification sent successfully.')),
-      );
+      success = true;
     } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('Failed to send notification: $e')),
-      );
+      error = e;
     } finally {
       if (mounted) {
         setState(() => _sendingMessage = false);
       }
+    }
+
+    // Show feedback AFTER setState — messenger is still valid (captured pre-await)
+    if (success) {
+      if (mounted) {
+        setState(() {
+          _messageController.clear();
+          if (sendTarget == 'specific') {
+            _selectedUserId = null;
+            _selectedUserName = null;
+          }
+        });
+      }
+      // Always show the success snackbar — messenger was captured before any await
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 10),
+                Text(
+                  'Notification sent successfully!',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFF1F6F2D),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+    } else {
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Failed to send notification: $error'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
     }
   }
 
@@ -522,7 +568,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _firestoreService.sentAdminMessagesStream(adminId: adminId),
+              stream: _sentMessagesStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Padding(

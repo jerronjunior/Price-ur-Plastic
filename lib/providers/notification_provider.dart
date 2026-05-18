@@ -41,32 +41,18 @@ class NotificationProvider with ChangeNotifier {
 
     if (userId == null) return;
 
+    // ── Listen for user-specific notifications ──────────────────────────
+    // Uses a composite query (userId + createdAt). If the required Firestore
+    // index does not exist yet, the SDK throws an error whose message
+    // contains a link to create it. We log that link so devs can click it.
     _userSub = _db
         .collection('notifications')
         .where('userId', isEqualTo: userId)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .listen((snapshot) {
-      _userNotifications
-        ..clear()
-        ..addAll(snapshot.docs.map((doc) {
-          final data = doc.data();
-          return NotificationModel.fromMap({
-            'id': doc.id,
-            ...data,
-          });
-        }));
-      _mergeNotifications();
-      notifyListeners();
-    });
-
-    if (_isAdmin) {
-      _adminSub = _db
-          .collection('admin_notifications')
-          .orderBy('createdAt', descending: true)
-          .snapshots()
-          .listen((snapshot) {
-        _adminNotifications
+        .listen(
+      (snapshot) {
+        _userNotifications
           ..clear()
           ..addAll(snapshot.docs.map((doc) {
             final data = doc.data();
@@ -77,7 +63,80 @@ class NotificationProvider with ChangeNotifier {
           }));
         _mergeNotifications();
         notifyListeners();
+      },
+      onError: (Object error) {
+        // ── Index-missing errors contain a URL to create the index ──
+        debugPrint(
+          '[NotificationProvider] User notifications stream error: $error',
+        );
+        // Fallback: fetch without ordering so the user still sees messages
+        _fetchUserNotificationsFallback(userId);
+      },
+    );
+
+    if (_isAdmin) {
+      _adminSub = _db
+          .collection('admin_notifications')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .listen(
+        (snapshot) {
+          _adminNotifications
+            ..clear()
+            ..addAll(snapshot.docs.map((doc) {
+              final data = doc.data();
+              return NotificationModel.fromMap({
+                'id': doc.id,
+                ...data,
+              });
+            }));
+          _mergeNotifications();
+          notifyListeners();
+        },
+        onError: (Object error) {
+          debugPrint(
+            '[NotificationProvider] Admin notifications stream error: $error',
+          );
+        },
+      );
+    }
+  }
+
+  /// Fallback when the composite index (userId + createdAt) hasn't been
+  /// created yet. Fetches user notifications without ordering so the user
+  /// still sees their messages immediately.
+  Future<void> _fetchUserNotificationsFallback(String userId) async {
+    try {
+      final snapshot = await _db
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      _userNotifications
+        ..clear()
+        ..addAll(snapshot.docs.map((doc) {
+          final data = doc.data();
+          return NotificationModel.fromMap({
+            'id': doc.id,
+            ...data,
+          });
+        }));
+
+      // Sort client-side since we can't use orderBy without the index
+      _userNotifications.sort((a, b) {
+        // Newest first — fallback to id comparison if time is equal
+        return b.time.compareTo(a.time);
       });
+
+      _mergeNotifications();
+      notifyListeners();
+
+      debugPrint(
+        '[NotificationProvider] Fallback loaded ${_userNotifications.length} '
+        'notification(s) for user $userId',
+      );
+    } catch (e) {
+      debugPrint('[NotificationProvider] Fallback fetch also failed: $e');
     }
   }
 
@@ -152,12 +211,6 @@ class NotificationProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    // DEBUG: log when provider is disposed to help track premature disposal
-    // (temporary; remove after debugging)
-    // ignore: avoid_print
-    print('NotificationProvider.dispose called; activeUserId=$_activeUserId, isAdmin=$_isAdmin, hasListeners=${hasListeners}');
-    // ignore: avoid_print
-    print(StackTrace.current);
     _userSub?.cancel();
     _adminSub?.cancel();
     super.dispose();
