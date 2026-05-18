@@ -56,6 +56,10 @@ class AuthProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    // DEBUG: log when provider is disposed to help track premature disposal
+    // (temporary; remove after debugging)
+    // ignore: avoid_print
+    print('AuthProvider.dispose called; hasListeners=${hasListeners}, boundUserId=$_boundUserId');
     _authStateSub?.cancel();
     _userProfileSub?.cancel();
     super.dispose();

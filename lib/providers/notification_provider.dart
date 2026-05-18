@@ -152,6 +152,10 @@ class NotificationProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    // DEBUG: log when provider is disposed to help track premature disposal
+    // (temporary; remove after debugging)
+    // ignore: avoid_print
+    print('NotificationProvider.dispose called; activeUserId=$_activeUserId, isAdmin=$_isAdmin, hasListeners=${hasListeners}');
     _userSub?.cancel();
     _adminSub?.cancel();
     super.dispose();

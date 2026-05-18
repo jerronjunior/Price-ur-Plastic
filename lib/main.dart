@@ -95,7 +95,6 @@ class _EcoRecycleAppState extends State<EcoRecycleApp> {
   void dispose() {
     if (_servicesReady) {
       _router.dispose();
-      _authProvider.dispose();
     }
     super.dispose();
   }
