@@ -57,11 +57,11 @@ class SlotMotionDetectionImpl {
   // Filter 2: min changed fraction in zone
   static const double _minChangeFraction = 0.12;
   // Filter 3: downward dominance score threshold
-  static const double _minDownwardScore = 0.56;
+  static const double _minDownwardScore = 0.45; // video-calibrated: open-top cage bins score ~0.30
   // Filter 5: cooldown after each count
-  static const int _cooldownMs = 2200;
+  static const int _cooldownMs = 2000; // faster cooldown for open-top bins
   // Pixel diff threshold for per-pixel motion map
-  static const int _pixelDiffThreshold = 28;
+  static const int _pixelDiffThreshold = 18; // lowered: wire mesh reduces pixel diff
   static const int _bands = 20;
 
   int _frameCount = 0;
@@ -188,7 +188,7 @@ class SlotMotionDetectionImpl {
 
       switch (_state) {
         case _PassState.idle:
-          if (relPos < 0.45 && _changedFraction > _minChangeFraction) {
+          if (relPos < 0.55 && _changedFraction > _minChangeFraction * 0.8) { // wider zone for open-top bins
             _state = _PassState.entering;
           }
           break;

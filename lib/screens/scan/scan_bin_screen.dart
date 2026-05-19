@@ -63,13 +63,13 @@ class _BinDetector {
   static const int _rows = 12;
 
   // Check 1: minimum % of total grid cells that must match the color
-  static const double _minCoverFraction = 0.22; // raised: calibrated from 78 real images
+  static const double _minCoverFraction = 0.15; // 15% of frame
 
   // Check 2: color region must span this fraction of frame height
   static const double _minHeightSpan = 0.30;
 
   // Check 3: out of 4 quadrants, how many must have matching pixels
-  static const int _minQuadrants = 4; // raised: bins fill all 4 quadrants uniformly
+  static const int _minQuadrants = 3;
 
   // Check 4: dark slot — Y threshold for "dark" pixel
   static const double _darkY = 70.0;
@@ -77,7 +77,7 @@ class _BinDetector {
   static const int _minDarkCells = 4;
 
   // Lock: how many consecutive passing frames before confirmed
-  static const int _lockFrames = 15; // raised: more frames = less false positives
+  static const int _lockFrames = 10;
 
   int     _streak     = 0;
   BinType _candidate  = BinType.unknown;
@@ -143,22 +143,16 @@ class _BinDetector {
 
         cellY[idx] = mY;
 
-        // ── RED BINS (Coca-Cola/Cargills) — calibrated from 78 real images ─────
-        // Y:39-144, U:101-124, V:137-197
-        // Excludes: red cloth (V<137), brick (Y>144), pink (U>126)
-        if (mY >= 39 && mY <= 144 && mU >= 101 && mU <= 124 && mV >= 137 && mV <= 197) {
+        // Red — Coca-Cola / Cargills
+        if (mY >= 35 && mY <= 135 && mV >= 150 && mV <= 220 && mU >= 65 && mU <= 122) {
           cellColors[idx] = BinType.cocaCola; rCount++;
         }
-        // ── GREEN BINS (all types) — calibrated from 78 real images ─────────────
-        // Y:40-142, U:114-134, V:88-122
-        // TIGHT U band (114-134) is the key: bags have U>135, plants have U<112
-        // V<123 excludes yellow-green bags; V>87 excludes very dark plants
-        else if (mY >= 40 && mY <= 142 && mU >= 114 && mU <= 134 && mV >= 88 && mV <= 122) {
+        // Green — Keells
+        else if (mY >= 35 && mY <= 150 && mV >= 75 && mV <= 132 && mU >= 132 && mU <= 195) {
           cellColors[idx] = BinType.keells; gCount++;
         }
         // Purple — Eco Spindles
-        // ── PURPLE BINS (Eco Spindles) ────────────────────────────────────────────
-        else if (mY >= 18 && mY <= 90 && mV >= 108 && mV <= 145 && mU >= 118 && mU <= 160) {
+        else if (mY >= 18 && mY <= 90 && mV >= 102 && mV <= 140 && mU >= 122 && mU <= 165) {
           cellColors[idx] = BinType.ecoSpindles; pCount++;
         }
       }
