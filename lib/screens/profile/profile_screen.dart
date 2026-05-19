@@ -104,11 +104,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _uploadingImage = true);
 
       // Upload profile image to local app storage
-      // ignore: use_build_context_synchronously
-      final authProvider = context.read<AuthProvider>();
+            final authProvider = context.read<AuthProvider>();
       final userId = authProvider.userId;
-      // ignore: use_build_context_synchronously
-      final scaffold = ScaffoldMessenger.of(context);
+            final scaffold = ScaffoldMessenger.of(context);
       if (userId == null) {
         if (mounted) {
           scaffold.showSnackBar(
@@ -164,8 +162,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            // ignore: use_build_context_synchronously
-            Future<void> submit() async {
+                        Future<void> submit() async {
               final currentPassword = currentController.text;
               final newPassword = newController.text;
               final confirmPassword = confirmController.text;
@@ -196,12 +193,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               }
 
               setDialogState(() => submitting = true);
-              // ignore: use_build_context_synchronously
-              final authForChange = this.context.read<AuthProvider>();
-              // ignore: use_build_context_synchronously
-              final scaffoldForChange = ScaffoldMessenger.of(this.context);
-              // ignore: use_build_context_synchronously
-              final msg = await authForChange.changePassword(
+                            final authForChange = this.context.read<AuthProvider>();
+                            final scaffoldForChange = ScaffoldMessenger.of(this.context);
+                            final msg = await authForChange.changePassword(
                 currentPassword: currentPassword,
                 newPassword: newPassword,
               );
@@ -611,12 +605,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       return;
                                     }
 
-                                    // ignore: use_build_context_synchronously
-                                    final scaffoldForUpdate =
+                                                                        final scaffoldForUpdate =
                                         ScaffoldMessenger.of(context);
                                     try {
-                                      // ignore: use_build_context_synchronously
-                                      final authForUpdate =
+                                                                            final authForUpdate =
                                           context.read<AuthProvider>();
                                       await authForUpdate.updateProfile(
                                         name: fullName,

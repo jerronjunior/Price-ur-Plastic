@@ -63,7 +63,6 @@ class _AddBinScreenState extends State<AddBinScreen> {
   
   // Bin image verification
   XFile? _capturedBinImage;
-  bool _verifyingImage = false;
 
   @override
   void initState() {

@@ -33,7 +33,7 @@ class AppBottomNavBar extends StatelessWidget {
             onTap: () => context.go('/'),
           ),
           // Hide leaderboard for admin users
-          if (!(context.watch<AuthProvider>().isAdmin ?? false))
+          if (!(context.watch<AuthProvider>().isAdmin))
             _BottomNavItem(
               icon: Icons.leaderboard,
               label: 'Leaderboard',

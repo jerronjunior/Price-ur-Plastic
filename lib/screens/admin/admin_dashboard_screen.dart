@@ -557,8 +557,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildAlertsSection() {
-    final adminId = context.read<AuthProvider>().userId;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -568,7 +566,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _sentMessagesStream,
+              stream: _firestoreService.sentAdminMessagesStream(
+                adminId: context.read<AuthProvider>().userId,
+              ),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Padding(

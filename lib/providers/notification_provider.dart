@@ -206,6 +206,16 @@ class NotificationProvider with ChangeNotifier {
     _notifications
       ..clear()
       ..addAll([..._userNotifications, ..._adminNotifications]);
+
+    // Ensure they are sorted by date (newest first)
+    _notifications.sort((a, b) {
+      if (a.createdAt != null && b.createdAt != null) {
+        return b.createdAt!.compareTo(a.createdAt!);
+      }
+      // Fallback to sorting by formatted time string or ID if date is missing
+      return b.time.compareTo(a.time);
+    });
+
     _hasUnread = _notifications.any((notification) => !notification.isRead);
   }
 

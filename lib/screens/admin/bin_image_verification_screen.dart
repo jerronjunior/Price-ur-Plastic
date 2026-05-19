@@ -266,7 +266,6 @@ class _BinImageVerificationScreenState
 
     return LayoutBuilder(
       builder: (ctx, box) {
-        final Size size = Size(box.maxWidth, box.maxHeight);
         final bool isReady = _stableQualityFrames >= _requiredStableFrames;
 
         return Stack(

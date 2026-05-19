@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class NotificationModel {
   final String id;
   final String title;
@@ -6,6 +8,7 @@ class NotificationModel {
   final String icon; // icon name as string
   final String color; // color hex code
   final bool isRead;
+  final DateTime? createdAt;
 
   NotificationModel({
     required this.id,
@@ -15,9 +18,18 @@ class NotificationModel {
     required this.icon,
     required this.color,
     this.isRead = false,
+    this.createdAt,
   });
 
   factory NotificationModel.fromMap(Map<String, dynamic> map) {
+    DateTime? created;
+    final rawCreated = map['createdAt'];
+    if (rawCreated is Timestamp) {
+      created = rawCreated.toDate();
+    } else if (rawCreated is String) {
+      created = DateTime.tryParse(rawCreated);
+    }
+
     return NotificationModel(
       id: map['id'] ?? '',
       title: map['title'] ?? '',
@@ -26,6 +38,7 @@ class NotificationModel {
       icon: map['icon'] ?? 'info',
       color: map['color'] ?? '#9E9E9E',
       isRead: map['isRead'] as bool? ?? false,
+      createdAt: created,
     );
   }
 
@@ -38,6 +51,7 @@ class NotificationModel {
       'icon': icon,
       'color': color,
       'isRead': isRead,
+      'createdAt': createdAt,
     };
   }
 }

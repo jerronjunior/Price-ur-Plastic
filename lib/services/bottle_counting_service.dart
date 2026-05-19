@@ -28,11 +28,9 @@ class BottleCountingService {
 
   Interpreter? _interpreter;
   bool _isInitialized = false;
-  int _frameCounter = 0;
 
   // For tracking consecutive detections
   List<DetectedBottle> _lastDetections = [];
-  static const int _smoothingFrames = 3;
 
   /// Initialize the tflite model.
   Future<bool> initialize() async {
@@ -118,7 +116,6 @@ class BottleCountingService {
       // Convert to [1, 300, 300, 3] tensor with uint8 values
       const int tensorWidth = 300;
       const int tensorHeight = 300;
-      const int channels = 3;
 
       final List<List<List<List<int>>>> tensorData =
           List.generate(1, (_) {
