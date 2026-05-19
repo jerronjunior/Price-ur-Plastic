@@ -566,9 +566,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _firestoreService.sentAdminMessagesStream(
-                adminId: context.read<AuthProvider>().userId,
-              ),
+              stream: _sentMessagesStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Padding(

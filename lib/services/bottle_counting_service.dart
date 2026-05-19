@@ -54,8 +54,6 @@ class BottleCountingService {
     if (!_isInitialized || _interpreter == null) return [];
 
     try {
-      _frameCounter++;
-
       // Convert camera image to input format for tflite
       final inputImage = _preprocessImage(image);
       if (inputImage == null) return [];

@@ -194,6 +194,38 @@ class NotificationProvider with ChangeNotifier {
     await batch.commit();
   }
 
+  Future<void> markAsRead(String notificationId) async {
+    try {
+      if (_activeUserId != null) {
+        final userQuery = await _db
+            .collection('notifications')
+            .where('userId', isEqualTo: _activeUserId)
+            .where('id', isEqualTo: notificationId)
+            .limit(1)
+            .get();
+
+        if (userQuery.docs.isNotEmpty) {
+          await userQuery.docs.first.reference.update({'isRead': true});
+          return;
+        }
+      }
+
+      if (_isAdmin) {
+        final adminQuery = await _db
+            .collection('admin_notifications')
+            .where('id', isEqualTo: notificationId)
+            .limit(1)
+            .get();
+
+        if (adminQuery.docs.isNotEmpty) {
+          await adminQuery.docs.first.reference.update({'isRead': true});
+        }
+      }
+    } catch (e) {
+      debugPrint('Error marking notification as read: $e');
+    }
+  }
+
   String _formatTime(DateTime time) {
     final hour =
         time.hour == 0 ? 12 : (time.hour > 12 ? time.hour - 12 : time.hour);
