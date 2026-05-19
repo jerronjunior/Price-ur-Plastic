@@ -87,7 +87,11 @@ class _NotificationPanelState extends State<NotificationPanel>
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: _closePanel,
+                    onPressed: () {
+                      Provider.of<NotificationProvider>(context, listen: false)
+                          .markAllAsRead();
+                      _closePanel();
+                    },
                   ),
                 ],
               ),
