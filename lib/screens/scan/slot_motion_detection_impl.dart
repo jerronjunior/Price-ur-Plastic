@@ -55,13 +55,13 @@ class SlotMotionDetectionImpl {
   static const int _sampleStep = 2;
 
   // Filter 2: min changed fraction in zone
-  static const double _minChangeFraction = 0.12;
+  static const double _minChangeFraction = 0.07;
   // Filter 3: downward dominance score threshold
-  static const double _minDownwardScore = 0.45; // video-calibrated: open-top cage bins score ~0.30
+  static const double _minDownwardScore = 0.30;
   // Filter 5: cooldown after each count
-  static const int _cooldownMs = 2000; // faster cooldown for open-top bins
+  static const int _cooldownMs = 1500;
   // Pixel diff threshold for per-pixel motion map
-  static const int _pixelDiffThreshold = 18; // lowered: wire mesh reduces pixel diff
+  static const int _pixelDiffThreshold = 14;
   static const int _bands = 20;
 
   int _frameCount = 0;

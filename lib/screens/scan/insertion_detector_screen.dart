@@ -326,7 +326,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ══════════════════════════════════════════════════════════════════════════
   void _onBottleDetected() {
     if (_detected || !mounted) return;
-    if (_stableFrames < _minStable) return;
 
     _detected = true;
     _timeoutTimer?.cancel();
@@ -393,10 +392,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       _tracker.hasLock && _stableFrames >= _minStable && _motionReady;
 
   String get _statusText {
-    if (!_tracker.hasLock)             return 'Point camera at the bin slot';
-    if (_stableFrames < _minStable)    return 'Acquiring slot…';
-    if (!_motionReady)                 return 'Calibrating…';
-    return 'Slot locked — insert bottle';
+    if (!_cameraReady || _cam == null) return 'Starting camera…';
+    if (_frameCount < 20)              return 'Calibrating…';
+    if (_tracker.hasLock && _stableFrames >= _minStable)
+                                       return 'Slot locked — insert bottle now';
+    return 'Insert bottle into the bin slot';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
