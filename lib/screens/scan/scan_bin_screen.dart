@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -63,21 +64,26 @@ class _BinDetector {
   static const int _rows = 12;
 
   // Check 1: minimum % of total grid cells that must match the color
-  static const double _minCoverFraction = 0.15; // 15% of frame
+  static const double _minCoverFraction = 0.22; // raised: bags cover less uniformly
 
   // Check 2: color region must span this fraction of frame height
-  static const double _minHeightSpan = 0.30;
+  static const double _minHeightSpan = 0.35; // raised: bins are tall structures
 
   // Check 3: out of 4 quadrants, how many must have matching pixels
-  static const int _minQuadrants = 3;
+  static const int _minQuadrants = 4; // raised: real bins fill all quadrants
 
   // Check 4: dark slot — Y threshold for "dark" pixel
   static const double _darkY = 70.0;
   // Minimum dark cells in the slot scan to confirm a slot exists
   static const int _minDarkCells = 4;
 
+  // Check 5 (NEW): anti-spoof texture variance
+  // Real bins have wire mesh / paint / shadow texture: Y std dev > 12
+  // Bags and flat surfaces are far more uniform: Y std dev < 8
+  static const double _minTextureStd = 10.0;
+
   // Lock: how many consecutive passing frames before confirmed
-  static const int _lockFrames = 10;
+  static const int _lockFrames = 15; // raised: fewer false positives
 
   int     _streak     = 0;
   BinType _candidate  = BinType.unknown;
@@ -107,6 +113,7 @@ class _BinDetector {
     // Per-cell results: which color matched, and Y mean
     final List<BinType> cellColors = List.filled(totalCells, BinType.unknown);
     final List<double>  cellY      = List.filled(totalCells, 128);
+    final List<double>  cellYStd   = List.filled(totalCells, 0); // texture (anti-spoof)
 
     int rCount = 0, gCount = 0, pCount = 0;
 
@@ -118,14 +125,16 @@ class _BinDetector {
         final int x1  = (x0 + cellW).clamp(0, fw);
         final int y1  = (y0 + cellH).clamp(0, fh);
 
-        double sumY = 0, sumU = 0, sumV = 0;
+        double sumY = 0, sumU = 0, sumV = 0, sumY2 = 0;
         int cnt = 0;
 
         for (int py = y0; py < y1; py += 5) {
           for (int px = x0; px < x1; px += 5) {
             final int yi = py * fw + px;
             if (yi >= yPlane.length) continue;
-            sumY += yPlane[yi];
+            final double yVal = yPlane[yi].toDouble();
+            sumY  += yVal;
+            sumY2 += yVal * yVal; // for texture variance
             if (uPlane != null && vPlane != null) {
               final int ui = (py ~/ 2) * uStride + (px ~/ 2);
               final int vi = (py ~/ 2) * vStride + (px ~/ 2);
@@ -142,17 +151,41 @@ class _BinDetector {
         final double mV = vPlane != null ? sumV / cnt : 128;
 
         cellY[idx] = mY;
+        // Texture std dev for this cell — used in anti-spoof check (Check 5)
+        cellYStd[idx] = cnt > 1
+            ? math.sqrt(math.max(0, sumY2 / cnt - mY * mY))
+            : 0;
 
-        // Red — Coca-Cola / Cargills
-        if (mY >= 35 && mY <= 135 && mV >= 150 && mV <= 220 && mU >= 65 && mU <= 122) {
+        // ── Stage 1: RGB dominance pre-filter ────────────────────────────────
+        // Convert YUV → RGB to check color dominance before fine YUV match.
+        // This rejects grey/neutral surfaces (bags, walls, fabric) immediately.
+        final double uOff = mU - 128, vOff = mV - 128;
+        final double rApprox = mY + 1.402 * vOff;
+        final double gApprox = mY - 0.344136 * uOff - 0.714136 * vOff;
+        final double bApprox = mY + 1.772 * uOff;
+
+        final bool isGreenDominant =
+            gApprox > rApprox * 1.30 && gApprox > bApprox * 1.05 && gApprox > 75;
+        final bool isRedDominant =
+            rApprox > gApprox * 1.40 && rApprox > bApprox * 1.50 && rApprox > 80;
+        final bool isPurplish =
+            rApprox > gApprox * 0.90 && bApprox > gApprox * 0.90 &&
+            rApprox < 130 && mY < 90;
+
+        // ── Stage 2: YUV fine filter — calibrated from 78 real bin images ────
+        // Red bins (Coca-Cola / Cargills): Y=39-144, U=101-124, V=137-197
+        if (isRedDominant &&
+            mY >= 39 && mY <= 144 && mU >= 101 && mU <= 124 && mV >= 137 && mV <= 197) {
           cellColors[idx] = BinType.cocaCola; rCount++;
         }
-        // Green — Keells
-        else if (mY >= 35 && mY <= 150 && mV >= 75 && mV <= 132 && mU >= 132 && mU <= 195) {
+        // Green bins (Keells, Clean Sri Lanka, Carekleen): Y=40-145, U=112-134, V=88-125
+        else if (isGreenDominant &&
+            mY >= 40 && mY <= 145 && mU >= 112 && mU <= 134 && mV >= 88 && mV <= 125) {
           cellColors[idx] = BinType.keells; gCount++;
         }
-        // Purple — Eco Spindles
-        else if (mY >= 18 && mY <= 90 && mV >= 102 && mV <= 140 && mU >= 122 && mU <= 165) {
+        // Purple bins (Eco Spindles): Y=18-90, U=118-160, V=108-145
+        else if (isPurplish &&
+            mY >= 18 && mY <= 90 && mU >= 118 && mU <= 160 && mV >= 108 && mV <= 145) {
           cellColors[idx] = BinType.ecoSpindles; pCount++;
         }
       }
@@ -171,6 +204,22 @@ class _BinDetector {
     final double coverFraction = domCount / totalCells;
     if (dominant == BinType.unknown || coverFraction < _minCoverFraction) {
       _miss(); return;
+    }
+
+    // ── CHECK 1b (NEW): Anti-spoof texture variance ───────────────────────────
+    // Real bins have texture from wire mesh, paint, and shadows (Y std dev > 10).
+    // Flat surfaces like bags, walls, and screens are far more uniform.
+    double sumStd = 0;
+    int stdCount = 0;
+    for (int i = 0; i < totalCells; i++) {
+      if (cellColors[i] == dominant) {
+        sumStd += cellYStd[i];
+        stdCount++;
+      }
+    }
+    final double avgTextureStd = stdCount > 0 ? sumStd / stdCount : 0;
+    if (avgTextureStd < _minTextureStd) {
+      _miss(); return; // too uniform — likely a bag, screen, or flat surface
     }
 
     // ── Find bounding box of matching cells ───────────────────────────────────
