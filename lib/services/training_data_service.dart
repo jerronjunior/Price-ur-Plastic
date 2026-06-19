@@ -69,8 +69,18 @@ class TrainingDataService {
     required bool      modelWasCorrect,
     String?            deviceModel,
   }) async {
+    // Firestore rules require userId == request.auth.uid — a write from
+    // a signed-out session can NEVER pass that check, so don't even try.
+    // This also avoids the misleading 'anonymous' placeholder, which would
+    // never match a real uid anyway and was the actual cause of the
+    // permission-denied error showing on the scan screen.
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      debugPrint('[Training] Skipped — no signed-in user.');
+      return;
+    }
+
     try {
-      final uid       = _auth.currentUser?.uid ?? 'anonymous';
       final labelStr  = label.name;
       final timestamp = DateTime.now();
       final fileName  = '${uid}_${timestamp.millisecondsSinceEpoch}.jpg';
@@ -153,7 +163,11 @@ class TrainingDataService {
     required String binType,
   }) async {
     try {
-      final uid = _auth.currentUser?.uid ?? 'anonymous';
+      final uid = _auth.currentUser?.uid;
+      if (uid == null) {
+        debugPrint('[Training] Skipped insertion sample — no signed-in user.');
+        return;
+      }
       // Just metadata — no image needed for insertion events
       await _db.collection('training_samples').add({
         'label':     'insertion_confirmed',
@@ -184,8 +198,15 @@ class TrainingDataService {
     required double avgCornerMotion,
     required int    durationMs,
   }) async {
+    // Same guard as saveSample() — a write from a signed-out session can
+    // never satisfy the Firestore rule, so skip it instead of wasting a
+    // network call that's guaranteed to fail.
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      debugPrint('[Training] Skipped insertion attempt — no signed-in user.');
+      return;
+    }
     try {
-      final uid = _auth.currentUser?.uid ?? 'anonymous';
       await _db.collection('insertion_attempts').add({
         'counted':            counted,
         'rejectedReason':     rejectedReason,
