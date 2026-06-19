@@ -120,7 +120,7 @@ class BottleCountingService {
         return List.generate(tensorHeight, (y) {
           return List.generate(tensorWidth, (x) {
             final pixel = resized.getPixelSafe(x, y);
-            return [pixel.r as int, pixel.g as int, pixel.b as int];
+            return [pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt()];
           });
         });
       });

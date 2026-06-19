@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
-import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import '../../services/bin_detector.dart';
 import '../../services/training_data_service.dart';
 
-enum BinType { cocaCola, keells, ecoSpindles, unknown }
+export '../../services/bin_detector.dart' show BinType;
 
 extension BinTypeX on BinType {
   String get storageValue {
@@ -25,307 +24,6 @@ extension BinTypeX on BinType {
       case BinType.ecoSpindles: return const Color(0xFF6A1B9A);
       case BinType.unknown:     return Colors.white38;
     }
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// _BinDetector  v2  —  Shape + Color + Structure validation
-//
-// A bin is NOT just a red/green/purple region. It must pass ALL 4 checks:
-//
-// CHECK 1 — COLOR CLUSTER SIZE
-//   The matching color must cover at least 15% of the frame.
-//   A bag, label, or sign won't cover that much.
-//
-// CHECK 2 — VERTICAL DOMINANCE
-//   The color region must be taller than it is wide (or roughly square).
-//   Bins are always vertical. A bag held sideways or a horizontal banner fails.
-//   Also, color region must span at least 30% of frame HEIGHT — a small
-//   red sticker won't pass.
-//
-// CHECK 3 — COLOR UNIFORMITY (solid block, not scattered)
-//   Divide the region bounding box into quadrants.
-//   At least 3 out of 4 quadrants must contain matching pixels.
-//   A red logo on a white bag has matching pixels in only 1 quadrant.
-//   A solid red bin has matching pixels in all 4 quadrants.
-//
-// CHECK 4 — DARK SLOT DETECTION
-//   Every Sri Lankan recycling bin has a dark opening/slot somewhere on it.
-//   Scan the TOP 55% of the frame for a dark rectangular region
-//   (Y < 60 = very dark = the slot hole or shadow inside the bin).
-//   If no dark region is found in the color area, it's probably not a bin.
-//   This is the strongest discriminator — bags, boxes, walls rarely have
-//   a dark opening at the top.
-//
-// LOCK: requires 10 consecutive passing frames before confirming.
-//       More frames = less false positives.
-// ══════════════════════════════════════════════════════════════════════════════
-class _BinDetector {
-  // Grid for color scanning
-  static const int _cols = 16;
-  static const int _rows = 12;
-
-  // Check 1: minimum % of total grid cells that must match the color
-  static const double _minCoverFraction = 0.22; // raised: bags cover less uniformly
-
-  // Check 2: color region must span this fraction of frame height
-  static const double _minHeightSpan = 0.35; // raised: bins are tall structures
-
-  // Check 3: out of 4 quadrants, how many must have matching pixels
-  static const int _minQuadrants = 4; // raised: real bins fill all quadrants
-
-  // Check 4: dark slot — Y threshold for "dark" pixel
-  static const double _darkY = 70.0;
-  // Minimum dark cells in the slot scan to confirm a slot exists
-  static const int _minDarkCells = 4;
-
-  // Check 5 (NEW): anti-spoof texture variance
-  // Real bins have wire mesh / paint / shadow texture: Y std dev > 12
-  // Bags and flat surfaces are far more uniform: Y std dev < 8
-  static const double _minTextureStd = 10.0;
-
-  // Lock: how many consecutive passing frames before confirmed
-  static const int _lockFrames = 15; // raised: fewer false positives
-
-  int     _streak     = 0;
-  BinType _candidate  = BinType.unknown;
-
-  BinType detectedType = BinType.unknown;
-  bool    hasDetection = false;
-
-  // Debug info (shown as cell counts in UI)
-  int colorCells    = 0;
-  int darkSlotCells = 0;
-  bool passedShape  = false;
-
-  void update(CameraImage image) {
-    final int fw = image.width;
-    final int fh = image.height;
-
-    final Uint8List  yPlane  = image.planes[0].bytes;
-    final Uint8List? uPlane  = image.planes.length > 1 ? image.planes[1].bytes : null;
-    final Uint8List? vPlane  = image.planes.length > 2 ? image.planes[2].bytes : null;
-    final int uStride = image.planes.length > 1 ? image.planes[1].bytesPerRow : fw ~/ 2;
-    final int vStride = image.planes.length > 2 ? image.planes[2].bytesPerRow : fw ~/ 2;
-
-    final int cellW = fw ~/ _cols;
-    final int cellH = fh ~/ _rows;
-    final int totalCells = _cols * _rows;
-
-    // Per-cell results: which color matched, and Y mean
-    final List<BinType> cellColors = List.filled(totalCells, BinType.unknown);
-    final List<double>  cellY      = List.filled(totalCells, 128);
-    final List<double>  cellYStd   = List.filled(totalCells, 0); // texture (anti-spoof)
-
-    int rCount = 0, gCount = 0, pCount = 0;
-
-    for (int row = 0; row < _rows; row++) {
-      for (int col = 0; col < _cols; col++) {
-        final int idx = row * _cols + col;
-        final int x0  = col * cellW;
-        final int y0  = row * cellH;
-        final int x1  = (x0 + cellW).clamp(0, fw);
-        final int y1  = (y0 + cellH).clamp(0, fh);
-
-        double sumY = 0, sumU = 0, sumV = 0, sumY2 = 0;
-        int cnt = 0;
-
-        for (int py = y0; py < y1; py += 5) {
-          for (int px = x0; px < x1; px += 5) {
-            final int yi = py * fw + px;
-            if (yi >= yPlane.length) continue;
-            final double yVal = yPlane[yi].toDouble();
-            sumY  += yVal;
-            sumY2 += yVal * yVal; // for texture variance
-            if (uPlane != null && vPlane != null) {
-              final int ui = (py ~/ 2) * uStride + (px ~/ 2);
-              final int vi = (py ~/ 2) * vStride + (px ~/ 2);
-              if (ui < uPlane.length) sumU += uPlane[ui];
-              if (vi < vPlane.length) sumV += vPlane[vi];
-            }
-            cnt++;
-          }
-        }
-
-        if (cnt == 0) continue;
-        final double mY = sumY / cnt;
-        final double mU = uPlane != null ? sumU / cnt : 128;
-        final double mV = vPlane != null ? sumV / cnt : 128;
-
-        cellY[idx] = mY;
-        // Texture std dev for this cell — used in anti-spoof check (Check 5)
-        cellYStd[idx] = cnt > 1
-            ? math.sqrt(math.max(0, sumY2 / cnt - mY * mY))
-            : 0;
-
-        // ── Stage 1: RGB dominance pre-filter ────────────────────────────────
-        // Convert YUV → RGB to check color dominance before fine YUV match.
-        // This rejects grey/neutral surfaces (bags, walls, fabric) immediately.
-        final double uOff = mU - 128, vOff = mV - 128;
-        final double rApprox = mY + 1.402 * vOff;
-        final double gApprox = mY - 0.344136 * uOff - 0.714136 * vOff;
-        final double bApprox = mY + 1.772 * uOff;
-
-        final bool isGreenDominant =
-            gApprox > rApprox * 1.30 && gApprox > bApprox * 1.05 && gApprox > 75;
-        final bool isRedDominant =
-            rApprox > gApprox * 1.40 && rApprox > bApprox * 1.50 && rApprox > 80;
-        final bool isPurplish =
-            rApprox > gApprox * 0.90 && bApprox > gApprox * 0.90 &&
-            rApprox < 130 && mY < 90;
-
-        // ── Stage 2: YUV fine filter — calibrated from 78 real bin images ────
-        // Red bins (Coca-Cola / Cargills): Y=39-144, U=101-124, V=137-197
-        if (isRedDominant &&
-            mY >= 39 && mY <= 144 && mU >= 101 && mU <= 124 && mV >= 137 && mV <= 197) {
-          cellColors[idx] = BinType.cocaCola; rCount++;
-        }
-        // Green bins (Keells, Clean Sri Lanka, Carekleen): Y=40-145, U=112-134, V=88-125
-        else if (isGreenDominant &&
-            mY >= 40 && mY <= 145 && mU >= 112 && mU <= 134 && mV >= 88 && mV <= 125) {
-          cellColors[idx] = BinType.keells; gCount++;
-        }
-        // Purple bins (Eco Spindles): Y=18-90, U=118-160, V=108-145
-        else if (isPurplish &&
-            mY >= 18 && mY <= 90 && mU >= 118 && mU <= 160 && mV >= 108 && mV <= 145) {
-          cellColors[idx] = BinType.ecoSpindles; pCount++;
-        }
-      }
-    }
-
-    // Pick dominant color
-    BinType dominant = BinType.unknown;
-    int domCount = 0;
-    if (rCount >= gCount && rCount >= pCount) { dominant = BinType.cocaCola;    domCount = rCount; }
-    if (gCount >  rCount && gCount >= pCount) { dominant = BinType.keells;      domCount = gCount; }
-    if (pCount >  rCount && pCount >  gCount) { dominant = BinType.ecoSpindles; domCount = pCount; }
-
-    colorCells = domCount;
-
-    // ── CHECK 1: Minimum color coverage ──────────────────────────────────────
-    final double coverFraction = domCount / totalCells;
-    if (dominant == BinType.unknown || coverFraction < _minCoverFraction) {
-      _miss(); return;
-    }
-
-    // ── CHECK 1b (NEW): Anti-spoof texture variance ───────────────────────────
-    // Real bins have texture from wire mesh, paint, and shadows (Y std dev > 10).
-    // Flat surfaces like bags, walls, and screens are far more uniform.
-    double sumStd = 0;
-    int stdCount = 0;
-    for (int i = 0; i < totalCells; i++) {
-      if (cellColors[i] == dominant) {
-        sumStd += cellYStd[i];
-        stdCount++;
-      }
-    }
-    final double avgTextureStd = stdCount > 0 ? sumStd / stdCount : 0;
-    if (avgTextureStd < _minTextureStd) {
-      _miss(); return; // too uniform — likely a bag, screen, or flat surface
-    }
-
-    // ── Find bounding box of matching cells ───────────────────────────────────
-    int minCol = _cols, maxCol = 0, minRow = _rows, maxRow = 0;
-    for (int row = 0; row < _rows; row++) {
-      for (int col = 0; col < _cols; col++) {
-        if (cellColors[row * _cols + col] == dominant) {
-          if (col < minCol) minCol = col;
-          if (col > maxCol) maxCol = col;
-          if (row < minRow) minRow = row;
-          if (row > maxRow) maxRow = row;
-        }
-      }
-    }
-
-    final int spanW = (maxCol - minCol + 1);
-    final int spanH = (maxRow - minRow + 1);
-
-    // ── CHECK 2: Vertical dominance + minimum height ──────────────────────────
-    // spanH / _rows = fraction of frame height covered
-    final double heightFrac = spanH / _rows;
-    // Bins are not much wider than tall — ratio must be <= 1.8
-    final double aspectRatio = spanH > 0 ? spanW / spanH : 99;
-
-    if (heightFrac < _minHeightSpan || aspectRatio > 1.8) {
-      _miss(); return;
-    }
-
-    // ── CHECK 3: Color uniformity across quadrants ────────────────────────────
-    // Divide the bounding box into 4 quadrants and check each has matches
-    final int midCol = (minCol + maxCol) ~/ 2;
-    final int midRow = (minRow + maxRow) ~/ 2;
-
-    int quadrantsFilled = 0;
-    for (final List<int> quad in [
-      [minCol, minRow, midCol,  midRow ],  // top-left
-      [midCol, minRow, maxCol,  midRow ],  // top-right
-      [minCol, midRow, midCol,  maxRow ],  // bottom-left
-      [midCol, midRow, maxCol,  maxRow ],  // bottom-right
-    ]) {
-      bool filled = false;
-      for (int r = quad[1]; r <= quad[3] && !filled; r++) {
-        for (int c = quad[0]; c <= quad[2] && !filled; c++) {
-          if (cellColors[r * _cols + c] == dominant) filled = true;
-        }
-      }
-      if (filled) quadrantsFilled++;
-    }
-
-    if (quadrantsFilled < _minQuadrants) {
-      _miss(); return;
-    }
-
-    // ── CHECK 4: Dark slot detection ─────────────────────────────────────────
-    // Scan the TOP half of the matched color region for a dark area.
-    // The bin slot/opening is always dark (Y < 70).
-    // We look for at least 4 dark cells inside the color region's top portion.
-    final int slotScanMaxRow = minRow + ((maxRow - minRow) * 0.65).toInt();
-    int darkCells = 0;
-
-    for (int row = minRow; row <= slotScanMaxRow; row++) {
-      for (int col = minCol; col <= maxCol; col++) {
-        final int idx = row * _cols + col;
-        if (cellY[idx] < _darkY) darkCells++;
-      }
-    }
-
-    darkSlotCells = darkCells;
-    passedShape   = true;
-
-    if (darkCells < _minDarkCells) {
-      // No dark slot found — likely a colored bag, wall, or sign
-      passedShape = false;
-      _miss(); return;
-    }
-
-    // ── All 4 checks passed — this is a bin ───────────────────────────────────
-    if (dominant == _candidate) {
-      _streak = (_streak + 1).clamp(0, _lockFrames + 1);
-    } else {
-      _streak    = 1;
-      _candidate = dominant;
-    }
-
-    if (_streak >= _lockFrames) {
-      detectedType = dominant;
-      hasDetection = true;
-    }
-  }
-
-  void _miss() {
-    passedShape  = false;
-    _streak      = (_streak - 1).clamp(0, _lockFrames);
-    if (_streak == 0) {
-      detectedType = BinType.unknown;
-      hasDetection = false;
-      _candidate   = BinType.unknown;
-    }
-  }
-
-  void reset() {
-    _streak = 0; _candidate = BinType.unknown;
-    detectedType = BinType.unknown; hasDetection = false;
-    colorCells = 0; darkSlotCells = 0; passedShape = false;
   }
 }
 
@@ -354,7 +52,7 @@ class _ScanBinScreenState extends State<ScanBinScreen>
   int  _frameCount      = 0;
   bool _confirmed       = false;
 
-  final _BinDetector _detector = _BinDetector();
+  final BinDetector _detector = BinDetector();
   late AnimationController _pulseCtrl;
 
   @override
@@ -458,8 +156,9 @@ class _ScanBinScreenState extends State<ScanBinScreen>
   String get _statusText {
     if (!_detector.passedShape && _detector.colorCells > 0)
       return 'Move closer — get the whole bin in frame';
-    if (_detector.colorCells > 0 && _detector.darkSlotCells < 4)
+    if (_detector.colorCells > 0 && _detector.darkSlotCells < 4) {
       return 'Show the bin slot / opening';
+    }
     return 'Point camera at the bin';
   }
 

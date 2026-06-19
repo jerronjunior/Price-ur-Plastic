@@ -56,6 +56,7 @@ class _ManageRewardsScreenState extends State<ManageRewardsScreen> {
     setState(() => _isLoading = true);
     try {
       final config = await _firestoreService.getRewardConfig();
+      if (!mounted) return;
       _pointsPerBottleController.text = config.pointsPerBottle.toString();
       _bronzePointsController.text = config.bronzePoints.toString();
       _silverPointsController.text = config.silverPoints.toString();

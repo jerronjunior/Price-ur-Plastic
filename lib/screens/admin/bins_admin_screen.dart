@@ -28,6 +28,7 @@ class _BinsAdminScreenState extends State<BinsAdminScreen> {
 
   Future<void> _delete(String id) async {
     await _fs.deleteBinLocation(id);
+    if (!mounted) return;
     await _load();
   }
 

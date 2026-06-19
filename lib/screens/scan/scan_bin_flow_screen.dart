@@ -264,7 +264,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     }
 
     if (_showSuccess) {
-      final pts = _bottleCount;
+      const pts = 1; // 1 point and 1 bottle per insertion, not cumulative total
       return Scaffold(
         body: Center(
           child: Padding(

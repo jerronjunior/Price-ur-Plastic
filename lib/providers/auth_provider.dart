@@ -18,6 +18,7 @@ class AuthProvider with ChangeNotifier {
   StreamSubscription<AppAuthUser?>? _authStateSub;
   StreamSubscription<UserModel?>? _userProfileSub;
   String? _boundUserId;
+  bool _disposed = false;
 
   AppAuthUser? get firebaseUser => _auth.currentUser;
   String? get userId => _auth.currentUserId;
@@ -44,24 +45,19 @@ class AuthProvider with ChangeNotifier {
           await _loadUser(user.uid, firebaseUser: user);
         } catch (_) {
           _user = _fallbackUserFromFirebase(user);
-          notifyListeners();
+          if (!_disposed) notifyListeners();
         }
       } else {
         _unbindUserProfileStream();
         _user = null;
-        notifyListeners();
+        if (!_disposed) notifyListeners();
       }
     });
   }
 
   @override
   void dispose() {
-    // DEBUG: log when provider is disposed to help track premature disposal
-    // (temporary; remove after debugging)
-    // ignore: avoid_print
-      print('AuthProvider.dispose called; hasListeners=${hasListeners}, boundUserId=$_boundUserId');
-      // ignore: avoid_print
-      print(StackTrace.current);
+    _disposed = true;
     _authStateSub?.cancel();
     _userProfileSub?.cancel();
     super.dispose();

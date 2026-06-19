@@ -101,10 +101,11 @@ class _RewardsScreenState extends State<RewardsScreen>
     });
 
     try {
-      await context.read<AuthProvider>().updateTotalPoints(points - spinCost);
-
       await _spinController.forward(from: 0.0);
       _currentTurns = targetTurns;
+
+      if (!mounted) return;
+      await context.read<AuthProvider>().updateTotalPoints(points - spinCost);
 
       if (!mounted) return;
       setState(() => _isSpinning = false);

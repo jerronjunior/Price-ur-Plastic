@@ -591,7 +591,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
                 if (_audienceFilter != 'all' &&
                     !audiences.contains(_audienceFilter)) {
-                  _audienceFilter = 'all';
+                  WidgetsBinding.instance.addPostFrameCallback(
+                    (_) { if (mounted) setState(() => _audienceFilter = 'all'); },
+                  );
                 }
 
                 return Column(

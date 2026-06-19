@@ -150,6 +150,7 @@ class _AuthScreenState extends State<AuthScreen> {
       setState(() => _loading = false);
 
       final otp = await _promptOtp();
+      if (!mounted) return;
       if (otp == null || otp.isEmpty) {
         return;
       }
@@ -195,7 +196,6 @@ class _AuthScreenState extends State<AuthScreen> {
           content: Text('Phone verified. Registration successful. Please log in.'),
         ),
       );
-      context.go('/login');
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
       setState(() {

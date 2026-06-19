@@ -22,6 +22,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _showWelcome = false;
   bool _showNotificationPanel = false;
+  late final Stream<List<BinModel>> _binsStream =
+      FirestoreService().getAllBinsStream();
 
   @override
   void initState() {
@@ -258,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 child: GestureDetector(
                                   onTap: () => context.push('/map'),
                                   child: StreamBuilder<List<BinModel>>(
-                                    stream: FirestoreService().getAllBinsStream(),
+                                    stream: _binsStream,
                                     builder: (context, snap) {
                                       final count = snap.data?.length ?? 0;
                                       return _StatBox(

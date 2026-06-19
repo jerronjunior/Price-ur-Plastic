@@ -141,7 +141,7 @@ class FirestoreService {
       'locationName': bin.name,
       'latitude': bin.latitude,
       'longitude': bin.longitude,
-      'createdAt': DateTime.now(),
+      'createdAt': Timestamp.fromDate(DateTime.now()),
     }, SetOptions(merge: true));
   }
 
@@ -375,7 +375,7 @@ class FirestoreService {
     await _db.collection('bin_scans').add({
       'userId': userId,
       'binId': binId,
-      'timestamp': DateTime.now(),
+      'timestamp': Timestamp.fromDate(DateTime.now()),
     });
   }
 
@@ -434,7 +434,18 @@ class FirestoreService {
       });
     } else {
       final usersSnap = await _db.collection(_usersCollection).get();
-      final batch = _db.batch();
+
+      // Firestore batches are capped at 500 ops — chunk to stay within limit.
+      WriteBatch? batch;
+      int batchCount = 0;
+
+      Future<void> flushBatch() async {
+        if (batch != null && batchCount > 0) {
+          await batch!.commit();
+          batch = null;
+          batchCount = 0;
+        }
+      }
 
       for (final doc in usersSnap.docs) {
         final data = doc.data();
@@ -446,8 +457,10 @@ class FirestoreService {
         if (userId.isEmpty) continue;
 
         recipients++;
+        if (batchCount >= 499) await flushBatch();
+        batch ??= _db.batch();
         final ref = _db.collection('notifications').doc();
-        batch.set(ref, {
+        batch!.set(ref, {
           'userId': userId,
           'title': 'Admin Message',
           'subtitle': trimmedMessage,
@@ -459,9 +472,10 @@ class FirestoreService {
           'type': 'admin_message',
           'sentBy': adminId,
         });
+        batchCount++;
       }
 
-      await batch.commit();
+      await flushBatch();
     }
 
     final String audienceLabel =
@@ -654,7 +668,7 @@ class FirestoreService {
       'binId': docId,
       'qrCode': qrCode,
       'locationName': locationName,
-      'createdAt': DateTime.now(),
+      'createdAt': Timestamp.fromDate(DateTime.now()),
     };
 
     if (latitude != null && longitude != null) {

@@ -84,7 +84,7 @@ class _SlotTracker {
 
     if (_locked) {
       if (_hypot(rawX - _lockX, rawY - _lockY) > _unlockDist) {
-        hasLock = true; return;
+        return; // centroid jumped — keep existing lock state, don't re-affirm
       }
     }
 
@@ -255,9 +255,17 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.inactive) _cam?.dispose();
-    if (s == AppLifecycleState.resumed)  _initCamera();
+  void didChangeAppLifecycleState(AppLifecycleState s) async {
+    if (s == AppLifecycleState.inactive) {
+      final old = _cam;
+      _cam = null;
+      _streamStarted = false;
+      if (old != null) {
+        try { if (old.value.isStreamingImages) await old.stopImageStream(); } catch (_) {}
+        try { await old.dispose(); } catch (_) {}
+      }
+    }
+    if (s == AppLifecycleState.resumed && _cam == null) _initCamera();
   }
 
   void _startTimeout() {
@@ -375,8 +383,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       _tracker.update(image);
       if (_tracker.hasLock) {
         _stableFrames++;
-        if (_stableFrames == _minStable)    _rebuildMotion();
-        if (_stableFrames % 15 == 0)        _rebuildMotion();
+        if (_stableFrames == _minStable) {
+          _rebuildMotion();
+        } else if (_stableFrames % 15 == 0) {
+          _rebuildMotion();
+        }
       } else {
         _stableFrames = 0;
       }

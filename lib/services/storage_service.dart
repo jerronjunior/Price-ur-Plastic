@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
@@ -23,21 +24,77 @@ class StorageService {
         );
       }
 
+      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUid == null) {
+        throw const StorageServiceException(
+          code: 'unauthenticated',
+          message: 'You must be logged in to upload a profile picture.',
+        );
+      }
+      if (currentUid != userId) {
+        throw const StorageServiceException(
+          code: 'uid-mismatch',
+          message: 'Profile upload blocked: user ID mismatch.',
+        );
+      }
+
       final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final objectPath = 'profile_images/$userId/$fileName';
       final ref = _storage.ref().child(objectPath);
-      await ref.putFile(imageFile);
-      return await ref.getDownloadURL();
-    } on FirebaseException catch (e) {
-      debugPrint('Error uploading profile image: ${e.code} ${e.message}');
-      throw StorageServiceException(code: e.code, message: e.message);
+      final metadata = SettableMetadata(contentType: 'image/jpeg');
+
+      // ── Read bytes in Dart and upload with putData(), NOT putFile() ──────
+      // putFile() hands the native SDK a raw file path string, which on
+      // some Android versions (especially when image_picker returns a
+      // content:// or cache path) the native Firebase Storage SDK fails
+      // to resolve correctly — surfacing as the unrelated-looking
+      // "object-not-found" error on the FIRST upload to a brand-new path.
+      //
+      // Reading the bytes ourselves and using putData() avoids any native
+      // file-path lookup entirely — the bytes are already in memory and
+      // handed straight to the SDK.
+      final bytes = await imageFile.readAsBytes();
+      debugPrint('[Upload] read ${bytes.length} bytes, uploading to $objectPath');
+
+      late final TaskSnapshot snapshot;
+      try {
+        final task = ref.putData(bytes, metadata);
+        snapshot = await task;
+        debugPrint('[Upload] putData finished — state=${snapshot.state} '
+            'bytesTransferred=${snapshot.bytesTransferred}');
+      } on FirebaseException catch (e) {
+        debugPrint('[Upload] putData THREW: code=${e.code} message=${e.message}');
+        throw StorageServiceException(
+          code: 'upload-step-failed',
+          message: 'Upload failed — code: ${e.code}. ${e.message ?? ""}',
+        );
+      }
+
+      if (snapshot.state != TaskState.success) {
+        throw StorageServiceException(
+          code: 'upload-failed',
+          message: 'Upload did not complete (state: ${snapshot.state}).',
+        );
+      }
+
+      try {
+        final url = await ref.getDownloadURL();
+        debugPrint('[Upload] getDownloadURL OK — $url');
+        return url;
+      } on FirebaseException catch (e) {
+        debugPrint('[Upload] getDownloadURL THREW: code=${e.code} message=${e.message}');
+        throw StorageServiceException(
+          code: 'url-step-failed',
+          message: 'Could not get a download URL — code: ${e.code}. ${e.message ?? ""}',
+        );
+      }
     } on StorageServiceException {
       rethrow;
     } catch (e) {
-      debugPrint('Unexpected error uploading profile image: $e');
-      throw const StorageServiceException(
+      debugPrint('[Upload] Unexpected error: $e');
+      throw StorageServiceException(
         code: 'upload-failed',
-        message: 'Failed to upload profile image.',
+        message: 'Failed to upload profile image: $e',
       );
     }
   }

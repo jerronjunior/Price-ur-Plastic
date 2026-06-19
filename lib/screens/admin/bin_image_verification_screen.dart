@@ -82,9 +82,17 @@ class _BinImageVerificationScreenState
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive) _cam?.dispose();
-    if (state == AppLifecycleState.resumed) _initCamera();
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (state == AppLifecycleState.inactive) {
+      final old = _cam;
+      _cam = null;
+      if (mounted) setState(() => _cameraReady = false);
+      if (old != null) {
+        try { if (old.value.isStreamingImages) await old.stopImageStream(); } catch (_) {}
+        try { await old.dispose(); } catch (_) {}
+      }
+    }
+    if (state == AppLifecycleState.resumed && _cam == null) _initCamera();
   }
 
   void _startTimeout() {

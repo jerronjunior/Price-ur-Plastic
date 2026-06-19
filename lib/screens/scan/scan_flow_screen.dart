@@ -22,6 +22,8 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
   String? _barcode;
   String? _validationError;
   bool _validating = true;
+  // Hoisted so FutureBuilder doesn't restart the countdown on every rebuild.
+  final Future<void> _retryHintFuture = Future.delayed(const Duration(seconds: 3));
 
   @override
   void initState() {
@@ -94,7 +96,7 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
               const SizedBox(height: 12),
               // Show retry hint after 3 seconds so user knows what to do
               FutureBuilder(
-                future: Future.delayed(const Duration(seconds: 3)),
+                future: _retryHintFuture,
                 builder: (context, snap) {
                   if (snap.connectionState != ConnectionState.done) {
                     return const SizedBox.shrink();

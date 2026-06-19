@@ -158,7 +158,7 @@ class NotificationProvider with ChangeNotifier {
       await _db.collection('notifications').add({
         'userId': _activeUserId,
         ...notification.toMap(),
-        'createdAt': now,
+        'createdAt': Timestamp.fromDate(now),
       });
     } catch (_) {
       // Keep UI stable even if write fails.
@@ -195,32 +195,12 @@ class NotificationProvider with ChangeNotifier {
   }
 
   Future<void> markAsRead(String notificationId) async {
+    // notificationId is the Firestore document ID — update by reference directly
+    // instead of querying by a stored 'id' field (which may be empty for old docs).
     try {
-      if (_activeUserId != null) {
-        final userQuery = await _db
-            .collection('notifications')
-            .where('userId', isEqualTo: _activeUserId)
-            .where('id', isEqualTo: notificationId)
-            .limit(1)
-            .get();
-
-        if (userQuery.docs.isNotEmpty) {
-          await userQuery.docs.first.reference.update({'isRead': true});
-          return;
-        }
-      }
-
-      if (_isAdmin) {
-        final adminQuery = await _db
-            .collection('admin_notifications')
-            .where('id', isEqualTo: notificationId)
-            .limit(1)
-            .get();
-
-        if (adminQuery.docs.isNotEmpty) {
-          await adminQuery.docs.first.reference.update({'isRead': true});
-        }
-      }
+      final isAdminNotif = _adminNotifications.any((n) => n.id == notificationId);
+      final collection = isAdminNotif ? 'admin_notifications' : 'notifications';
+      await _db.collection(collection).doc(notificationId).update({'isRead': true});
     } catch (e) {
       debugPrint('Error marking notification as read: $e');
     }
