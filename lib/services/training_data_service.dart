@@ -170,6 +170,38 @@ class TrainingDataService {
     }
   }
 
+  // ── Called for EVERY insertion detection attempt (counted or rejected) ────
+  // This is the key to continuous self-improvement: every real attempt a
+  // user makes — successful or not — reports the exact motion metrics that
+  // drove the decision. analyze_collected_insertions.py later aggregates
+  // these across all users to recalibrate thresholds, the same way the
+  // original 35-video calibration worked, but scaling forever with usage.
+  Future<void> onInsertionAttempt({
+    required bool   counted,
+    String?         rejectedReason,
+    required double peakChangeFraction,
+    required double peakDownwardScore,
+    required double avgCornerMotion,
+    required int    durationMs,
+  }) async {
+    try {
+      final uid = _auth.currentUser?.uid ?? 'anonymous';
+      await _db.collection('insertion_attempts').add({
+        'counted':            counted,
+        'rejectedReason':     rejectedReason,
+        'peakChangeFraction': peakChangeFraction,
+        'peakDownwardScore':  peakDownwardScore,
+        'avgCornerMotion':    avgCornerMotion,
+        'durationMs':         durationMs,
+        'userId':             uid,
+        'timestamp':          Timestamp.fromDate(DateTime.now()),
+      });
+    } catch (e) {
+      // Never let data collection affect the actual scanning UX.
+      debugPrint('[Training] insertion attempt save failed: $e');
+    }
+  }
+
   // ── Get training stats (for admin panel) ──────────────────────────────────
   Future<Map<String, int>> getStats() async {
     try {

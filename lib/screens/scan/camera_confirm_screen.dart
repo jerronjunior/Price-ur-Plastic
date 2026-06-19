@@ -9,6 +9,9 @@ import '../../providers/auth_provider.dart';
 import '../../models/recycled_bottle_model.dart';
 import '../../services/firestore_service.dart';
 import 'slot_motion_detection.dart';
+import 'slot_motion_detection_impl.dart';
+import 'package:firebase_remote_config/firebase_remote_config.dart';
+import '../../services/training_data_service.dart';
 
 /// Camera confirm screen: 10s countdown, slot-motion overlay, detect bottle insertion.
 ///
@@ -61,12 +64,49 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   static const double _regionWidth = 0.58;
   static const double _regionHeight = 0.28;
 
+  // ── Remote-Config-driven thresholds ──────────────────────────────────────
+  // Fetched once at startup so the insertion detector can be recalibrated
+  // from real collected data (via analyze_collected_insertions.py) WITHOUT
+  // needing an app store update. Null = use the detector's built-in default.
+  double? _minChangeFractionOverride;
+  double? _minDownwardScoreOverride;
+  double? _maxCornerMotionAvgOverride;
+
   @override
   void initState() {
     super.initState();
     _countdown = widget.countdownSeconds;
     WidgetsBinding.instance.addObserver(this);
+    _loadRemoteThresholds();
     _initCamera();
+  }
+
+  // ── Fetch recalibrated thresholds, if published ──────────────────────────
+  // Parameters are set up in Firebase Remote Config:
+  //   insertion_min_change_fraction, insertion_min_downward_score,
+  //   insertion_max_corner_motion_avg  (all type: Number, default: blank)
+  // analyze_collected_insertions.py publishes new values here after
+  // aggregating enough real insertion_attempts data.
+  Future<void> _loadRemoteThresholds() async {
+    try {
+      final rc = FirebaseRemoteConfig.instance;
+      await rc.fetchAndActivate();
+
+      double? readOverride(String key) {
+        final raw = rc.getDouble(key);
+        return raw > 0 ? raw : null; // 0 = not set
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _minChangeFractionOverride  = readOverride('insertion_min_change_fraction');
+        _minDownwardScoreOverride   = readOverride('insertion_min_downward_score');
+        _maxCornerMotionAvgOverride = readOverride('insertion_max_corner_motion_avg');
+      });
+    } catch (e) {
+      // Remote Config unavailable — detector falls back to built-in defaults.
+      debugPrint('[Insertion] Remote Config fetch failed: $e');
+    }
   }
 
   @override
@@ -213,6 +253,21 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
     });
   }
 
+  // ── Report every detection attempt for continuous self-improvement ──────
+  // Sent for BOTH counted and rejected attempts — this is what lets the
+  // app's scanning get stronger the more it's used, instead of staying
+  // frozen at whatever data was used for the last manual calibration.
+  void _onAttemptComplete(InsertionAttemptResult result) {
+    TrainingDataService().onInsertionAttempt(
+      counted:            result.counted,
+      rejectedReason:     result.rejectedReason,
+      peakChangeFraction: result.peakChangeFraction,
+      peakDownwardScore:  result.peakDownwardScore,
+      avgCornerMotion:    result.avgCornerMotion,
+      durationMs:         result.durationMs,
+    );
+  }
+
   void _onInsertDetected() {
     if (_confirmed || _saving || _disposed) return;
     _countdownTimer?.cancel();
@@ -258,7 +313,6 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
 
     try {
       await firestore.saveRecycledBottle(bottle);
-
       if (!_disposed && mounted) widget.onSuccess();
     } catch (e) {
       if (!_disposed && mounted) {
@@ -393,6 +447,10 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
                         regionTop: _regionTop,
                         regionWidth: _regionWidth,
                         regionHeight: _regionHeight,
+                        minChangeFractionOverride: _minChangeFractionOverride,
+                        minDownwardScoreOverride: _minDownwardScoreOverride,
+                        maxCornerMotionAvgOverride: _maxCornerMotionAvgOverride,
+                        onAttemptComplete: _onAttemptComplete,
                       ),
                     ),
                   ),
