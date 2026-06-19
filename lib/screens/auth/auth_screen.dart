@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/sms_service.dart';
 
 /// Unified Auth Screen with Login/Register tabs.
 class AuthScreen extends StatefulWidget {
@@ -37,142 +35,18 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  String _normalizeMobile(String value) {
-    final digits = value.replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('94')) return digits;
-    if (digits.startsWith('0') && digits.length >= 10) {
-      return '94${digits.substring(1)}';
-    }
-    if (digits.length == 9) return '94$digits';
-    return digits;
-  }
-
-  bool _isMissingOtpService(FirebaseFunctionsException e) {
-    final message = (e.message ?? '').toLowerCase();
-    return e.code == 'not-found' ||
-        message.contains('not found') ||
-        message.contains('function') ||
-        message.contains('requested entity') ||
-        message.contains('not deployed');
-  }
-
-  String _generateDemoOtp() {
-    final code = (DateTime.now().millisecondsSinceEpoch % 900000) + 100000;
-    return code.toString();
-  }
-
-  Future<String?> _promptOtp() async {
-    final codeController = TextEditingController();
-    try {
-      return await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('Verify phone number'),
-            content: TextField(
-              controller: codeController,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              decoration: const InputDecoration(
-                labelText: 'OTP code',
-                hintText: 'Enter the 6-digit code',
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop(codeController.text.trim());
-                },
-                child: const Text('Verify'),
-              ),
-            ],
-          );
-        },
-      );
-    } finally {
-      codeController.dispose();
-    }
-  }
-
-  Future<void> _registerWithOtp() async {
+  Future<void> _register() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final rawMobile = _mobileController.text.trim();
-    final mobile = _normalizeMobile(rawMobile);
-    final authProvider = context.read<AuthProvider>();
-
-    setState(() {
-      _error = null;
-      _loading = true;
-    });
+    setState(() { _error = null; _loading = true; });
 
     try {
-      final smsService = SmsService();
-      String? demoOtpCode;
-
-      try {
-        final sent = await smsService.sendOtp(phone: mobile);
-        if (!sent) {
-          throw StateError('OTP send failed');
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('OTP sent to $mobile.'),
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        }
-      } on FirebaseFunctionsException catch (e) {
-        if (!_isMissingOtpService(e)) {
-          rethrow;
-        }
-        demoOtpCode = _generateDemoOtp();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'OTP service unavailable. Demo code for $mobile: $demoOtpCode',
-              ),
-              duration: const Duration(seconds: 8),
-            ),
-          );
-        }
-      }
-
-      if (!mounted) return;
-
-      setState(() => _loading = false);
-
-      final otp = await _promptOtp();
-      if (!mounted) return;
-      if (otp == null || otp.isEmpty) {
-        return;
-      }
-
-      setState(() => _loading = true);
-      if (demoOtpCode != null) {
-        if (otp != demoOtpCode) {
-          throw StateError('Invalid OTP');
-        }
-      } else {
-        final verified = await smsService.verifyOtp(phone: mobile, otp: otp);
-        if (!verified) {
-          throw StateError('Invalid OTP');
-        }
-      }
-
-      final msg = await authProvider.register(
-            email: _emailController.text.trim(),
-            password: _passwordController.text,
-            name: _nameController.text.trim(),
-            mobile: mobile,
-          );
+      final msg = await context.read<AuthProvider>().register(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+        name: _nameController.text.trim(),
+        mobile: _mobileController.text.trim(),
+      );
 
       if (!mounted) return;
       setState(() => _loading = false);
@@ -192,26 +66,11 @@ class _AuthScreenState extends State<AuthScreen> {
         _error = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Phone verified. Registration successful. Please log in.'),
-        ),
+        const SnackBar(content: Text('Registration successful. Please log in.')),
       );
-    } on FirebaseFunctionsException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        if (_isMissingOtpService(e)) {
-          _error = 'OTP service is not deployed yet. Re-auth Firebase CLI and deploy functions.';
-          return;
-        }
-        _error = e.message ?? e.details?.toString() ?? 'Could not send or verify the OTP.';
-      });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
+      setState(() { _loading = false; _error = e.toString(); });
     }
   }
 
@@ -245,7 +104,7 @@ class _AuthScreenState extends State<AuthScreen> {
       return;
     }
 
-    await _registerWithOtp();
+    await _register();
   }
 
   Future<void> _forgotPassword() async {
