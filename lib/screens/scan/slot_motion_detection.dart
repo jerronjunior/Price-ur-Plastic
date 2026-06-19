@@ -15,6 +15,10 @@ class SlotMotionOverlay extends StatefulWidget {
     required this.regionTop,
     required this.regionWidth,
     required this.regionHeight,
+    this.onAttemptComplete,
+    this.minChangeFractionOverride,
+    this.minDownwardScoreOverride,
+    this.maxCornerMotionAvgOverride,
   });
 
   final CameraController controller;
@@ -25,6 +29,18 @@ class SlotMotionOverlay extends StatefulWidget {
   final double regionTop;
   final double regionWidth;
   final double regionHeight;
+
+  /// Called for EVERY detection attempt (counted or rejected) — wire this
+  /// to TrainingDataService.onInsertionAttempt() to keep collecting real
+  /// calibration data as users use the app.
+  final void Function(InsertionAttemptResult result)? onAttemptComplete;
+
+  /// Threshold overrides — pass values fetched from Firebase Remote Config
+  /// to recalibrate the detector WITHOUT an app store update. Leave null
+  /// to use the built-in defaults.
+  final double? minChangeFractionOverride;
+  final double? minDownwardScoreOverride;
+  final double? maxCornerMotionAvgOverride;
 
   @override
   State<SlotMotionOverlay> createState() => _SlotMotionOverlayState();
@@ -50,6 +66,9 @@ class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
       regionTop: widget.regionTop,
       regionWidth: widget.regionWidth,
       regionHeight: widget.regionHeight,
+      minChangeFractionOverride: widget.minChangeFractionOverride,
+      minDownwardScoreOverride: widget.minDownwardScoreOverride,
+      maxCornerMotionAvgOverride: widget.maxCornerMotionAvgOverride,
       onReadyChanged: (ready) {
         if (_disposed || !mounted) return;
         if (_isReady == ready) return;
@@ -61,6 +80,7 @@ class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
           widget.onMotionDetected();
         }
       },
+      onAttemptComplete: widget.onAttemptComplete,
     );
 
     if (!widget.controller.value.isInitialized) return;

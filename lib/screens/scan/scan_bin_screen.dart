@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import '../../services/training_data_service.dart';
 
 enum BinType { cocaCola, keells, ecoSpindles, unknown }
 
@@ -415,6 +417,11 @@ class _ScanBinScreenState extends State<ScanBinScreen>
     await _cam?.stopImageStream();
     if (!mounted) return;
 
+    // ── Collect training data (background, never blocks the UI) ────────────
+    // Captures a still photo of the confirmed bin and uploads it so the
+    // bin-color model can be retrained from real, in-the-field detections.
+    unawaited(_saveBinTrainingSample(type));
+
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: const Row(children: [
         Icon(Icons.check_circle, color: Colors.white, size: 18),
@@ -427,6 +434,25 @@ class _ScanBinScreenState extends State<ScanBinScreen>
 
     await Future.delayed(const Duration(milliseconds: 450));
     if (mounted) widget.onScanned(type.storageValue);
+  }
+
+  // ── Capture + upload a training sample for this confirmed bin ────────────
+  // Runs after the stream is stopped so takePicture() doesn't conflict
+  // with the active image stream. Never throws into the UI — training
+  // data collection must never break the actual scanning flow.
+  Future<void> _saveBinTrainingSample(BinType type) async {
+    try {
+      final photo = await _cam?.takePicture();
+      if (photo == null) return;
+      await TrainingDataService().onBinColorConfirmed(
+        imagePath: photo.path,
+        binType:   type.storageValue,
+        confidence: 1.0, // passed all 5 detection checks — high confidence
+      );
+    } catch (e) {
+      // Training capture failing should never affect the scan result.
+      debugPrint('[Training] bin sample capture failed: $e');
+    }
   }
 
   String get _statusText {

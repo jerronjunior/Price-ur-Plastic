@@ -8,6 +8,29 @@ enum _PassState {
   exiting,
 }
 
+/// Metrics for a single completed detection attempt — sent for EVERY
+/// attempt (whether it ended up counted or rejected), so the app can
+/// keep collecting real calibration data forever, not just at the
+/// 35-video snapshot used to set the current defaults.
+class InsertionAttemptResult {
+  const InsertionAttemptResult({
+    required this.counted,
+    required this.rejectedReason,
+    required this.peakChangeFraction,
+    required this.peakDownwardScore,
+    required this.avgCornerMotion,
+    required this.durationMs,
+  });
+
+  final bool counted;
+  /// null if counted; otherwise 'cameraShake' or 'lowConfidence'
+  final String? rejectedReason;
+  final double peakChangeFraction;
+  final double peakDownwardScore;
+  final double avgCornerMotion;
+  final int durationMs;
+}
+
 class _LumaSample {
   const _LumaSample({
     required this.pixels,
@@ -33,19 +56,37 @@ class SlotMotionDetectionImpl {
     required double regionTop,
     required double regionWidth,
     required double regionHeight,
+    void Function(InsertionAttemptResult result)? onAttemptComplete,
+    // Optional threshold overrides — pass these from Firebase Remote Config
+    // so the detector can be recalibrated from real collected data WITHOUT
+    // an app store update. Falls back to the 35-video-calibrated defaults.
+    double? minChangeFractionOverride,
+    double? minDownwardScoreOverride,
+    double? maxCornerMotionAvgOverride,
   })  : _onMotionDetected = onMotionDetected,
         _onReadyChanged = onReadyChanged,
         _regionLeft = regionLeft,
         _regionTop = regionTop,
         _regionWidth = regionWidth,
-        _regionHeight = regionHeight;
+        _regionHeight = regionHeight,
+        _onAttemptComplete = onAttemptComplete,
+        _minChangeFraction = minChangeFractionOverride ?? _defaultMinChangeFraction,
+        _minDownwardScore  = minDownwardScoreOverride  ?? _defaultMinDownwardScore,
+        _maxCornerMotionAvg = maxCornerMotionAvgOverride ?? _defaultMaxCornerMotionAvg;
 
   final void Function() _onMotionDetected;
   final void Function(bool isReady) _onReadyChanged;
+  final void Function(InsertionAttemptResult result)? _onAttemptComplete;
   final double _regionLeft;
   final double _regionTop;
   final double _regionWidth;
   final double _regionHeight;
+
+  // Instance thresholds — overridable per-instance via Remote Config,
+  // default to the 35-video-calibrated values if no override is given.
+  final double _minChangeFraction;
+  final double _minDownwardScore;
+  final double _maxCornerMotionAvg;
 
   _LumaSample? _previousSample;
   bool _disposed = false;
@@ -55,9 +96,9 @@ class SlotMotionDetectionImpl {
   static const int _sampleStep = 2;
 
   // Filter 2: min changed fraction in zone
-  static const double _minChangeFraction = 0.10; // lowered: calibrated from 35 real insertions (min observed 0.139)
+  static const double _defaultMinChangeFraction = 0.10; // lowered: calibrated from 35 real insertions (min observed 0.139)
   // Filter 3: downward dominance score threshold
-  static const double _minDownwardScore = 0.32; // lowered: 35-video calibration showed min down-signal of 0.364
+  static const double _defaultMinDownwardScore = 0.32; // lowered: 35-video calibration showed min down-signal of 0.364
   // Filter 5: cooldown after each count
   static const int _cooldownMs = 2000; // faster cooldown for open-top bins
   // Pixel diff threshold for per-pixel motion map
@@ -83,7 +124,7 @@ class SlotMotionDetectionImpl {
   //
   static const double _cornerFrac = 0.15; // each corner patch = 15% of width/height
   static const int _cornerPixelDiffThreshold = 18;
-  static const double _maxCornerMotionAvg = 0.32; // reject if background moved this much
+  static const double _defaultMaxCornerMotionAvg = 0.32; // reject if background moved this much
 
   int _frameCount = 0;
   _PassState _state = _PassState.idle;
@@ -98,6 +139,13 @@ class SlotMotionDetectionImpl {
   _LumaSample? _previousCornerSample;
   double _cornerMotionSum = 0;
   int _cornerMotionCount = 0;
+
+  // Peak metrics for the CURRENT attempt — reported via onAttemptComplete
+  // for every attempt (counted or not) so real usage keeps improving
+  // calibration over time, not just the one-time 35-video snapshot.
+  double _peakChangeFraction = 0;
+  double _peakDownwardScore  = 0;
+  DateTime? _attemptStart;
 
   void processImage(CameraImage image) {
     if (_disposed) return;
@@ -160,6 +208,9 @@ class SlotMotionDetectionImpl {
 
       // Filter 2: motion must be significant enough in slot zone.
       _changedFraction = totalChanged / zoneLen;
+      if (_state != _PassState.idle && _changedFraction > _peakChangeFraction) {
+        _peakChangeFraction = _changedFraction;
+      }
 
       // ── Corner motion (anti-shake) — accumulate only while an attempt
       // is in progress (state != idle). Reset happens at idle→entering below.
@@ -197,10 +248,26 @@ class SlotMotionDetectionImpl {
           // so a single mis-trigger doesn't immediately retry.
           final avgCornerMotion =
               _cornerMotionCount > 0 ? _cornerMotionSum / _cornerMotionCount : 0.0;
+          final wasShakeRejected = avgCornerMotion > _maxCornerMotionAvg;
           _cornerMotionSum = 0;
           _cornerMotionCount = 0;
 
-          if (avgCornerMotion <= _maxCornerMotionAvg) {
+          // Report this attempt for continuous data collection — sent for
+          // BOTH outcomes so the calibration can keep improving from real
+          // usage instead of staying frozen at the 35-video snapshot.
+          final durationMs = _attemptStart != null
+              ? DateTime.now().difference(_attemptStart!).inMilliseconds
+              : 0;
+          _onAttemptComplete?.call(InsertionAttemptResult(
+            counted:            !wasShakeRejected,
+            rejectedReason:     wasShakeRejected ? 'cameraShake' : null,
+            peakChangeFraction: _peakChangeFraction,
+            peakDownwardScore:  _peakDownwardScore,
+            avgCornerMotion:    avgCornerMotion,
+            durationMs:         durationMs,
+          ));
+
+          if (!wasShakeRejected) {
             _onMotionDetected();
           }
 
@@ -233,6 +300,9 @@ class SlotMotionDetectionImpl {
 
       final total = upperSum + lowerSum;
       _downwardScore = total > 0 ? lowerSum / total : 0;
+      if (_state != _PassState.idle && _downwardScore > _peakDownwardScore) {
+        _peakDownwardScore = _downwardScore;
+      }
 
       // Filter 3: ignore sideways/upward jitter.
       if (_downwardScore < _minDownwardScore) {
@@ -255,9 +325,12 @@ class SlotMotionDetectionImpl {
         case _PassState.idle:
           if (relPos < 0.55 && _changedFraction > _minChangeFraction * 0.8) { // wider zone for open-top bins
             _state = _PassState.entering;
-            // Fresh attempt — clear any stale corner-motion accumulation.
+            // Fresh attempt — clear any stale tracking from a prior attempt.
             _cornerMotionSum = 0;
             _cornerMotionCount = 0;
+            _peakChangeFraction = _changedFraction;
+            _peakDownwardScore  = 0;
+            _attemptStart = DateTime.now();
           }
           break;
         case _PassState.entering:
