@@ -164,7 +164,13 @@ class _ScanFlowScreenState extends State<ScanFlowScreen> {
       binId: '',
       onSuccess: () => Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => ScanSuccessScreen(onDone: _onSuccess),
+          builder: (_) => ScanSuccessScreen(
+            onAddBottle: () {
+              Navigator.of(context).pop();
+              setState(() => _barcode = null);
+            },
+            onFinish: _onSuccess,
+          ),
         ),
       ),
       onBack: () => setState(() => _barcode = null),

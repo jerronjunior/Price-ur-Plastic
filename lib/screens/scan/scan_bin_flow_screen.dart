@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
-import '../../core/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
-import '../../services/sms_service.dart';
 import '../../models/recycled_bottle_model.dart';
 import 'insertion_detector_screen.dart';
 import 'scan_bottle_screen.dart';
 import 'scan_bin_screen.dart';
+import 'scan_success_screen.dart';
 
 /// Orchestrates bin barcode scanning flow.
 class ScanBinFlowScreen extends StatefulWidget {
@@ -24,9 +23,11 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
   bool _processing = false;
   bool _showSuccess = false;
   bool _showSummary = false;
-  int _bottleCount = 0;
-  int _totalPoints = 0;
-  int _totalBottles = 0;
+
+  int _bottleCount = 0;   // bottles recorded this session
+  int _totalPoints = 0;   // user's total points (loaded on finish)
+  int _totalBottles = 0;  // user's total bottles (loaded on finish)
+
   String? _lastBinId;
   String? _lastBarcode;
 
@@ -41,7 +42,6 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
 
   void _onBottleDetected(String barcode) {
     if (_lastBinId == null) return;
-
     setState(() {
       _lastBarcode = barcode;
       _bottleDetecting = false;
@@ -54,7 +54,6 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     setState(() {
       _cameraConfirming = false;
       _processing = true;
-      _showSummary = false;
     });
 
     try {
@@ -80,7 +79,6 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
         ),
       );
 
-      // Log the bin scan
       await firestore.logBinScan(userId, binId);
 
       if (!mounted) return;
@@ -92,9 +90,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _processing = false;
-      });
+      setState(() => _processing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
@@ -102,9 +98,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
   }
 
   Future<void> _finishSession() async {
-    setState(() {
-      _processing = true;
-    });
+    setState(() => _processing = true);
 
     try {
       final auth = context.read<AuthProvider>();
@@ -114,51 +108,40 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
         return;
       }
 
-      final firestore = context.read<FirestoreService>();
-      final latestUser = await firestore.getUser(userId);
-      final mobile = latestUser?.mobile.trim() ?? '';
-
-      if (mobile.isNotEmpty && _bottleCount > 0) {
-        await SmsService().sendBottleCount(
-          phone: mobile,
-          bottleCount: _bottleCount,
-          totalPoints: latestUser?.totalPoints ?? auth.user?.totalPoints ?? 0,
-        ).catchError((_) => false);
-      }
+      final latestUser =
+          await context.read<FirestoreService>().getUser(userId);
 
       if (!mounted) return;
       setState(() {
         _totalPoints = latestUser?.totalPoints ?? auth.user?.totalPoints ?? 0;
         _totalBottles = latestUser?.totalBottles ?? auth.user?.totalBottles ?? 0;
-        _showSummary = true;
         _showSuccess = false;
+        _showSummary = true;
         _processing = false;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _processing = false;
-      });
+      setState(() => _processing = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading points summary: $e')),
+        SnackBar(content: Text('Error loading summary: $e')),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // ── Bottle barcode scan ─────────────────────────────────────────────────
     if (_bottleDetecting && _lastBinId != null) {
       return ScanBottleScreen(
         onScanned: _onBottleDetected,
         onBack: () {
           if (!mounted) return;
-          setState(() {
-            _bottleDetecting = false;
-          });
+          setState(() => _bottleDetecting = false);
         },
       );
     }
 
+    // ── Insertion detection ─────────────────────────────────────────────────
     if (_cameraConfirming && _lastBinId != null) {
       return InsertionDetectorScreen(
         onDetected: () => _recordBottle(_lastBinId!),
@@ -170,7 +153,7 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No bottle insertion detected. Please scan bottle again.'),
+              content: Text('No bottle detected. Please scan bottle again.'),
             ),
           );
         },
@@ -185,38 +168,53 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       );
     }
 
+    // ── Success screen (per bottle) ─────────────────────────────────────────
+    if (_showSuccess) {
+      return ScanSuccessScreen(
+        onAddBottle: () => setState(() {
+          _showSuccess = false;
+          _bottleDetecting = true;
+        }),
+        onFinish: _finishSession,
+      );
+    }
+
+    // ── Session summary ─────────────────────────────────────────────────────
     if (_showSummary) {
-      final sessionPoints = _bottleCount * AppConstants.pointsPerBottle;
       return Scaffold(
-        body: Center(
+        body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(28),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Icon(
-                  Icons.emoji_events,
+                  Icons.emoji_events_rounded,
                   size: 88,
                   color: Color(0xFFFFA000),
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'Recycling Complete',
+                  'Session Complete!',
+                  textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
-                  textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 Text(
-                  'You added $_bottleCount bottle${_bottleCount == 1 ? '' : 's'} in this session.',
+                  'You recycled $_bottleCount bottle${_bottleCount == 1 ? '' : 's'} this session.',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(color: Colors.grey.shade600),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 32),
                 Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 24, horizontal: 20),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF1F8E9),
                     borderRadius: BorderRadius.circular(20),
@@ -224,37 +222,35 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
                   ),
                   child: Column(
                     children: [
-                      Text(
-                        'Session Points: +$sessionPoints',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: const Color(0xFF2E7D32),
-                              fontWeight: FontWeight.bold,
-                            ),
+                      _SummaryRow(
+                        label: 'Points this session',
+                        value: '+$_bottleCount',
+                        valueColor: const Color(0xFF2E7D32),
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Total Points: $_totalPoints',
-                        style: Theme.of(context).textTheme.titleMedium,
+                      const Divider(height: 28),
+                      _SummaryRow(
+                        label: 'Total points',
+                        value: '$_totalPoints',
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Total Bottles: $_totalBottles',
-                        style: Theme.of(context).textTheme.titleMedium,
+                      const SizedBox(height: 8),
+                      _SummaryRow(
+                        label: 'Total bottles',
+                        value: '$_totalBottles',
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.home),
-                    label: const Text('Go Home'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                const SizedBox(height: 36),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.home),
+                  label: const Text('Go Home'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                    onPressed: () => context.go('/'),
                   ),
+                  onPressed: () => context.go('/'),
                 ),
               ],
             ),
@@ -263,98 +259,51 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
       );
     }
 
-    if (_showSuccess) {
-      const pts = 1; // 1 point and 1 bottle per insertion, not cumulative total
-      return Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.check_circle,
-                  size: 80,
-                  color: Color(0xFF4CAF50),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Bottle${pts > 1 ? 's' : ''} recorded successfully!',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '+$pts point${pts > 1 ? 's' : ''} and +$pts bottle${pts > 1 ? 's' : ''}',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(color: const Color(0xFF4CAF50), fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 48),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                        onPressed: _processing
-                            ? null
-                            : () => setState(() {
-                                  _bottleDetecting = true;
-                                  _cameraConfirming = false;
-                                  _showSuccess = false;
-                                }),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.check),
-                        label: const Text('Finished'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          backgroundColor: const Color(0xFF4CAF50),
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: _processing ? null : _finishSession,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
+    // ── Processing spinner ──────────────────────────────────────────────────
     if (_processing) {
       return Scaffold(
         appBar: AppBar(title: const Text('Scanning Bin')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(
-                'Processing bin scan...',
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-            ],
-          ),
-        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
+    // ── Bin QR scan ─────────────────────────────────────────────────────────
     return ScanBinScreen(
       onScanned: _onBinScanned,
       onBack: () => context.go('/'),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(color: Colors.grey.shade700)),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: valueColor,
+              ),
+        ),
+      ],
     );
   }
 }

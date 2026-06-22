@@ -75,6 +75,8 @@ class TrainingDataService {
     // never match a real uid anyway and was the actual cause of the
     // permission-denied error showing on the scan screen.
     final uid = _auth.currentUser?.uid;
+    debugPrint('[Training] saveSample called — currentUser.uid="$uid"');
+
     if (uid == null) {
       debugPrint('[Training] Skipped — no signed-in user.');
       return;
@@ -87,11 +89,20 @@ class TrainingDataService {
 
       // Upload image to Storage: training_data/{label}/{fileName}
       final ref = _storage.ref('training_data/$labelStr/$fileName');
-      await ref.putFile(File(imagePath));
+
+      try {
+        await ref.putFile(File(imagePath));
+        debugPrint('[Training] Storage upload OK');
+      } on FirebaseException catch (e) {
+        debugPrint('[Training] ❌ Storage putFile threw: '
+            'code="${e.code}" message="${e.message}"');
+        rethrow;
+      }
+
       final imageUrl = await ref.getDownloadURL();
 
       // Save metadata to Firestore
-      await _db.collection('training_samples').add({
+      final payload = {
         'label':           labelStr,
         'imageUrl':        imageUrl,
         'modelConfidence': modelConfidence,
@@ -100,7 +111,19 @@ class TrainingDataService {
         'deviceModel':     deviceModel ?? 'unknown',
         'timestamp':       Timestamp.fromDate(timestamp),
         'verified':        false,
-      });
+      };
+      debugPrint('[Training] Writing to Firestore with userId="$uid" '
+          '(matches currentUser.uid: ${uid == _auth.currentUser?.uid})');
+
+      try {
+        await _db.collection('training_samples').add(payload);
+        debugPrint('[Training] ✅ Firestore write OK');
+      } on FirebaseException catch (e) {
+        debugPrint('[Training] ❌ Firestore add() threw: '
+            'code="${e.code}" message="${e.message}" '
+            'plugin="${e.plugin}"');
+        rethrow;
+      }
 
       debugPrint('[Training] Saved sample: $labelStr '
           '(confidence: ${(modelConfidence * 100).toStringAsFixed(0)}%, '
