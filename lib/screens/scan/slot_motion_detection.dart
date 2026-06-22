@@ -90,11 +90,12 @@ class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
 
     try {
       await widget.controller.startImageStream(_onImage);
+      debugPrint('[Insertion] SlotMotionOverlay: image stream started OK');
       if (mounted) {
         setState(() => _streamStarted = true);
       }
     } catch (e) {
-      debugPrint('SlotMotionOverlay: Failed to start image stream: $e');
+      debugPrint('[Insertion] SlotMotionOverlay: Failed to start image stream: $e');
     }
   }
 

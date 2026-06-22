@@ -9,6 +9,7 @@ import '../../providers/auth_provider.dart';
 import '../../models/recycled_bottle_model.dart';
 import '../../services/firestore_service.dart';
 import 'slot_motion_detection.dart';
+import 'slot_motion_detection_impl.dart' show InsertionAttemptResult;
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import '../../services/training_data_service.dart';
 
@@ -177,11 +178,14 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
       );
 
       await controller.initialize();
+      debugPrint('[Insertion] Camera initialized OK');
 
       // Let the camera sensor settle for a moment before streaming
       await Future.delayed(const Duration(milliseconds: 300));
 
       if (_disposed || !mounted) {
+        debugPrint('[Insertion] Aborting after first delay — '
+            '_disposed=$_disposed mounted=$mounted');
         await controller.dispose();
         return;
       }
@@ -191,14 +195,24 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
         _initialized = true;
         _error = null;
       });
+      debugPrint('[Insertion] Controller assigned, _initialized=true');
 
       // Small extra delay before showing overlay to avoid grabbing a dark frame
       await Future.delayed(const Duration(milliseconds: 500));
+
+      debugPrint('[Insertion] After second delay — '
+          '_disposed=$_disposed mounted=$mounted');
+
       if (!_disposed && mounted) {
         setState(() => _overlayVisible = true);
+        debugPrint('[Insertion] _overlayVisible=true, starting countdown');
         _startCountdown();
+      } else {
+        debugPrint('[Insertion] ⚠️ SKIPPED overlay+countdown start — '
+            'this is the bug if you see this line');
       }
     } catch (e) {
+      debugPrint('[Insertion] ❌ _initCamera threw: $e');
       if (_disposed || !mounted) return;
 
       // Retry once automatically
@@ -213,10 +227,12 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
 
   void _startCountdown() {
     _countdownTimer?.cancel();
+    debugPrint('[Insertion] _startCountdown() called, starting from $_countdown');
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_disposed || !mounted) return;
       setState(() {
         _countdown--;
+        debugPrint('[Insertion] countdown tick: $_countdown');
         if (_countdown <= 0) {
           _countdownTimer?.cancel();
           if (!_confirmed) _onTimeout();

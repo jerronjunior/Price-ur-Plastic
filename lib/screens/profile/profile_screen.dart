@@ -464,7 +464,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   child: CircleAvatar(
                                     radius: 50,
                                     backgroundColor:
-                                        Colors.white.withOpacity(0.3),
+                                        Colors.white.withValues(alpha: 0.3),
                                     backgroundImage: profileImageProvider,
                                     child: _uploadingImage
                                         ? const CircularProgressIndicator(
@@ -752,7 +752,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   });
                 },
                 child: Container(
-                  color: Colors.black.withOpacity(0.3),
+                  color: Colors.black.withValues(alpha: 0.3),
                   child: GestureDetector(
                     onTap: () {},
                     child: NotificationPanel(

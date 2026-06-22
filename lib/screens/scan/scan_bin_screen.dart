@@ -154,8 +154,9 @@ class _ScanBinScreenState extends State<ScanBinScreen>
   }
 
   String get _statusText {
-    if (!_detector.passedShape && _detector.colorCells > 0)
+    if (!_detector.passedShape && _detector.colorCells > 0) {
       return 'Move closer — get the whole bin in frame';
+    }
     if (_detector.colorCells > 0 && _detector.darkSlotCells < 4) {
       return 'Show the bin slot / opening';
     }

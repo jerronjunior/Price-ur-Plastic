@@ -311,7 +311,7 @@ class _Podium extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF2E7D32).withOpacity(0.3),
+            color: const Color(0xFF2E7D32).withValues(alpha: 0.3),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -368,9 +368,9 @@ class _PodiumSlot extends StatelessWidget {
           height: rank == 1 ? 64 : 52,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white.withOpacity(0.15),
+            color: Colors.white.withValues(alpha: 0.15),
             border: Border.all(
-              color: isMe ? Colors.yellow : Colors.white.withOpacity(0.5),
+              color: isMe ? Colors.yellow : Colors.white.withValues(alpha: 0.5),
               width: isMe ? 3 : 1.5,
             ),
           ),
@@ -403,7 +403,7 @@ class _PodiumSlot extends StatelessWidget {
         Text(
           '${user.totalPoints} pts',
           style: TextStyle(
-            color: Colors.white.withOpacity(0.85),
+            color: Colors.white.withValues(alpha: 0.85),
             fontSize: 11,
             fontWeight: FontWeight.bold,
           ),
@@ -413,7 +413,7 @@ class _PodiumSlot extends StatelessWidget {
           width: rank == 1 ? 80 : 68,
           height: podiumHeight,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.85),
+            color: color.withValues(alpha: 0.85),
             borderRadius:
                 const BorderRadius.vertical(top: Radius.circular(8)),
           ),
@@ -448,7 +448,7 @@ class _MyRankBanner extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF2E7D32).withOpacity(0.08),
+        color: const Color(0xFF2E7D32).withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFF2E7D32), width: 1.5),
       ),
@@ -568,7 +568,7 @@ class _RankRowState extends State<_RankRow>
           margin: const EdgeInsets.only(bottom: 8),
           decoration: BoxDecoration(
             color: isMe
-                ? const Color(0xFF2E7D32).withOpacity(0.06)
+                ? const Color(0xFF2E7D32).withValues(alpha: 0.06)
                 : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: isMe
@@ -576,7 +576,7 @@ class _RankRowState extends State<_RankRow>
                 : Border.all(color: Colors.grey.shade100),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 6,
                 offset: const Offset(0, 2),
               ),
@@ -621,7 +621,7 @@ class _RankRowState extends State<_RankRow>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: isMe
-                        ? const Color(0xFF2E7D32).withOpacity(0.15)
+                        ? const Color(0xFF2E7D32).withValues(alpha: 0.15)
                         : Colors.grey.shade100,
                   ),
                   child: Center(

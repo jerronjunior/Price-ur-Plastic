@@ -405,8 +405,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   String get _statusText {
     if (!_cameraReady || _cam == null) return 'Starting camera…';
     if (_frameCount < 20)              return 'Calibrating…';
-    if (_tracker.hasLock && _stableFrames >= _minStable)
-                                       return 'Slot locked — insert bottle now';
+    if (_tracker.hasLock && _stableFrames >= _minStable) {
+      return 'Slot locked — insert bottle now';
+    }
     return 'Insert bottle into the bin slot';
   }
 
@@ -463,7 +464,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 radius: 1.0,
                 colors: [
                   Colors.transparent,
-                  Colors.black.withOpacity(0.35),
+                  Colors.black.withValues(alpha: 0.35),
                 ],
               ),
             ),
@@ -476,7 +477,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             animation: _flashCtrl,
             builder: (_, __) => Opacity(
               opacity: (1.0 - _flashCtrl.value).clamp(0.0, 1.0),
-              child: Container(color: Colors.white.withOpacity(0.45)),
+              child: Container(color: Colors.white.withValues(alpha: 0.45)),
             ),
           ),
 
@@ -540,18 +541,18 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 padding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.65),
+                  color: Colors.black.withValues(alpha: 0.65),
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
-                      color: Colors.white.withOpacity(0.15)),
+                      color: Colors.white.withValues(alpha: 0.15)),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Icon(Icons.center_focus_weak,
-                      color: Colors.white.withOpacity(0.70), size: 15),
+                      color: Colors.white.withValues(alpha: 0.70), size: 15),
                   const SizedBox(width: 7),
                   Text('Aim at the bin slot',
                       style: TextStyle(
-                          color: Colors.white.withOpacity(0.70),
+                          color: Colors.white.withValues(alpha: 0.70),
                           fontSize: 13,
                           fontWeight: FontWeight.w500)),
                 ]),
@@ -624,7 +625,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 20, vertical: 14),
-                  color: Colors.black.withOpacity(0.58),
+                  color: Colors.black.withValues(alpha: 0.58),
                   child: const Text(
                     'Arrow tip points at the bin slot.\nInsert the bottle — detected automatically.',
                     textAlign: TextAlign.center,
@@ -669,12 +670,12 @@ class _HudBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.60),
+        color: Colors.black.withValues(alpha: 0.60),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: highlight
-              ? accent.withOpacity(0.60)
-              : Colors.white.withOpacity(0.12),
+              ? accent.withValues(alpha: 0.60)
+              : Colors.white.withValues(alpha: 0.12),
           width: 1.2,
         ),
       ),
@@ -778,7 +779,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
 
     // ── 1. Soft outer glow (very subtle depth) ───────────────────────────
     canvas.drawPath(body, Paint()
-      ..color = _red.withOpacity(0.08 * o)
+      ..color = _red.withValues(alpha: 0.08 * o)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 24
       ..strokeCap = StrokeCap.round
@@ -786,14 +787,14 @@ class _ProfessionalArrowPainter extends CustomPainter {
 
     // ── 2. Dark core underside ────────────────────────────────────────────
     canvas.drawPath(body, Paint()
-      ..color = _redDark.withOpacity(0.55 * o)
+      ..color = _redDark.withValues(alpha: 0.55 * o)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 12
       ..strokeCap = StrokeCap.round);
 
     // ── 3. Main red body — 20% transparent ───────────────────────────────
     canvas.drawPath(body, Paint()
-      ..color = _red.withOpacity(0.75 * o)
+      ..color = _red.withValues(alpha: 0.75 * o)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 8
       ..strokeCap = StrokeCap.round);
@@ -810,7 +811,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
       hl.lineTo(pt.dx + n.dx * 2.5, pt.dy + n.dy * 2.5);
     }
     canvas.drawPath(hl, Paint()
-      ..color = _redLight.withOpacity(0.45 * o)
+      ..color = _redLight.withValues(alpha: 0.45 * o)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round);
@@ -826,8 +827,12 @@ class _ProfessionalArrowPainter extends CustomPainter {
           final double t = (i / 55) * bodyEnd;
           if (t < pStart || t > pEnd) continue;
           final Offset p = bez(t);
-          if (first) { pulse.moveTo(p.dx, p.dy); first = false; }
-          else        pulse.lineTo(p.dx, p.dy);
+          if (first) {
+            pulse.moveTo(p.dx, p.dy);
+            first = false;
+          } else {
+            pulse.lineTo(p.dx, p.dy);
+          }
         }
         if (!first) {
           canvas.drawPath(pulse, Paint()
@@ -879,7 +884,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..lineTo(rp.dx + dOff.dx, rp.dy + dOff.dy)
         ..lineTo(target.dx + dOff.dx, target.dy + dOff.dy)
         ..close(),
-      Paint()..color = _redDark.withOpacity(0.55 * o));
+      Paint()..color = _redDark.withValues(alpha: 0.55 * o));
 
     // Soft glow
     canvas.drawPath(
@@ -889,7 +894,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..lineTo(target.dx, target.dy)
         ..close(),
       Paint()
-        ..color = _red.withOpacity(0.14 * o)
+        ..color = _red.withValues(alpha: 0.14 * o)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
 
     // Main red face
@@ -899,7 +904,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..lineTo(rp.dx, rp.dy)
         ..lineTo(target.dx, target.dy)
         ..close(),
-      Paint()..color = _red.withOpacity(0.88 * o));
+      Paint()..color = _red.withValues(alpha: 0.88 * o));
 
     // Left highlight sliver
     canvas.drawPath(
@@ -908,7 +913,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..lineTo(target.dx, target.dy)
         ..lineTo(lp.dx + left.dx * 4, lp.dy + left.dy * 4)
         ..close(),
-      Paint()..color = _redLight.withOpacity(0.38 * o));
+      Paint()..color = _redLight.withValues(alpha: 0.38 * o));
   }
 
   void _drawReticle(Canvas canvas, double o) {
@@ -922,7 +927,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
     if (hasLock) {
       canvas.drawCircle(target, r + 10,
         Paint()
-          ..color = _red.withOpacity(0.10 * o)
+          ..color = _red.withValues(alpha: 0.10 * o)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 8
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
@@ -936,7 +941,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
         Rect.fromCircle(center: target, radius: r),
         sa, pi * 2 / 6 * 0.55, false,
         Paint()
-          ..color = _red.withOpacity((0.65 + pulse * 0.35) * o)
+          ..color = _red.withValues(alpha: (0.65 + pulse * 0.35) * o)
           ..style = PaintingStyle.stroke
           ..strokeWidth = hasLock ? 2.8 : 1.6
           ..strokeCap = StrokeCap.round);
@@ -946,20 +951,20 @@ class _ProfessionalArrowPainter extends CustomPainter {
     if (hasLock) {
       canvas.drawCircle(target, r * 0.48,
         Paint()
-          ..color = _red.withOpacity(0.28 * o)
+          ..color = _red.withValues(alpha: 0.28 * o)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.4);
     }
 
     // Center dot
     canvas.drawCircle(target, hasLock ? 4.5 : 2.8,
-      Paint()..color = _red.withOpacity(0.90 * o));
+      Paint()..color = _red.withValues(alpha: 0.90 * o));
 
     // Crosshair lines
     final double arm = hasLock ? 12.0 : 8.0;
     const double gap = 6.0;
     final Paint cp = Paint()
-      ..color = _red.withOpacity(0.75 * o)
+      ..color = _red.withValues(alpha: 0.75 * o)
       ..strokeWidth = hasLock ? 1.8 : 1.3
       ..strokeCap = StrokeCap.round;
     final double cx = target.dx, cy = target.dy;
@@ -974,7 +979,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
       final tp = TextPainter(
         text: TextSpan(text: lbl,
           style: TextStyle(
-            color: _red.withOpacity(0.88 * o),
+            color: _red.withValues(alpha: 0.88 * o),
             fontSize: isDetecting ? 11 : 10,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.6,

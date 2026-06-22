@@ -372,7 +372,7 @@ class _BinScannerState extends State<_BinScanner> {
             Container(
               width: 96, height: 96,
               decoration: BoxDecoration(
-                color: const Color(0xFF4CAF50).withOpacity(0.1),
+                color: const Color(0xFF4CAF50).withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.qr_code_scanner, size: 48,
@@ -586,7 +586,7 @@ class _BottleScannerState extends State<_BottleScanner> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFF4CAF50).withOpacity(0.1),
+                color: const Color(0xFF4CAF50).withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: const Color(0xFF4CAF50)),
               ),
@@ -607,7 +607,7 @@ class _BottleScannerState extends State<_BottleScanner> {
             Container(
               width: 96, height: 96,
               decoration: BoxDecoration(
-                color: const Color(0xFF2E7D32).withOpacity(0.1),
+                color: const Color(0xFF2E7D32).withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.qr_code_2, size: 52,
@@ -786,7 +786,7 @@ class _OverlayCustomPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final darkPaint = Paint()..color = Colors.black.withOpacity(0.55);
+    final darkPaint = Paint()..color = Colors.black.withValues(alpha: 0.55);
     final clearPaint = Paint()..blendMode = BlendMode.clear;
 
     // Draw dark overlay over entire screen
@@ -884,9 +884,9 @@ class _ScanLineState extends State<_ScanLine>
           width: widget.boxSize - 8,
           height: 2,
           decoration: BoxDecoration(
-            color: widget.color.withOpacity(0.8),
+            color: widget.color.withValues(alpha: 0.8),
             boxShadow: [
-              BoxShadow(color: widget.color.withOpacity(0.4),
+              BoxShadow(color: widget.color.withValues(alpha: 0.4),
                   blurRadius: 6, spreadRadius: 2),
             ],
           ),
