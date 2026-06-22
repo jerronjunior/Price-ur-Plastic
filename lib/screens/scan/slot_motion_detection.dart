@@ -76,7 +76,9 @@ class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
         widget.onReadyChanged(ready);
       },
       onMotionDetected: () {
-        if (!_disposed && !widget.disabled) {
+        // Same race as _disposed vs mounted — check both, since the camera
+        // stream callback isn't synchronized with Flutter's widget lifecycle.
+        if (!_disposed && mounted && !widget.disabled) {
           widget.onMotionDetected();
         }
       },
@@ -105,8 +107,12 @@ class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
   @override
   void dispose() {
     _disposed = true;
-    _detector?.dispose();
 
+    // ── Order matters — stop the stream BEFORE disposing the detector ────
+    // If the detector is disposed first, a frame already "in flight" from
+    // the native camera stream (stopImageStream() isn't instantaneous) can
+    // still call processImage() on it. processImage() guards against this
+    // internally, but stopping the source first is the correct order.
     if (_streamStarted && widget.controller.value.isInitialized) {
       try {
         if (widget.controller.value.isStreamingImages) {
@@ -117,6 +123,7 @@ class _SlotMotionOverlayState extends State<SlotMotionOverlay> {
       }
     }
 
+    _detector?.dispose();
     super.dispose();
   }
 

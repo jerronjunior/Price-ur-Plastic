@@ -9,7 +9,6 @@ import '../../providers/auth_provider.dart';
 import '../../models/recycled_bottle_model.dart';
 import '../../services/firestore_service.dart';
 import 'slot_motion_detection.dart';
-import 'slot_motion_detection_impl.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import '../../services/training_data_service.dart';
 
@@ -269,7 +268,11 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   }
 
   void _onInsertDetected() {
-    if (_confirmed || _saving || _disposed) return;
+    // Camera image streams fire from native code asynchronously — a frame
+    // can call through to here during a navigation transition, after
+    // `mounted` is already false but before the custom _disposed flag
+    // (only set inside dispose()) has caught up. Check BOTH.
+    if (_confirmed || _saving || _disposed || !mounted) return;
     _countdownTimer?.cancel();
     setState(() => _confirmed = true);
     if (widget.autoSaveBottleRecord) {
@@ -294,7 +297,7 @@ class _CameraConfirmScreenState extends State<CameraConfirmScreen>
   }
 
   Future<void> _saveAndComplete() async {
-    if (_disposed) return;
+    if (_disposed || !mounted) return;
     setState(() => _saving = true);
 
     final userId = context.read<AuthProvider>().userId;
