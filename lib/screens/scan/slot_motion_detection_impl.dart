@@ -4,8 +4,6 @@ import 'package:camera/camera.dart';
 enum _PassState {
   idle,
   entering,
-  inside,
-  exiting,
 }
 
 /// Metrics for a single completed detection attempt — sent for EVERY
@@ -92,17 +90,17 @@ class SlotMotionDetectionImpl {
   bool _disposed = false;
   bool _readyNotified = false;
 
-  static const int _warmupFrames = 8;
+  static const int _warmupFrames = 15; // increased to prevent panning motion from triggering on first lock
   static const int _sampleStep = 2;
 
   // Filter 2: min changed fraction in zone
-  static const double _defaultMinChangeFraction = 0.10; // lowered: calibrated from 35 real insertions (min observed 0.139)
+  static const double _defaultMinChangeFraction = 0.08; // slightly lowered from 0.10, but not too low to prevent false triggers
   // Filter 3: downward dominance score threshold
-  static const double _defaultMinDownwardScore = 0.32; // lowered: 35-video calibration showed min down-signal of 0.364
+  static const double _defaultMinDownwardScore = 0.28; // balanced to require clear downward motion
   // Filter 5: cooldown after each count
-  static const int _cooldownMs = 2000; // faster cooldown for open-top bins
+  static const int _cooldownMs = 1200; // fast cooldown to allow rapid bottle insertions, but not instantaneous
   // Pixel diff threshold for per-pixel motion map
-  static const int _pixelDiffThreshold = 18; // lowered: wire mesh reduces pixel diff
+  static const int _pixelDiffThreshold = 15; // balanced for sensitivity without too much noise
   static const int _bands = 20;
 
   // ── Anti camera-shake guard ────────────────────────────────────────────────
@@ -123,13 +121,14 @@ class SlotMotionDetectionImpl {
   //   False-trigger clip  — avg corner motion: 0.363   ← clearly higher
   //
   static const double _cornerFrac = 0.15; // each corner patch = 15% of width/height
-  static const int _cornerPixelDiffThreshold = 18;
-  static const double _defaultMaxCornerMotionAvg = 0.32; // reject if background moved this much
+  static const int _cornerPixelDiffThreshold = 15; // synced with pixelDiffThreshold
+  static const double _defaultMaxCornerMotionAvg = 0.20; // strict anti-shake to prevent counts when camera is moving to point at slot
 
   int _frameCount = 0;
   _PassState _state = _PassState.idle;
   DateTime? _lastCount;
   final List<double> _rowHistory = List<double>.filled(_bands, 0.0);
+  final List<double> _eventRelPosHistory = [];
 
   double _changedFraction = 0;
   double _downwardScore = 0;
@@ -173,6 +172,7 @@ class SlotMotionDetectionImpl {
         _previousSample = sample;
         _state = _PassState.idle;
         _resetRows();
+        _eventRelPosHistory.clear();
         _notifyReady(false);
         return;
       }
@@ -208,12 +208,9 @@ class SlotMotionDetectionImpl {
 
       // Filter 2: motion must be significant enough in slot zone.
       _changedFraction = totalChanged / zoneLen;
-      if (_state != _PassState.idle && _changedFraction > _peakChangeFraction) {
-        _peakChangeFraction = _changedFraction;
-      }
 
       // ── Corner motion (anti-shake) — accumulate only while an attempt
-      // is in progress (state != idle). Reset happens at idle→entering below.
+      // is in progress (state != idle).
       if (_state != _PassState.idle &&
           cornerSample != null &&
           _previousCornerSample != null &&
@@ -232,56 +229,17 @@ class SlotMotionDetectionImpl {
       }
       _previousCornerSample = cornerSample;
 
-      if (_changedFraction < _minChangeFraction) {
-        final shouldCount = _state == _PassState.inside || _state == _PassState.exiting;
-        _state = _PassState.idle;
-        _resetRows();
-        _notifyReady(true);
-
-        if (shouldCount) {
-          _lastCount = DateTime.now();
-          _notifyReady(false);
-
-          // Anti-shake gate: if the background corners moved as much as the
-          // bin region did, the whole camera was shaken/moved — not a real
-          // bottle insertion. Suppress the count but keep the cooldown,
-          // so a single mis-trigger doesn't immediately retry.
-          final avgCornerMotion =
-              _cornerMotionCount > 0 ? _cornerMotionSum / _cornerMotionCount : 0.0;
-          final wasShakeRejected = avgCornerMotion > _maxCornerMotionAvg;
-          _cornerMotionSum = 0;
-          _cornerMotionCount = 0;
-
-          // Report this attempt for continuous data collection — sent for
-          // BOTH outcomes so the calibration can keep improving from real
-          // usage instead of staying frozen at the 35-video snapshot.
-          final durationMs = _attemptStart != null
-              ? DateTime.now().difference(_attemptStart!).inMilliseconds
-              : 0;
-          _onAttemptComplete?.call(InsertionAttemptResult(
-            counted:            !wasShakeRejected,
-            rejectedReason:     wasShakeRejected ? 'cameraShake' : null,
-            peakChangeFraction: _peakChangeFraction,
-            peakDownwardScore:  _peakDownwardScore,
-            avgCornerMotion:    avgCornerMotion,
-            durationMs:         durationMs,
-          ));
-
-          if (!wasShakeRejected) {
-            _onMotionDetected();
-          }
-
-          _previousSample = sample;
-          return;
-        }
-
-        _previousSample = sample;
-        return;
+      // Calculate centroid and vertical relPos for current frame
+      double weightedBand = 0;
+      double weightSum = 0;
+      for (var b = 0; b < _bands; b++) {
+        weightedBand += b * bandMotion[b];
+        weightSum += bandMotion[b];
       }
+      final centroid = weightSum > 0 ? weightedBand / weightSum : 0;
+      final relPos = centroid / _bands;
 
-      _notifyReady(false);
-
-      // Smooth band motion and compute direction bias.
+      // Compute downward score (occupancy in lower half of the slot)
       final bandMax = bandMotion.reduce((a, b) => a > b ? a : b);
       if (bandMax > 0) {
         for (var b = 0; b < _bands; b++) {
@@ -300,52 +258,95 @@ class SlotMotionDetectionImpl {
 
       final total = upperSum + lowerSum;
       _downwardScore = total > 0 ? lowerSum / total : 0;
-      if (_state != _PassState.idle && _downwardScore > _peakDownwardScore) {
-        _peakDownwardScore = _downwardScore;
-      }
 
-      // Filter 3: ignore sideways/upward jitter.
-      if (_downwardScore < _minDownwardScore) {
+      // If changed fraction drops below threshold, the motion event has ended/stopped
+      if (_changedFraction < _minChangeFraction) {
+        if (_state != _PassState.idle) {
+          // Motion event just ended. Let's evaluate it!
+          _lastCount = DateTime.now();
+          _notifyReady(false);
+
+          final avgCornerMotion =
+              _cornerMotionCount > 0 ? _cornerMotionSum / _cornerMotionCount : 0.0;
+          final wasShakeRejected = avgCornerMotion > _maxCornerMotionAvg;
+
+          // Check if direction and occupancy parameters indicate a valid downward insertion
+          bool isDownward = false;
+          if (_eventRelPosHistory.isNotEmpty) {
+            final mid = _eventRelPosHistory.length ~/ 2;
+            double firstHalfSum = 0;
+            double secondHalfSum = 0;
+            for (int i = 0; i < mid; i++) {
+              firstHalfSum += _eventRelPosHistory[i];
+            }
+            for (int i = mid; i < _eventRelPosHistory.length; i++) {
+              secondHalfSum += _eventRelPosHistory[i];
+            }
+            final firstHalfAvg = mid > 0 ? firstHalfSum / mid : _eventRelPosHistory.first;
+            final secondHalfAvg = (_eventRelPosHistory.length - mid) > 0
+                ? secondHalfSum / (_eventRelPosHistory.length - mid)
+                : _eventRelPosHistory.last;
+            
+            // Downward trend: centroid moved downwards, or ended/reached deep in lower half,
+            // or we have a high peak downward score.
+            isDownward = (secondHalfAvg - firstHalfAvg) > -0.05 ||
+                _eventRelPosHistory.last > 0.50 ||
+                _peakDownwardScore >= _minDownwardScore;
+          }
+
+          final isCounted = isDownward && !wasShakeRejected;
+
+          final durationMs = _attemptStart != null
+              ? DateTime.now().difference(_attemptStart!).inMilliseconds
+              : 0;
+
+          _onAttemptComplete?.call(InsertionAttemptResult(
+            counted:            isCounted,
+            rejectedReason:     wasShakeRejected
+                ? 'cameraShake'
+                : (!isDownward ? 'lowConfidence' : null),
+            peakChangeFraction: _peakChangeFraction,
+            peakDownwardScore:  _peakDownwardScore,
+            avgCornerMotion:    avgCornerMotion,
+            durationMs:         durationMs,
+          ));
+
+          if (isCounted) {
+            _onMotionDetected();
+          }
+
+          _state = _PassState.idle;
+          _resetRows();
+          _eventRelPosHistory.clear();
+          _notifyReady(true);
+        }
+
         _previousSample = sample;
         return;
       }
 
-      // Filter 4: entry -> inside -> exiting progression.
-      double weightedBand = 0;
-      double weightSum = 0;
-      for (var b = 0; b < _bands; b++) {
-        weightedBand += b * bandMotion[b];
-        weightSum += bandMotion[b];
-      }
+      // Motion is active (above threshold)!
+      _notifyReady(false);
 
-      final centroid = weightSum > 0 ? weightedBand / weightSum : 0;
-      final relPos = centroid / _bands;
-
-      switch (_state) {
-        case _PassState.idle:
-          if (relPos < 0.55 && _changedFraction > _minChangeFraction * 0.8) { // wider zone for open-top bins
-            _state = _PassState.entering;
-            // Fresh attempt — clear any stale tracking from a prior attempt.
-            _cornerMotionSum = 0;
-            _cornerMotionCount = 0;
-            _peakChangeFraction = _changedFraction;
-            _peakDownwardScore  = 0;
-            _attemptStart = DateTime.now();
-          }
-          break;
-        case _PassState.entering:
-          if (relPos >= 0.30) {
-            _state = _PassState.inside;
-          }
-          break;
-        case _PassState.inside:
-          if (relPos > 0.60) {
-            _state = _PassState.exiting;
-          }
-          break;
-        case _PassState.exiting:
-          // Count on the next low-motion frame.
-          break;
+      if (_state == _PassState.idle) {
+        // Start of a new motion event
+        _state = _PassState.entering;
+        _cornerMotionSum = 0;
+        _cornerMotionCount = 0;
+        _peakChangeFraction = _changedFraction;
+        _peakDownwardScore = _downwardScore;
+        _attemptStart = DateTime.now();
+        _eventRelPosHistory.clear();
+        _eventRelPosHistory.add(relPos);
+      } else {
+        // Continuation of current motion event
+        _eventRelPosHistory.add(relPos);
+        if (_changedFraction > _peakChangeFraction) {
+          _peakChangeFraction = _changedFraction;
+        }
+        if (_downwardScore > _peakDownwardScore) {
+          _peakDownwardScore = _downwardScore;
+        }
       }
 
       _previousSample = sample;

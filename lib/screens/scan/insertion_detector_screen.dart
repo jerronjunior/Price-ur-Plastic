@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -119,10 +120,10 @@ class _SlotTracker {
   }
 
   ({double left, double top, double width, double height}) get cameraRegion => (
-    left:   (slotNormX - 0.18).clamp(0.0, 0.80),
-    top:    (slotNormY - 0.15).clamp(0.0, 0.80),
-    width:  0.36,
-    height: 0.30,
+    left:   (slotNormX - 0.25).clamp(0.0, 0.50),
+    top:    (slotNormY - 0.20).clamp(0.0, 0.60),
+    width:  0.50,
+    height: 0.40,
   );
 
   double _hypot(double a, double b) => sqrt(a * a + b * b);
@@ -192,7 +193,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   CameraDescription? _camDesc;
   bool _cameraReady     = false;
   bool _processingFrame = false;
-  int  _frameCount      = 0;
   bool _detected        = false;
 
   // ── Detection ──────────────────────────────────────────────────────────────
@@ -280,9 +280,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       (c) => c.lensDirection == CameraLensDirection.back,
       orElse: () => cams.first,
     );
+    final imageFormat = Platform.isIOS
+        ? ImageFormatGroup.bgra8888
+        : ImageFormatGroup.yuv420;
     _cam = CameraController(_camDesc!, ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420);
+        imageFormatGroup: imageFormat);
     try {
       await _cam!.initialize();
       try {
@@ -398,8 +401,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   // ── Frame processing ────────────────────────────────────────────────────────
   void _onFrame(CameraImage image) {
-    _frameCount++;
-    if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
+    if (_processingFrame || _detected) return;
     _processingFrame = true;
     try {
       _tracker.update(image);
@@ -419,7 +421,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         // No lock yet — make sure a default detector is running so the
         // user can still score while pointing roughly at the slot.
         _motion ??= _buildMotion(
-          left: 0.30, top: 0.18, width: 0.40, height: 0.34,
+          left: 0.20, top: 0.10, width: 0.60, height: 0.50,
         );
       }
       _motion?.processImage(image);
