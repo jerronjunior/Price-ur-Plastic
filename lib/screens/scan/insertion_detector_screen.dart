@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 
 import 'slot_motion_detection_impl.dart';
 import '../../services/training_data_service.dart';
+import '../../services/bottle_counting_service.dart';
+import 'bottle_deposit_tracker.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _SlotTracker  v3 — pixel-level centroid
@@ -197,7 +199,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   // ── Detection ──────────────────────────────────────────────────────────────
   final _SlotTracker       _tracker = _SlotTracker();
-  SlotMotionDetectionImpl? _motion;
+  final BottleCountingService _bottleService = BottleCountingService();
+  late final BottleDepositTracker _depositTracker;
+  bool _isProcessingTflite = false;
   bool _motionReady   = false;
   bool _streamStarted = false;
   bool _disposed      = false; // guards async camera-frame callbacks
@@ -236,8 +240,18 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _badgeCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 450));
 
+    _depositTracker = BottleDepositTracker(onDeposited: _onBottleDetected);
+
     _startTimeout();
     _initCamera();
+    _initBottleService();
+  }
+
+  Future<void> _initBottleService() async {
+    final success = await _bottleService.initialize();
+    if (success && mounted && !_disposed) {
+      setState(() => _motionReady = true);
+    }
   }
 
   @override
@@ -261,7 +275,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _arCtrl.dispose();
     _flashCtrl.dispose();
     _badgeCtrl.dispose();
-    _motion?.dispose();
+    _bottleService.dispose();
     _cam?.dispose();
     super.dispose();
   }
@@ -316,39 +330,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   void _rebuildMotion() {
     final r = _tracker.cameraRegion;
-    _motion?.dispose();
-    _motion = _buildMotion(
-      left: r.left, top: r.top, width: r.width, height: r.height,
-    );
-  }
-
-  // Single place that constructs the calibrated detector — used both for
-  // the tracker-refined region and the default no-lock region. This is
-  // where the 35-video calibration actually reaches the live app.
-  SlotMotionDetectionImpl _buildMotion({
-    required double left,
-    required double top,
-    required double width,
-    required double height,
-  }) {
-    return SlotMotionDetectionImpl(
-      regionLeft:      left,
-      regionTop:       top,
-      regionWidth:     width,
-      regionHeight:    height,
-      onReadyChanged:  (v) { if (!_disposed && mounted) setState(() => _motionReady = v); },
-      onMotionDetected: _onBottleDetected,
-      // Report every attempt (counted or rejected) for ongoing self-training.
-      onAttemptComplete: (result) {
-        TrainingDataService().onInsertionAttempt(
-          counted:            result.counted,
-          rejectedReason:     result.rejectedReason,
-          peakChangeFraction: result.peakChangeFraction,
-          peakDownwardScore:  result.peakDownwardScore,
-          avgCornerMotion:    result.avgCornerMotion,
-          durationMs:         result.durationMs,
-        );
-      },
+    _depositTracker.updateSlotRegion(
+      left: r.left,
+      top: r.top,
+      width: r.width,
+      height: r.height,
     );
   }
 
@@ -419,25 +405,30 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     try {
       _tracker.update(image);
 
-      // Slot tracker drives the AR arrow + refines the detection region,
-      // but detection must NOT depend on it locking — small-hole bins are
-      // hard to track, and waiting for a lock was why insertions were
-      // never counted. Ensure _motion always exists; refine its region
-      // when the tracker has a good lock, otherwise use a default center
-      // region covering the typical bin-slot area.
+      // Slot tracker drives the AR arrow + refines the detection region
       if (_tracker.hasLock) {
         _stableFrames++;
         if (_stableFrames == _minStable) _rebuildMotion();
         if (_stableFrames % 15 == 0)     _rebuildMotion();
       } else {
         _stableFrames = 0;
-        // No lock yet — make sure a default detector is running so the
-        // user can still score while pointing roughly at the slot.
-        _motion ??= _buildMotion(
+        // No lock yet — use default center region
+        _depositTracker.updateSlotRegion(
           left: 0.30, top: 0.18, width: 0.40, height: 0.34,
         );
       }
-      _motion?.processImage(image);
+      
+      if (!_isProcessingTflite && _motionReady) {
+        _isProcessingTflite = true;
+        _bottleService.detectBottlesInFrame(image).then((detections) {
+          if (_disposed) return;
+          _depositTracker.processDetections(detections);
+          _isProcessingTflite = false;
+        }).catchError((_) {
+          _isProcessingTflite = false;
+        });
+      }
+
       if (!_disposed && mounted) setState(() {});
     } finally {
       _processingFrame = false;
