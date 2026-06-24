@@ -103,6 +103,7 @@ class BottleCountingService {
 
   Interpreter? _interpreter;
   bool _isInitialized = false;
+  bool get isInitialized => _isInitialized;
 
   // For tracking consecutive detections
   List<DetectedBottle> _lastDetections = [];

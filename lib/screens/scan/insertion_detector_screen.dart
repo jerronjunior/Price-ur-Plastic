@@ -87,7 +87,7 @@ class _SlotTracker {
 
     if (_locked) {
       if (_hypot(rawX - _lockX, rawY - _lockY) > _unlockDist) {
-        hasLock = true; return;
+        return; // centroid jumped — keep existing lock state, don't re-affirm
       }
     }
 
@@ -198,8 +198,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _detected        = false;
 
   // ── Detection ──────────────────────────────────────────────────────────────
-  final _SlotTracker       _tracker = _SlotTracker();
-  final BottleCountingService _bottleService = BottleCountingService();
+  final _SlotTracker           _tracker = _SlotTracker();
+  SlotMotionDetectionImpl?     _motion;  // primary detection — motion-based
+  final BottleCountingService  _bottleService = BottleCountingService();
   late final BottleDepositTracker _depositTracker;
   bool _isProcessingTflite = false;
   bool _motionReady   = false;
@@ -207,6 +208,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _disposed      = false; // guards async camera-frame callbacks
   int  _stableFrames  = 0;
   static const int _minStable = 8;
+
+  // Stored from the last build so callbacks outside build don't call MediaQuery
+  Size _screenSize = Size.zero;
 
   // ── AR state ───────────────────────────────────────────────────────────────
   int _sessionCount = 0;
@@ -275,15 +279,24 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _arCtrl.dispose();
     _flashCtrl.dispose();
     _badgeCtrl.dispose();
+    _motion?.dispose();
     _bottleService.dispose();
     _cam?.dispose();
     super.dispose();
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.inactive) _cam?.dispose();
-    if (s == AppLifecycleState.resumed)  _initCamera();
+  void didChangeAppLifecycleState(AppLifecycleState s) async {
+    if (s == AppLifecycleState.inactive) {
+      final old = _cam;
+      _cam = null;
+      _streamStarted = false;
+      if (old != null) {
+        try { if (old.value.isStreamingImages) await old.stopImageStream(); } catch (_) {}
+        try { await old.dispose(); } catch (_) {}
+      }
+    }
+    if (s == AppLifecycleState.resumed && _cam == null) _initCamera();
   }
 
   void _startTimeout() {
@@ -329,12 +342,32 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   void _rebuildMotion() {
+    _motion?.dispose();
     final r = _tracker.cameraRegion;
+    _motion = SlotMotionDetectionImpl(
+      onMotionDetected: _onBottleDetected,
+      onReadyChanged: (ready) {
+        if (!_disposed && mounted) setState(() => _motionReady = ready);
+      },
+      regionLeft: r.left,
+      regionTop: r.top,
+      regionWidth: r.width,
+      regionHeight: r.height,
+      onAttemptComplete: _onAttemptComplete,
+    );
     _depositTracker.updateSlotRegion(
-      left: r.left,
-      top: r.top,
-      width: r.width,
-      height: r.height,
+      left: r.left, top: r.top, width: r.width, height: r.height,
+    );
+  }
+
+  void _onAttemptComplete(InsertionAttemptResult result) {
+    TrainingDataService().onInsertionAttempt(
+      counted:            result.counted,
+      rejectedReason:     result.rejectedReason,
+      peakChangeFraction: result.peakChangeFraction,
+      peakDownwardScore:  result.peakDownwardScore,
+      avgCornerMotion:    result.avgCornerMotion,
+      durationMs:         result.durationMs,
     );
   }
 
@@ -368,7 +401,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _badgeCtrl.forward(from: 0);
 
     // 3. Spawn AR floating score at slot position
-    final sz     = MediaQuery.of(context).size;
+    // Use stored _screenSize — calling MediaQuery.of(context) outside build
+    // registers a persistent InheritedWidget dependency that causes
+    // the '_dependents.isEmpty' assertion when the widget is removed.
+    final sz = _screenSize.isEmpty ? const Size(400, 800) : _screenSize;
     final origin = _tracker.toScreenOffset(sz, _sensorOrientation);
     _spawnScore(origin);
 
@@ -408,17 +444,20 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       // Slot tracker drives the AR arrow + refines the detection region
       if (_tracker.hasLock) {
         _stableFrames++;
-        if (_stableFrames == _minStable) _rebuildMotion();
-        if (_stableFrames % 15 == 0)     _rebuildMotion();
+        if (_stableFrames == _minStable) {
+          _rebuildMotion();
+        } else if (_stableFrames % 15 == 0) {
+          _rebuildMotion();
+        }
       } else {
         _stableFrames = 0;
-        // No lock yet — use default center region
-        _depositTracker.updateSlotRegion(
-          left: 0.30, top: 0.18, width: 0.40, height: 0.34,
-        );
       }
-      
-      if (!_isProcessingTflite && _motionReady) {
+
+      // ── Primary: motion-based detection (always runs, no external deps) ──
+      _motion?.processImage(image);
+
+      // ── Secondary: TFLite object detection (optional, runs if model loaded)
+      if (!_isProcessingTflite && _bottleService.isInitialized) {
         _isProcessingTflite = true;
         _bottleService.detectBottlesInFrame(image).then((detections) {
           if (_disposed) return;
@@ -478,6 +517,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     return LayoutBuilder(builder: (_, box) {
       final Size   sz     = Size(box.maxWidth, box.maxHeight);
+      // Keep a fresh copy so callbacks outside build can use it safely.
+      _screenSize = sz;
       final Offset target = _tracker.toScreenOffset(sz, _sensorOrientation);
       final Offset pivot  = Offset(sz.width * 0.50, sz.height * 0.72);
 
