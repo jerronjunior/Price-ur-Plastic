@@ -4,10 +4,10 @@ import '../../services/bottle_counting_service.dart';
 
 enum DepositState {
   idle,
-  detected,    // Bottle detected
-  approaching, // Bottle approaching bin
-  entering,    // Bottle entering bin
-  deposited    // Bottle deposited successfully
+  detected,    // Bottle detected and initially tracked
+  approaching, // Bottle moving downwards towards bin
+  entering,    // Bottle intersecting bin opening
+  deposited    // Bottle successfully deposited
 }
 
 class BottleDepositTracker {
@@ -19,9 +19,11 @@ class BottleDepositTracker {
   double slotWidth = 0.0;
   double slotHeight = 0.0;
   
-  double _lastBottleCenterY = 0.0;
+  double _initialY = 0.0;
+  double _deepestY = 0.0; // Y increases downwards (0 top, 1 bottom)
   int _missingFrames = 0;
   int _intersectingFrames = 0;
+  bool _didIntersect = false;
   
   final VoidCallback onDeposited;
   
@@ -29,10 +31,11 @@ class BottleDepositTracker {
 
   void reset() {
     state = DepositState.idle;
-    _lastBottleCenterY = 0.0;
+    _initialY = 0.0;
+    _deepestY = 0.0;
     _missingFrames = 0;
     _intersectingFrames = 0;
-    debugPrint("BottleDepositTracker: Resetting state to idle.");
+    _didIntersect = false;
   }
 
   void updateSlotRegion({required double left, required double top, required double width, required double height}) {
@@ -52,35 +55,35 @@ class BottleDepositTracker {
     switch (state) {
       case DepositState.idle:
         if (bestBottle != null) {
-          // To start a deposit sequence, the bottle must not be completely inside the slot already
-          // This prevents false triggers immediately on page load when a bottle happens to be in frame.
-          if (!_isIntersecting(bestBottle) && bestBottle.centerY < slotTop + (slotHeight / 2)) {
+          // To start a sequence, the bottle must be held relatively high
+          // and not already intersecting the slot target.
+          if (!_isIntersecting(bestBottle) && bestBottle.centerY < slotTop + (slotHeight * 0.75)) {
             state = DepositState.detected;
-            _lastBottleCenterY = bestBottle.centerY;
+            _initialY = bestBottle.centerY;
+            _deepestY = bestBottle.centerY;
             _missingFrames = 0;
             _intersectingFrames = 0;
-            debugPrint("STAGE 1: Bottle detected outside bin (Y: ${bestBottle.centerY.toStringAsFixed(2)})");
+            _didIntersect = false;
+            debugPrint("DEBUG LOG: Bottle detected");
+            debugPrint("DEBUG LOG: Bottle tracked");
           }
         }
         break;
 
       case DepositState.detected:
         if (bestBottle != null) {
-          // Check for deliberate downward movement (at least 5% of screen)
-          if (bestBottle.centerY > _lastBottleCenterY + 0.05) {
-            state = DepositState.approaching;
-            debugPrint("STAGE 2: Bottle approaching bin (Y: ${bestBottle.centerY.toStringAsFixed(2)})");
-          }
-          
-          if (bestBottle.centerY > _lastBottleCenterY) {
-            _lastBottleCenterY = bestBottle.centerY;
-          }
-          
+          _deepestY = max(_deepestY, bestBottle.centerY);
           _missingFrames = 0;
-          if (_isIntersecting(bestBottle)) {
-            // If it abruptly intersects without enough approaching frames
-            state = DepositState.entering;
-            debugPrint("STAGE 3: Bottle entering bin directly");
+          
+          // Require at least 5% downward movement from the *initial* Y coordinate
+          if (_deepestY > _initialY + 0.05) {
+            state = DepositState.approaching;
+            debugPrint("DEBUG LOG: Bottle approaching bin");
+          }
+          
+          // If user pulls the bottle back up significantly, reset tracking
+          if (bestBottle.centerY < _deepestY - 0.15) {
+            reset();
           }
         } else {
           _missingFrames++;
@@ -90,44 +93,57 @@ class BottleDepositTracker {
 
       case DepositState.approaching:
         if (bestBottle != null) {
-          if (bestBottle.centerY > _lastBottleCenterY) {
-            _lastBottleCenterY = bestBottle.centerY;
-          }
+          _deepestY = max(_deepestY, bestBottle.centerY);
           _missingFrames = 0;
           
-          // Check if intersecting with slot
           if (_isIntersecting(bestBottle)) {
+            _didIntersect = true;
+          }
+          
+          // Once it intersects the top of the slot, it's entering
+          if (_didIntersect && bestBottle.centerY >= slotTop) {
             state = DepositState.entering;
-            debugPrint("STAGE 3: Bottle entering bin");
+            debugPrint("DEBUG LOG: Bottle entering bin");
+          }
+          
+          if (bestBottle.centerY < _deepestY - 0.15) {
+             reset();
           }
         } else {
-          _missingFrames++;
-          if (_missingFrames > 10) reset();
+          // If it disappears while approaching, maybe dropped fast
+          if (_didIntersect) {
+             state = DepositState.entering;
+             debugPrint("DEBUG LOG: Bottle entering bin");
+             _missingFrames = 1;
+          } else {
+             _missingFrames++;
+             if (_missingFrames > 8) reset();
+          }
         }
         break;
 
       case DepositState.entering:
         if (bestBottle != null) {
-          if (bestBottle.centerY > _lastBottleCenterY) {
-            _lastBottleCenterY = bestBottle.centerY;
-          }
+          _deepestY = max(_deepestY, bestBottle.centerY);
           _missingFrames = 0;
           
           if (_isIntersecting(bestBottle)) {
             _intersectingFrames++;
           }
+          
+          if (bestBottle.centerY < _deepestY - 0.15) {
+             reset();
+          }
         } else {
           _missingFrames++;
-          // If the bottle disappears after entering and was seen intersecting for at least a couple of frames
+          // Wait a few frames to confirm the bottle has disappeared into the bin
           if (_missingFrames > 3) {
-            if (_intersectingFrames > 0) {
-              state = DepositState.deposited;
-              debugPrint("STAGE 4: Bottle deposited successfully (lost inside bin)");
-              onDeposited();
-              debugPrint("STAGE 5: Counter updated");
-            } else {
-              debugPrint("Tracker: Bottle lost but didn't intersect enough. Resetting.");
-            }
+            state = DepositState.deposited;
+            debugPrint("DEBUG LOG: Bottle deposited");
+            onDeposited();
+            // onDeposited triggers _onBottleDetected in InsertionDetectorScreen,
+            // which increments the session count and awards points.
+            debugPrint("DEBUG LOG: Points awarded");
             reset();
           }
         }
@@ -140,7 +156,6 @@ class BottleDepositTracker {
   }
 
   bool _isIntersecting(DetectedBottle bottle) {
-    // Check intersection between bottle.rect and slot bounding box
     final bx1 = bottle.rect[0];
     final by1 = bottle.rect[1];
     final bx2 = bottle.rect[2];
@@ -151,7 +166,6 @@ class BottleDepositTracker {
     final sx2 = slotLeft + slotWidth;
     final sy2 = slotTop + slotHeight;
 
-    // AABB intersection
     return !(bx2 < sx1 || bx1 > sx2 || by2 < sy1 || by1 > sy2);
   }
 }
