@@ -2,6 +2,81 @@ import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter/foundation.dart';
+
+class _ImageProcessData {
+  final Uint8List yPlane;
+  final Uint8List uPlane;
+  final Uint8List vPlane;
+  final int width;
+  final int height;
+  final int yRowStride;
+  final int uvRowStride;
+  final int uvPixelStride;
+
+  _ImageProcessData({
+    required this.yPlane,
+    required this.uPlane,
+    required this.vPlane,
+    required this.width,
+    required this.height,
+    required this.yRowStride,
+    required this.uvRowStride,
+    required this.uvPixelStride,
+  });
+}
+
+List<List<List<List<int>>>>? _preprocessImageInIsolate(_ImageProcessData data) {
+  try {
+    final width = data.width;
+    final height = data.height;
+    final yPlane = data.yPlane;
+    final uPlane = data.uPlane;
+    final vPlane = data.vPlane;
+    final uvPixelStride = data.uvPixelStride;
+
+    final rgbImage = img.Image(width: width, height: height);
+
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int uvx = (x / 2).floor();
+        final int uvy = (y / 2).floor();
+        final int uvPixelIndex = uvy * data.uvRowStride + uvx * uvPixelStride;
+
+        final int yIndex = y * data.yRowStride + x;
+        final int yValue = yPlane[yIndex];
+        final int uValue = uPlane[uvPixelIndex];
+        final int vValue = vPlane[uvPixelIndex];
+
+        final int r = (yValue + 1.402 * (vValue - 128)).clamp(0, 255).toInt();
+        final int g = (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128)).clamp(0, 255).toInt();
+        final int b = (yValue + 1.772 * (uValue - 128)).clamp(0, 255).toInt();
+
+        rgbImage.setPixelRgba(x, y, r, g, b, 255);
+      }
+    }
+
+    final resized = img.copyResize(
+      rgbImage,
+      width: 300,
+      height: 300,
+      interpolation: img.Interpolation.linear,
+    );
+
+    final List<List<List<List<int>>>> tensorData = List.generate(1, (_) {
+      return List.generate(300, (y) {
+        return List.generate(300, (x) {
+          final pixel = resized.getPixelSafe(x, y);
+          return [pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt()];
+        });
+      });
+    });
+
+    return tensorData;
+  } catch (e) {
+    return null;
+  }
+}
 
 /// Represents a detected bottle with its bounding box and confidence.
 class DetectedBottle {
@@ -54,8 +129,21 @@ class BottleCountingService {
     if (!_isInitialized || _interpreter == null) return [];
 
     try {
-      // Convert camera image to input format for tflite
-      final inputImage = _preprocessImage(image);
+      if (image.planes.length < 3) return [];
+      
+      final data = _ImageProcessData(
+        yPlane: image.planes[0].bytes,
+        uPlane: image.planes[1].bytes,
+        vPlane: image.planes[2].bytes,
+        width: image.width,
+        height: image.height,
+        yRowStride: image.planes[0].bytesPerRow,
+        uvRowStride: image.planes[1].bytesPerRow,
+        uvPixelStride: image.planes[1].bytesPerPixel ?? 1,
+      );
+
+      // Convert camera image to input format for tflite using isolate
+      final inputImage = await compute(_preprocessImageInIsolate, data);
       if (inputImage == null) return [];
 
       // Run inference
@@ -95,87 +183,7 @@ class BottleCountingService {
     }
   }
 
-  /// Preprocess camera image for tflite model input (SSD MobileNet).
-  /// Resizes to 300x300 and normalizes pixel values.
-  List<List<List<List<int>>>>? _preprocessImage(CameraImage image) {
-    try {
-      // Convert YUV420 to RGB image
-      final rgbImage = _yuv420ToRgb(image);
-      if (rgbImage == null) return null;
-
-      // Resize to 300x300 (SSD MobileNet input size)
-      final resized = img.copyResize(
-        rgbImage,
-        width: 300,
-        height: 300,
-        interpolation: img.Interpolation.linear,
-      );
-
-      // Convert to [1, 300, 300, 3] tensor with uint8 values
-      const int tensorWidth = 300;
-      const int tensorHeight = 300;
-
-      final List<List<List<List<int>>>> tensorData =
-          List.generate(1, (_) {
-        return List.generate(tensorHeight, (y) {
-          return List.generate(tensorWidth, (x) {
-            final pixel = resized.getPixelSafe(x, y);
-            return [pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt()];
-          });
-        });
-      });
-
-      return tensorData;
-    } catch (e) {
-      print('Error preprocessing image: $e');
-      return null;
-    }
-  }
-
-  /// Convert YUV420 camera image to RGB image.
-  img.Image? _yuv420ToRgb(CameraImage image) {
-    try {
-      final width = image.width;
-      final height = image.height;
-
-      final Uint8List yPlane = image.planes[0].bytes;
-      final Uint8List uPlane = image.planes[1].bytes;
-      final Uint8List vPlane = image.planes[2].bytes;
-
-      final int uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
-
-      // Create RGB image
-      final rgbImage = img.Image(width: width, height: height);
-
-      for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-          final int uvx = (x / 2).floor();
-          final int uvy = (y / 2).floor();
-          final int uvPixelIndex = uvy * image.planes[1].bytesPerRow + uvx * uvPixelStride;
-
-          final int yIndex = y * image.planes[0].bytesPerRow + x;
-          final int yValue = yPlane[yIndex];
-          final int uValue = uPlane[uvPixelIndex];
-          final int vValue = vPlane[uvPixelIndex];
-
-          // YUV to RGB conversion
-          final int r = (yValue + 1.402 * (vValue - 128)).clamp(0, 255).toInt();
-          final int g =
-              (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128))
-                  .clamp(0, 255)
-                  .toInt();
-          final int b = (yValue + 1.772 * (uValue - 128)).clamp(0, 255).toInt();
-
-          rgbImage.setPixelRgba(x, y, r, g, b, 255);
-        }
-      }
-
-      return rgbImage;
-    } catch (e) {
-      print('Error converting YUV420 to RGB: $e');
-      return null;
-    }
-  }
+  // Preprocessing moved to isolate above
 
   /// Parse tflite SSD output format.
   /// Typical output: [detection_boxes, detection_scores, detection_classes, num_detections]

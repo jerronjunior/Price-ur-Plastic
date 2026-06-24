@@ -21,10 +21,19 @@ class BottleDepositTracker {
   
   double _lastBottleCenterY = 0.0;
   int _missingFrames = 0;
+  int _intersectingFrames = 0;
   
   final VoidCallback onDeposited;
   
   BottleDepositTracker({required this.onDeposited});
+
+  void reset() {
+    state = DepositState.idle;
+    _lastBottleCenterY = 0.0;
+    _missingFrames = 0;
+    _intersectingFrames = 0;
+    debugPrint("BottleDepositTracker: Resetting state to idle.");
+  }
 
   void updateSlotRegion({required double left, required double top, required double width, required double height}) {
     slotLeft = left;
@@ -43,31 +52,47 @@ class BottleDepositTracker {
     switch (state) {
       case DepositState.idle:
         if (bestBottle != null) {
-          state = DepositState.detected;
-          _lastBottleCenterY = bestBottle.centerY;
-          _missingFrames = 0;
-          debugPrint("STAGE 1: Bottle detected");
+          // To start a deposit sequence, the bottle must not be completely inside the slot already
+          // This prevents false triggers immediately on page load when a bottle happens to be in frame.
+          if (!_isIntersecting(bestBottle) && bestBottle.centerY < slotTop + (slotHeight / 2)) {
+            state = DepositState.detected;
+            _lastBottleCenterY = bestBottle.centerY;
+            _missingFrames = 0;
+            _intersectingFrames = 0;
+            debugPrint("STAGE 1: Bottle detected outside bin (Y: ${bestBottle.centerY.toStringAsFixed(2)})");
+          }
         }
         break;
 
       case DepositState.detected:
         if (bestBottle != null) {
-          // If it's moving down
-          if (bestBottle.centerY > _lastBottleCenterY + 0.02) {
+          // Check for deliberate downward movement (at least 5% of screen)
+          if (bestBottle.centerY > _lastBottleCenterY + 0.05) {
             state = DepositState.approaching;
-            debugPrint("STAGE 2: Bottle approaching bin");
+            debugPrint("STAGE 2: Bottle approaching bin (Y: ${bestBottle.centerY.toStringAsFixed(2)})");
           }
-          _lastBottleCenterY = bestBottle.centerY;
+          
+          if (bestBottle.centerY > _lastBottleCenterY) {
+            _lastBottleCenterY = bestBottle.centerY;
+          }
+          
           _missingFrames = 0;
+          if (_isIntersecting(bestBottle)) {
+            // If it abruptly intersects without enough approaching frames
+            state = DepositState.entering;
+            debugPrint("STAGE 3: Bottle entering bin directly");
+          }
         } else {
           _missingFrames++;
-          if (_missingFrames > 5) state = DepositState.idle;
+          if (_missingFrames > 10) reset();
         }
         break;
 
       case DepositState.approaching:
         if (bestBottle != null) {
-          _lastBottleCenterY = bestBottle.centerY;
+          if (bestBottle.centerY > _lastBottleCenterY) {
+            _lastBottleCenterY = bestBottle.centerY;
+          }
           _missingFrames = 0;
           
           // Check if intersecting with slot
@@ -77,29 +102,39 @@ class BottleDepositTracker {
           }
         } else {
           _missingFrames++;
-          if (_missingFrames > 10) state = DepositState.idle;
+          if (_missingFrames > 10) reset();
         }
         break;
 
       case DepositState.entering:
         if (bestBottle != null) {
-          _lastBottleCenterY = bestBottle.centerY;
+          if (bestBottle.centerY > _lastBottleCenterY) {
+            _lastBottleCenterY = bestBottle.centerY;
+          }
           _missingFrames = 0;
+          
+          if (_isIntersecting(bestBottle)) {
+            _intersectingFrames++;
+          }
         } else {
           _missingFrames++;
-          // If the bottle disappears for a few frames after entering, it's deposited
+          // If the bottle disappears after entering and was seen intersecting for at least a couple of frames
           if (_missingFrames > 3) {
-            state = DepositState.deposited;
-            debugPrint("STAGE 4: Bottle deposited successfully");
-            onDeposited();
-            debugPrint("STAGE 5: Counter updated");
-            state = DepositState.idle;
+            if (_intersectingFrames > 0) {
+              state = DepositState.deposited;
+              debugPrint("STAGE 4: Bottle deposited successfully (lost inside bin)");
+              onDeposited();
+              debugPrint("STAGE 5: Counter updated");
+            } else {
+              debugPrint("Tracker: Bottle lost but didn't intersect enough. Resetting.");
+            }
+            reset();
           }
         }
         break;
         
       case DepositState.deposited:
-        state = DepositState.idle;
+        reset();
         break;
     }
   }
