@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -120,10 +119,10 @@ class _SlotTracker {
   }
 
   ({double left, double top, double width, double height}) get cameraRegion => (
-    left:   (slotNormX - 0.25).clamp(0.0, 0.50),
-    top:    (slotNormY - 0.20).clamp(0.0, 0.60),
-    width:  0.50,
-    height: 0.40,
+    left:   (slotNormX - 0.18).clamp(0.0, 0.80),
+    top:    (slotNormY - 0.15).clamp(0.0, 0.80),
+    width:  0.36,
+    height: 0.30,
   );
 
   double _hypot(double a, double b) => sqrt(a * a + b * b);
@@ -193,6 +192,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   CameraDescription? _camDesc;
   bool _cameraReady     = false;
   bool _processingFrame = false;
+  int  _frameCount      = 0;
   bool _detected        = false;
 
   // ── Detection ──────────────────────────────────────────────────────────────
@@ -200,6 +200,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   SlotMotionDetectionImpl? _motion;
   bool _motionReady   = false;
   bool _streamStarted = false;
+  bool _disposed      = false; // guards async camera-frame callbacks
   int  _stableFrames  = 0;
   static const int _minStable = 8;
 
@@ -241,16 +242,26 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   @override
   void dispose() {
+    // Set the guard FIRST so any camera frame already in flight on the
+    // native thread bails out of _onFrame() immediately instead of calling
+    // setState()/touching _motion after they've been torn down. This is
+    // what fixes the intermittent '_dependents.isEmpty' assertion.
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
+
+    // Stop the image stream BEFORE disposing anything it feeds into.
+    if (_streamStarted && _cam?.value.isStreamingImages == true) {
+      try {
+        _cam?.stopImageStream();
+      } catch (_) {}
+    }
+
     _timeoutTimer?.cancel();
     _scoreTimer?.cancel();
     _arCtrl.dispose();
     _flashCtrl.dispose();
     _badgeCtrl.dispose();
     _motion?.dispose();
-    if (_streamStarted && _cam?.value.isStreamingImages == true) {
-      _cam?.stopImageStream();
-    }
     _cam?.dispose();
     super.dispose();
   }
@@ -280,12 +291,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       (c) => c.lensDirection == CameraLensDirection.back,
       orElse: () => cams.first,
     );
-    final imageFormat = Platform.isIOS
-        ? ImageFormatGroup.bgra8888
-        : ImageFormatGroup.yuv420;
     _cam = CameraController(_camDesc!, ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: imageFormat);
+        imageFormatGroup: ImageFormatGroup.yuv420);
     try {
       await _cam!.initialize();
       try {
@@ -328,7 +336,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       regionTop:       top,
       regionWidth:     width,
       regionHeight:    height,
-      onReadyChanged:  (v) { if (mounted) setState(() => _motionReady = v); },
+      onReadyChanged:  (v) { if (!_disposed && mounted) setState(() => _motionReady = v); },
       onMotionDetected: _onBottleDetected,
       // Report every attempt (counted or rejected) for ongoing self-training.
       onAttemptComplete: (result) {
@@ -354,7 +362,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   //   5. 2.2s cooldown has elapsed
   // ══════════════════════════════════════════════════════════════════════════
   void _onBottleDetected() {
-    if (_detected || !mounted) return;
+    if (_detected || _disposed || !mounted) return;
     // NOTE: previously also required _stableFrames >= _minStable (slot lock),
     // but that blocked real insertions on hard-to-track small-hole bins.
     // The SlotMotionDetectionImpl state machine (entering→inside→exiting +
@@ -392,7 +400,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     ));
     _scoreTimer?.cancel();
     _scoreTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (!mounted) return;
+      if (_disposed || !mounted) return;
       _scores.removeWhere((s) => s.isDead);
       if (_scores.isEmpty) _scoreTimer?.cancel();
       if (mounted) setState(() {});
@@ -401,7 +409,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   // ── Frame processing ────────────────────────────────────────────────────────
   void _onFrame(CameraImage image) {
-    if (_processingFrame || _detected) return;
+    // Bail immediately if the widget is being/has been torn down — the
+    // camera stream runs on a native thread and can deliver a frame after
+    // dispose() began. Calling setState() here would throw.
+    if (_disposed || !mounted) return;
+    _frameCount++;
+    if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
     try {
       _tracker.update(image);
@@ -421,11 +434,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         // No lock yet — make sure a default detector is running so the
         // user can still score while pointing roughly at the slot.
         _motion ??= _buildMotion(
-          left: 0.20, top: 0.10, width: 0.60, height: 0.50,
+          left: 0.30, top: 0.18, width: 0.40, height: 0.34,
         );
       }
       _motion?.processImage(image);
-      if (mounted) setState(() {});
+      if (!_disposed && mounted) setState(() {});
     } finally {
       _processingFrame = false;
     }
