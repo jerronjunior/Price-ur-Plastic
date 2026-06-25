@@ -171,8 +171,9 @@ class InsertionDetectorScreen extends StatefulWidget {
     required this.onDetected,
     required this.onBack,
     this.onTimeout,
-    this.timeoutSeconds  = 20,
-    this.pointsPerBottle = 10,
+    this.timeoutSeconds       = 20,
+    this.pointsPerBottle      = 10,
+    this.demoTriggerAtRemaining,
   });
 
   final VoidCallback  onDetected;
@@ -180,6 +181,9 @@ class InsertionDetectorScreen extends StatefulWidget {
   final VoidCallback? onTimeout;
   final int           timeoutSeconds;
   final int           pointsPerBottle;
+  /// Demo mode: auto-trigger a detection when the countdown reaches this value.
+  /// e.g. demoTriggerAtRemaining: 5 → fires at the 15th second of a 20s timeout.
+  final int?          demoTriggerAtRemaining;
 
   @override
   State<InsertionDetectorScreen> createState() =>
@@ -304,6 +308,15 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _timeoutTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || _detected) return;
       setState(() => _remaining--);
+
+      // Demo mode: auto-count at the requested second so the presenter can
+      // physically insert the bottle right at that moment.
+      if (widget.demoTriggerAtRemaining != null &&
+          _remaining == widget.demoTriggerAtRemaining) {
+        _onBottleDetected();
+        return;
+      }
+
       if (_remaining <= 0) {
         _timeoutTimer?.cancel();
         widget.onTimeout != null ? widget.onTimeout!() : widget.onBack();
