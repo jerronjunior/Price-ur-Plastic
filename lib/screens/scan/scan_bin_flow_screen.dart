@@ -145,7 +145,6 @@ class _ScanBinFlowScreenState extends State<ScanBinFlowScreen> {
     if (_cameraConfirming && _lastBinId != null) {
       return InsertionDetectorScreen(
         onDetected: () => _recordBottle(_lastBinId!),
-        demoTriggerAtRemaining: 15, // demo: auto-count at the 5th second
         onTimeout: () {
           if (!mounted) return;
           setState(() {

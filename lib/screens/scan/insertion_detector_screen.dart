@@ -6,6 +6,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'slot_motion_detection_impl.dart';
+import 'arrow_occlusion_detector.dart';
 import '../../services/training_data_service.dart';
 import '../../services/bottle_counting_service.dart';
 import 'bottle_deposit_tracker.dart';
@@ -202,9 +203,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _detected        = false;
 
   // ── Detection ──────────────────────────────────────────────────────────────
-  final _SlotTracker           _tracker = _SlotTracker();
-  SlotMotionDetectionImpl?     _motion;  // primary detection — motion-based
-  final BottleCountingService  _bottleService = BottleCountingService();
+  final _SlotTracker              _tracker = _SlotTracker();
+  SlotMotionDetectionImpl?        _motion;        // backup motion detector
+  late final ArrowOcclusionDetector _arrowDetector; // PRIMARY detector
+  final BottleCountingService     _bottleService = BottleCountingService();
   late final BottleDepositTracker _depositTracker;
   bool _isProcessingTflite = false;
   bool _motionReady   = false;
@@ -250,6 +252,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _depositTracker = BottleDepositTracker(onDeposited: _onBottleDetected);
 
+    _arrowDetector = ArrowOcclusionDetector(
+      onInserted: _onBottleDetected,
+      onReadyChanged: (found) {
+        if (!_disposed && mounted) setState(() => _motionReady = found);
+      },
+    );
+
     _startTimeout();
     _initCamera();
     _initBottleService();
@@ -284,6 +293,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _flashCtrl.dispose();
     _badgeCtrl.dispose();
     _motion?.dispose();
+    _arrowDetector.reset();
     _bottleService.dispose();
     _cam?.dispose();
     super.dispose();
@@ -466,7 +476,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         _stableFrames = 0;
       }
 
-      // ── Primary: motion-based detection (always runs, no external deps) ──
+      // ── PRIMARY: arrow occlusion (white slot covered → uncovered = 1 bottle)
+      _arrowDetector.processFrame(image);
+
+      // ── BACKUP: motion-based detection ──
       _motion?.processImage(image);
 
       // ── Secondary: TFLite object detection (optional, runs if model loaded)
@@ -487,15 +500,19 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
-  int    get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
-  bool   get _lockedAndReady    =>
-      _tracker.hasLock && _stableFrames >= _minStable && _motionReady;
+  int  get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
+  bool get _lockedAndReady    =>
+      _arrowDetector.state == OcclusionState.slotVisible;
 
   String get _statusText {
-    if (!_tracker.hasLock)             return 'Point camera at the bin slot';
-    if (_stableFrames < _minStable)    return 'Acquiring slot…';
-    if (!_motionReady)                 return 'Calibrating…';
-    return 'Slot locked — insert bottle';
+    switch (_arrowDetector.state) {
+      case OcclusionState.seeking:
+        return 'Point camera at the bin slot';
+      case OcclusionState.slotVisible:
+        return 'Slot found — insert bottle now';
+      case OcclusionState.bottleIn:
+        return 'Detecting insertion…';
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
