@@ -606,13 +606,13 @@ class SpinWheelPainter extends CustomPainter {
     final sweepAngle= (2 * math.pi) / segCount;
 
     final rimPaint = Paint()
-      ..shader = RadialGradient(
+      ..shader = const RadialGradient(
         colors: [
           Colors.white,
-          const Color(0xFFE0E0E0),
-          const Color(0xFFBDBDBD)
+          Color(0xFFE0E0E0),
+          Color(0xFFBDBDBD)
         ],
-        stops: const [0.82, 0.93, 1.0],
+        stops: [0.82, 0.93, 1.0],
       ).createShader(
               Rect.fromCircle(center: center, radius: radius))
       ..style = PaintingStyle.fill;
@@ -725,12 +725,12 @@ class SpinWheelPainter extends CustomPainter {
     );
 
     final hubPaint = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(-0.3, -0.4),
+      ..shader = const RadialGradient(
+        center: Alignment(-0.3, -0.4),
         radius: 0.9,
         colors: [
-          const Color(0xFF66BB6A),
-          const Color(0xFF1B5E20)
+          Color(0xFF66BB6A),
+          Color(0xFF1B5E20)
         ],
       ).createShader(
               Rect.fromCircle(center: center, radius: hubRadius));
@@ -786,12 +786,12 @@ class PointerPainter extends CustomPainter {
       ..close();
 
     final arrowPaint = Paint()
-      ..shader = LinearGradient(
+      ..shader = const LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          const Color(0xFFFF1744),
-          const Color(0xFFB71C1C)
+          Color(0xFFFF1744),
+          Color(0xFFB71C1C)
         ],
       ).createShader(
               Rect.fromLTWH(0, 0, size.width, size.height));

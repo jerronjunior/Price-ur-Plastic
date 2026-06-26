@@ -6,7 +6,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'slot_motion_detection_impl.dart';
-import 'sound_spike_detector.dart';
+import '../../services/sound_spike_detector.dart';
 import '../../services/training_data_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -881,7 +881,9 @@ class _ProfessionalArrowPainter extends CustomPainter {
           if (t < pStart || t > pEnd) continue;
           final Offset p = bez(t);
           if (first) { pulse.moveTo(p.dx, p.dy); first = false; }
-          else        pulse.lineTo(p.dx, p.dy);
+          else {
+            pulse.lineTo(p.dx, p.dy);
+          }
         }
         if (!first) {
           canvas.drawPath(pulse, Paint()

@@ -279,9 +279,9 @@ class _AddBinScreenState extends State<AddBinScreen> {
                     padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.check_circle,
-                          color: const Color(0xFF4CAF50),
+                          color: Color(0xFF4CAF50),
                         ),
                         const SizedBox(width: 12),
                         Expanded(

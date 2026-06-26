@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
+import '../../services/sound_spike_detector.dart';
 
 enum _PassState {
   idle,
@@ -82,9 +83,7 @@ class SlotMotionDetectionImpl {
         _minChangeFraction =
             minChangeFractionOverride ?? _defaultMinChangeFraction,
         _minDownwardScore =
-            minDownwardScoreOverride ?? _defaultMinDownwardScore,
-        _maxCornerMotionAvg =
-            maxCornerMotionAvgOverride ?? _defaultMaxCornerMotionAvg;
+            minDownwardScoreOverride ?? _defaultMinDownwardScore;
 
   final SoundSpikeDetector? _soundDetector;
   final void Function() _onMotionDetected;
@@ -99,7 +98,6 @@ class SlotMotionDetectionImpl {
   // default to the 35-video-calibrated values if no override is given.
   final double _minChangeFraction;
   final double _minDownwardScore;
-  final double _maxCornerMotionAvg;
 
   _LumaSample? _previousSample;
   bool _disposed = false;
@@ -141,8 +139,6 @@ class SlotMotionDetectionImpl {
   static const double _cornerFrac =
       0.15; // each corner patch = 15% of width/height
   static const int _cornerPixelDiffThreshold = 18;
-  static const double _defaultMaxCornerMotionAvg =
-      0.32; // reject if background moved this much
 
   int _frameCount = 0;
   _PassState _state = _PassState.idle;

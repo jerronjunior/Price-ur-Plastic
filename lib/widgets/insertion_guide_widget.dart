@@ -30,38 +30,38 @@ class InsertionGuideWidget extends StatelessWidget {
           const SizedBox(height: 20),
 
           // Step illustrations
-          _Step(
+          const _Step(
             number: 1,
             icon: Icons.phone_android,
-            color: const Color(0xFF1565C0),
+            color: Color(0xFF1565C0),
             title: 'Hold phone 15–20 cm above the bin slot',
             desc: 'Camera must see the full slot opening. Too close or far won\'t work.',
           ),
-          _Step(
+          const _Step(
             number: 2,
             icon: Icons.check_circle_outline,
-            color: const Color(0xFF2E7D32),
+            color: Color(0xFF2E7D32),
             title: 'Wait for green "Ready" indicator',
             desc: 'The app must lock onto the bin slot before you insert. Don\'t insert yet.',
           ),
-          _Step(
+          const _Step(
             number: 3,
             icon: Icons.arrow_downward,
-            color: const Color(0xFFF57F17),
+            color: Color(0xFFF57F17),
             title: 'Drop bottle straight down through the slot',
             desc: 'Use ONE hand. Drop smoothly. Don\'t wave or push sideways.',
           ),
-          _Step(
+          const _Step(
             number: 4,
             icon: Icons.do_not_touch,
-            color: const Color(0xFFC62828),
+            color: Color(0xFFC62828),
             title: 'Do NOT pull your hand back out',
             desc: 'After releasing the bottle, move your hand to the SIDE. Pulling back up triggers a false count.',
           ),
-          _Step(
+          const _Step(
             number: 5,
             icon: Icons.emoji_events,
-            color: const Color(0xFF2E7D32),
+            color: Color(0xFF2E7D32),
             title: 'Wait for "+N pts" to appear',
             desc: 'The flash and points badge confirm the insertion was counted.',
           ),

@@ -465,48 +465,48 @@ class _CaptureFramePainter extends CustomPainter {
     // Top-left
     canvas.drawLine(
       frameRect.topLeft,
-      frameRect.topLeft + Offset(cornerLen, 0),
+      frameRect.topLeft + const Offset(cornerLen, 0),
       cornerPaint,
     );
     canvas.drawLine(
       frameRect.topLeft,
-      frameRect.topLeft + Offset(0, cornerLen),
+      frameRect.topLeft + const Offset(0, cornerLen),
       cornerPaint,
     );
 
     // Top-right
     canvas.drawLine(
       frameRect.topRight,
-      frameRect.topRight + Offset(-cornerLen, 0),
+      frameRect.topRight + const Offset(-cornerLen, 0),
       cornerPaint,
     );
     canvas.drawLine(
       frameRect.topRight,
-      frameRect.topRight + Offset(0, cornerLen),
+      frameRect.topRight + const Offset(0, cornerLen),
       cornerPaint,
     );
 
     // Bottom-left
     canvas.drawLine(
       frameRect.bottomLeft,
-      frameRect.bottomLeft + Offset(cornerLen, 0),
+      frameRect.bottomLeft + const Offset(cornerLen, 0),
       cornerPaint,
     );
     canvas.drawLine(
       frameRect.bottomLeft,
-      frameRect.bottomLeft + Offset(0, -cornerLen),
+      frameRect.bottomLeft + const Offset(0, -cornerLen),
       cornerPaint,
     );
 
     // Bottom-right
     canvas.drawLine(
       frameRect.bottomRight,
-      frameRect.bottomRight + Offset(-cornerLen, 0),
+      frameRect.bottomRight + const Offset(-cornerLen, 0),
       cornerPaint,
     );
     canvas.drawLine(
       frameRect.bottomRight,
-      frameRect.bottomRight + Offset(0, -cornerLen),
+      frameRect.bottomRight + const Offset(0, -cornerLen),
       cornerPaint,
     );
 

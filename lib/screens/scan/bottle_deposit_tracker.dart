@@ -22,7 +22,6 @@ class BottleDepositTracker {
   double _initialY = 0.0;
   double _deepestY = 0.0; // Y increases downwards (0 top, 1 bottom)
   int _missingFrames = 0;
-  int _intersectingFrames = 0;
   bool _didIntersect = false;
   
   final VoidCallback onDeposited;
@@ -34,7 +33,6 @@ class BottleDepositTracker {
     _initialY = 0.0;
     _deepestY = 0.0;
     _missingFrames = 0;
-    _intersectingFrames = 0;
     _didIntersect = false;
   }
 
@@ -62,7 +60,6 @@ class BottleDepositTracker {
             _initialY = bestBottle.centerY;
             _deepestY = bestBottle.centerY;
             _missingFrames = 0;
-            _intersectingFrames = 0;
             _didIntersect = false;
             debugPrint("DEBUG LOG: Bottle detected");
             debugPrint("DEBUG LOG: Bottle tracked");
@@ -128,7 +125,7 @@ class BottleDepositTracker {
           _missingFrames = 0;
           
           if (_isIntersecting(bestBottle)) {
-            _intersectingFrames++;
+            // Unused intersecting frames tracker removed
           }
           
           if (bestBottle.centerY < _deepestY - 0.15) {

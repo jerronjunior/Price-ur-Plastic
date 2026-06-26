@@ -196,7 +196,7 @@ class _StepBar extends StatelessWidget {
           Expanded(child: Container(height: 2, color: binDone ? Colors.green : Colors.white24)),
           _Dot('2', 'Bottle',      done: false,    active: step == _Step.scanBottle),
           Expanded(child: Container(height: 2, color: Colors.white24)),
-          _Dot('3', 'Insert',      done: false,    active: false),
+          const _Dot('3', 'Insert',      done: false,    active: false),
         ],
       ),
     );
@@ -421,10 +421,10 @@ class _BinScannerState extends State<_BinScanner> {
 
         // Semi-dark overlay on the 4 sides around the scan box
         // Using a CustomPaint instead of ColorFiltered (which causes black screen)
-        Positioned.fill(
+        const Positioned.fill(
           child: _ScanOverlayPainter(
-            boxSize: const Size(260, 260),
-            borderColor: const Color(0xFF4CAF50),
+            boxSize: Size(260, 260),
+            borderColor: Color(0xFF4CAF50),
             borderRadius: 16,
           ),
         ),
