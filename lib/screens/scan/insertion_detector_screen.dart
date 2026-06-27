@@ -219,43 +219,48 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ── Slot tracker ────────────────────────────────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
 
-  // ── Sound (optional secondary confirmation and fallback) ────────────────────
+  // ── Dual Verification (Camera + Sound) ──────────────────────────────────────
   late final SoundSpikeDetector _sound = SoundSpikeDetector(
     onSpike: _handleSoundSpike,
   );
 
+  DateTime? _lastCameraEventTime;
+  DateTime? _lastSoundEventTime;
+
   void _handleSoundSpike(SoundSpikeEvent event) {
     if (_disposed || _detected || !mounted) return;
+    _lastSoundEventTime = DateTime.now();
+    _checkDualVerification();
+  }
+
+  void _checkDualVerification() {
+    if (_lastCameraEventTime == null || _lastSoundEventTime == null) return;
     
-    final now = DateTime.now();
-    if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
-    
-    // If the user is pointing at the bin (locked or occluded), and we hear a 
-    // loud bottle thud, count it even if the camera didn't perfectly see the motion.
-    if (_occState == _OcclusionState.locked || _occState == _OcclusionState.occluded) {
+    final diff = _lastCameraEventTime!.difference(_lastSoundEventTime!).abs();
+    // Both events must occur within 2.5 seconds of each other
+    if (diff <= const Duration(milliseconds: 2500)) {
+      final now = DateTime.now();
+      if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
+      
       _lastCountTime = now;
-      _occlusionStart = null;
-      _occState = _OcclusionState.locked;
+      _lastCameraEventTime = null;
+      _lastSoundEventTime = null;
       _onBottleDetected();
     }
   }
 
   // ── Occlusion-based detection ───────────────────────────────────────────────
-  // The arrow locks onto the tan/amber bin opening. When a bottle is inserted
-  // it covers that opening → tracker loses lock (hasLock → false). When the
-  // bottle clears, the opening reappears → hasLock → true. One complete
-  // hide-then-show cycle counts as one bottle insertion.
-  //
-  // Sound (optional): a confirmed spike allows a shorter minimum-hide window
-  // (100 ms vs 200 ms) to catch very quick insertions. Sound is never required.
+  // The camera tracker locks onto the white flap. When a bottle is inserted,
+  // it covers the flap/arrow → tracker loses lock (hasLock → false). When the
+  // bottle clears, the opening reappears → hasLock → true.
+  // This visual cycle combined with a sound spike confirms a real insertion.
   _OcclusionState _occState     = _OcclusionState.waitingForLock;
   int             _stableFrames = 0;
   DateTime?       _occlusionStart;
   DateTime?       _lastCountTime;
 
   static const int      _minStableFrames       = 5;
-  static const Duration _minOcclusion          = Duration(milliseconds: 200);
-  static const Duration _minOcclusionWithSound = Duration(milliseconds: 100);
+  static const Duration _minOcclusion          = Duration(milliseconds: 150);
   static const Duration _maxOcclusion          = Duration(seconds: 4);
   static const Duration _countCooldown         = Duration(seconds: 2);
 
@@ -263,6 +268,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   int _sessionCount = 0;
   final List<_FloatingScore> _scores = [];
   Timer? _scoreTimer;
+  Size _screenSize = const Size(400, 800); // Cached to prevent MediaQuery errors async
 
   // ── Timeout ────────────────────────────────────────────────────────────────
   Timer? _timeoutTimer;
@@ -402,18 +408,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
         if (locked) {
           // Slot reappeared — check if the hide was long enough.
-          final soundConfirmed = _sound.hadRecentSpike(
-            window: elapsed + const Duration(milliseconds: 500),
-          );
-          final minHide =
-              soundConfirmed ? _minOcclusionWithSound : _minOcclusion;
-
-          if (elapsed >= minHide) {
-            // Valid hide-and-show cycle → one bottle inserted.
-            _lastCountTime  = now;
+          if (elapsed >= _minOcclusion) {
+            // Valid visual hide-and-show cycle!
+            // Wait for dual verification with sound before counting.
+            _lastCameraEventTime = now;
             _occlusionStart = null;
             _occState       = _OcclusionState.locked;
-            _onBottleDetected();
+            _checkDualVerification();
           } else {
             // Too brief — tracking flicker, remain locked.
             _occlusionStart = null;
@@ -438,8 +439,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _sessionCount++;
     _badgeCtrl.forward(from: 0);
 
-    final sz     = MediaQuery.of(context).size;
-    final origin = _tracker.toScreenOffset(sz, _sensorOrientation);
+    final origin = _tracker.toScreenOffset(_screenSize, _sensorOrientation);
     _spawnScore(origin);
 
     Future.delayed(const Duration(milliseconds: 400), () {
@@ -492,6 +492,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    _screenSize = MediaQuery.sizeOf(context);
+    
     return Scaffold(
       backgroundColor: Colors.black,
       extendBodyBehindAppBar: true,
