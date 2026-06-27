@@ -108,15 +108,15 @@ class SlotMotionDetectionImpl {
 
   // Filter 2: min changed fraction in zone
   static const double _defaultMinChangeFraction =
-      0.06; // handheld: bottle is smaller in frame, motion fraction is lower
+      0.04; // lowered: small/fast insertions and mesh slots change fewer pixels
   // Filter 3: downward dominance score threshold
   static const double _defaultMinDownwardScore =
-      0.20; // handheld: bottle enters at varied angles, relax downward requirement
+      0.10; // lowered: bottles enter at many angles (horizontal, diagonal)
   // Filter 5: cooldown after each count
   static const int _cooldownMs = 2000; // faster cooldown for open-top bins
   // Pixel diff threshold for per-pixel motion map
   static const int _pixelDiffThreshold =
-      18; // lowered: wire mesh reduces pixel diff
+      12; // lowered: wire mesh and plastic slots reduce per-pixel diff
   static const int _bands = 20;
 
   // ── Anti camera-shake guard ────────────────────────────────────────────────
@@ -296,7 +296,9 @@ class SlotMotionDetectionImpl {
                 window: const Duration(milliseconds: 900),
               ) ??
               false;
-          final requiredRatio = soundConfirmed ? 1.3 : 2.2;
+          // 1.5 allows normal hand steadiness during insertion;
+          // sound spike is strong corroborating evidence, so drop to 1.0.
+          final requiredRatio = soundConfirmed ? 1.0 : 1.5;
 
           final counted = zoneVsBackground >= requiredRatio;
           final String? rejectedReason = counted
@@ -378,8 +380,8 @@ class SlotMotionDetectionImpl {
 
       switch (_state) {
         case _PassState.idle:
-          if (relPos < 0.55 && _changedFraction > _minChangeFraction * 0.8) {
-            // wider zone for open-top bins
+          if (relPos < 0.80 && _changedFraction > _minChangeFraction * 0.8) {
+            // wider centroid range: bottle can enter from anywhere in the zone
             _state = _PassState.entering;
             // Fresh attempt — clear any stale tracking from a prior attempt.
             _cornerMotionSum = 0;

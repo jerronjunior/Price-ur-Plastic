@@ -1,13 +1,10 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-import 'slot_motion_detection_impl.dart';
 import '../../services/sound_spike_detector.dart';
-import '../../services/training_data_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _SlotTracker  v3 — pixel-level centroid
@@ -38,8 +35,8 @@ class _SlotTracker {
   void update(CameraImage image) {
     final int fw = image.width;
     final int fh = image.height;
-    final Uint8List yPlane = image.planes[0].bytes;
-    final Uint8List? vPlane =
+    final bytes = image.planes[0].bytes;
+    final List<int>? vBytes =
         image.planes.length > 2 ? image.planes[2].bytes : null;
     final int uvRowStride = image.planes.length > 2
         ? image.planes[2].bytesPerRow : (fw ~/ 2);
@@ -51,7 +48,7 @@ class _SlotTracker {
     for (int py = py0; py < py1; py += 8) {
       for (int px = 0; px < fw; px += 8) {
         final int yi = py * fw + px;
-        if (yi < yPlane.length) { ambientSum += yPlane[yi]; ambientCnt++; }
+        if (yi < bytes.length) { ambientSum += bytes[yi]; ambientCnt++; }
       }
     }
     final double ambientY = ambientCnt > 0 ? ambientSum / ambientCnt : 100;
@@ -62,12 +59,12 @@ class _SlotTracker {
     for (int py = py0; py < py1; py += 4) {
       for (int px = 0; px < fw; px += 4) {
         final int yi = py * fw + px;
-        if (yi >= yPlane.length) continue;
-        final double yVal = yPlane[yi].toDouble();
+        if (yi >= bytes.length) continue;
+        final double yVal = bytes[yi].toDouble();
         if (yVal < _minY || yVal > _maxY || yVal < threshold) continue;
-        if (vPlane != null) {
+        if (vBytes != null) {
           final int vi = (py ~/ 2) * uvRowStride + (px ~/ 2);
-          if (vi < vPlane.length && vPlane[vi].toDouble() < _minV) continue;
+          if (vi < vBytes.length && vBytes[vi].toDouble() < _minV) continue;
         }
         wSumX += px * yVal; wSumY += py * yVal;
         wTotal += yVal; pixelCount++;
@@ -119,13 +116,6 @@ class _SlotTracker {
     );
   }
 
-  ({double left, double top, double width, double height}) get cameraRegion => (
-    left:   (slotNormX - 0.18).clamp(0.0, 0.80),
-    top:    (slotNormY - 0.15).clamp(0.0, 0.80),
-    width:  0.36,
-    height: 0.30,
-  );
-
   double _hypot(double a, double b) => sqrt(a * a + b * b);
 
   void reset() {
@@ -149,7 +139,7 @@ class _FloatingScore {
     required this.born,
   });
 
-  static const double _lifetime = 1.8; // seconds
+  static const double _lifetime = 1.8;
 
   double get age      => DateTime.now().difference(born).inMilliseconds / 1000.0;
   double get progress => (age / _lifetime).clamp(0.0, 1.0);
@@ -159,6 +149,15 @@ class _FloatingScore {
       ? progress / 0.55
       : 1.0 - (progress - 0.55) / 0.45;
   double get scale    => 1.0 + 0.25 * (1.0 - progress);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Occlusion detection states
+// ══════════════════════════════════════════════════════════════════════════════
+enum _OcclusionState {
+  waitingForLock, // tracker hasn't acquired a stable lock yet
+  locked,         // tracker is locked on the slot, watching for occlusion
+  occluded,       // bottle is covering the slot (hasLock went false)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -195,16 +194,32 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _processingFrame = false;
   int  _frameCount      = 0;
   bool _detected        = false;
+  bool _disposed        = false;
 
-  // ── Detection ──────────────────────────────────────────────────────────────
-  final _SlotTracker       _tracker = _SlotTracker();
-  SlotMotionDetectionImpl? _motion;
-  bool _motionReady   = false;
-  bool _streamStarted = false;
-  bool _disposed      = false; // guards async camera-frame callbacks
+  // ── Slot tracker ────────────────────────────────────────────────────────────
+  final _SlotTracker _tracker = _SlotTracker();
+
+  // ── Sound (optional secondary confirmation) ─────────────────────────────────
   final SoundSpikeDetector _sound = SoundSpikeDetector();
-  int  _stableFrames  = 0;
-  static const int _minStable = 8;
+
+  // ── Occlusion-based detection ───────────────────────────────────────────────
+  // The arrow locks onto the tan/amber bin opening. When a bottle is inserted
+  // it covers that opening → tracker loses lock (hasLock → false). When the
+  // bottle clears, the opening reappears → hasLock → true. One complete
+  // hide-then-show cycle counts as one bottle insertion.
+  //
+  // Sound (optional): a confirmed spike allows a shorter minimum-hide window
+  // (100 ms vs 200 ms) to catch very quick insertions. Sound is never required.
+  _OcclusionState _occState     = _OcclusionState.waitingForLock;
+  int             _stableFrames = 0;
+  DateTime?       _occlusionStart;
+  DateTime?       _lastCountTime;
+
+  static const int      _minStableFrames       = 5;
+  static const Duration _minOcclusion          = Duration(milliseconds: 200);
+  static const Duration _minOcclusionWithSound = Duration(milliseconds: 100);
+  static const Duration _maxOcclusion          = Duration(seconds: 4);
+  static const Duration _countCooldown         = Duration(seconds: 2);
 
   // ── AR state ───────────────────────────────────────────────────────────────
   int _sessionCount = 0;
@@ -216,9 +231,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   late int _remaining;
 
   // ── Animation controllers ──────────────────────────────────────────────────
-  late AnimationController _arCtrl;    // drives arrow + reticle (900ms loop)
-  late AnimationController _flashCtrl; // white flash (500ms one-shot)
-  late AnimationController _badgeCtrl; // count badge bounce (400ms one-shot)
+  late AnimationController _arCtrl;
+  late AnimationController _flashCtrl;
+  late AnimationController _badgeCtrl;
 
   bool _showFlash = false;
 
@@ -240,26 +255,17 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _startTimeout();
     _initCamera();
-    // Fire-and-forget — requests mic permission and starts listening.
-    // Never blocks the camera/scanning flow if denied or unsupported.
     unawaited(_sound.start());
   }
 
   @override
   void dispose() {
-    // Set the guard FIRST so any camera frame already in flight on the
-    // native thread bails out of _onFrame() immediately instead of calling
-    // setState()/touching _motion after they've been torn down. This is
-    // what fixes the intermittent '_dependents.isEmpty' assertion.
     _disposed = true;
     _sound.dispose();
     WidgetsBinding.instance.removeObserver(this);
 
-    // Stop the image stream BEFORE disposing anything it feeds into.
-    if (_streamStarted && _cam?.value.isStreamingImages == true) {
-      try {
-        _cam?.stopImageStream();
-      } catch (_) {}
+    if (_cam?.value.isStreamingImages == true) {
+      try { _cam?.stopImageStream(); } catch (_) {}
     }
 
     _timeoutTimer?.cancel();
@@ -267,7 +273,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _arCtrl.dispose();
     _flashCtrl.dispose();
     _badgeCtrl.dispose();
-    _motion?.dispose();
     _cam?.dispose();
     super.dispose();
   }
@@ -308,11 +313,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         await _cam!.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
       } catch (_) {}
       if (!mounted) return;
-      setState(() { _cameraReady = true; _stableFrames = 0; });
+      setState(() => _cameraReady = true);
       _tracker.reset();
-      _rebuildMotion();
       await _cam!.startImageStream(_onFrame);
-      _streamStarted = true;
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -320,80 +323,87 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
-  void _rebuildMotion() {
-    final r = _tracker.cameraRegion;
-    _motion?.dispose();
-    _motion = _buildMotion(
-      left: r.left, top: r.top, width: r.width, height: r.height,
-    );
+  // ══════════════════════════════════════════════════════════════════════════
+  // Occlusion detection
+  // ══════════════════════════════════════════════════════════════════════════
+  void _updateOcclusion(bool locked) {
+    if (_disposed || _detected) return;
+
+    final now = DateTime.now();
+
+    if (_lastCountTime != null &&
+        now.difference(_lastCountTime!) < _countCooldown) return;
+
+    switch (_occState) {
+      case _OcclusionState.waitingForLock:
+        if (locked) {
+          _stableFrames++;
+          if (_stableFrames >= _minStableFrames) {
+            _occState = _OcclusionState.locked;
+          }
+        } else {
+          _stableFrames = 0;
+        }
+
+      case _OcclusionState.locked:
+        if (!locked) {
+          _occlusionStart = now;
+          _occState = _OcclusionState.occluded;
+        }
+
+      case _OcclusionState.occluded:
+        final elapsed = now.difference(_occlusionStart!);
+
+        if (elapsed > _maxOcclusion) {
+          // Too long — camera moved away from the bin, not a bottle.
+          _occlusionStart = null;
+          _stableFrames   = 0;
+          _occState       = _OcclusionState.waitingForLock;
+          return;
+        }
+
+        if (locked) {
+          // Slot reappeared — check if the hide was long enough.
+          final soundConfirmed = _sound.hadRecentSpike(
+            window: elapsed + const Duration(milliseconds: 500),
+          );
+          final minHide =
+              soundConfirmed ? _minOcclusionWithSound : _minOcclusion;
+
+          if (elapsed >= minHide) {
+            // Valid hide-and-show cycle → one bottle inserted.
+            _lastCountTime  = now;
+            _occlusionStart = null;
+            _occState       = _OcclusionState.locked;
+            _onBottleDetected();
+          } else {
+            // Too brief — tracking flicker, remain locked.
+            _occlusionStart = null;
+            _occState       = _OcclusionState.locked;
+          }
+        }
+    }
   }
 
-  // Single place that constructs the calibrated detector — used both for
-  // the tracker-refined region and the default no-lock region. This is
-  // where the 35-video calibration actually reaches the live app.
-  SlotMotionDetectionImpl _buildMotion({
-    required double left,
-    required double top,
-    required double width,
-    required double height,
-  }) {
-    return SlotMotionDetectionImpl(
-      regionLeft:      left,
-      regionTop:       top,
-      regionWidth:     width,
-      regionHeight:    height,
-      soundDetector:    _sound, // fuses sound-spike confirmation with camera motion
-      onReadyChanged:  (v) { if (!_disposed && mounted) setState(() => _motionReady = v); },
-      onMotionDetected: _onBottleDetected,
-      // Report every attempt (counted or rejected) for ongoing self-training.
-      onAttemptComplete: (result) {
-        TrainingDataService().onInsertionAttempt(
-          counted:            result.counted,
-          rejectedReason:     result.rejectedReason,
-          peakChangeFraction: result.peakChangeFraction,
-          peakDownwardScore:  result.peakDownwardScore,
-          avgCornerMotion:    result.avgCornerMotion,
-          durationMs:         result.durationMs,
-        );
-      },
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // Bottle inserted callback
-  // Called by SlotMotionDetectionImpl when all 5 filters pass:
-  //   1. Motion is within the tracked slot zone
-  //   2. ≥12% of zone pixels changed
-  //   3. Motion direction is downward (not sideways)
-  //   4. State machine completed: idle→entering→inside→exiting
-  //   5. 2.2s cooldown has elapsed
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Bottle inserted callback ────────────────────────────────────────────────
   void _onBottleDetected() {
     if (_detected || _disposed || !mounted) return;
-    // NOTE: previously also required _stableFrames >= _minStable (slot lock),
-    // but that blocked real insertions on hard-to-track small-hole bins.
-    // The SlotMotionDetectionImpl state machine (entering→inside→exiting +
-    // corner-motion anti-shake + cooldown) is itself the reliability gate.
 
     _detected = true;
     _timeoutTimer?.cancel();
 
-    // 1. White flash
     _showFlash = true;
     _flashCtrl.forward(from: 0).then((_) {
       if (mounted) setState(() => _showFlash = false);
     });
 
-    // 2. Session counter increment + badge bounce
     _sessionCount++;
     _badgeCtrl.forward(from: 0);
 
-    // 3. Spawn AR floating score at slot position
     final sz     = MediaQuery.of(context).size;
     final origin = _tracker.toScreenOffset(sz, _sensorOrientation);
     _spawnScore(origin);
 
-    // 4. Proceed after short delay (lets flash + popup show first)
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) widget.onDetected();
     });
@@ -416,51 +426,26 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   // ── Frame processing ────────────────────────────────────────────────────────
   void _onFrame(CameraImage image) {
-    // Bail immediately if the widget is being/has been torn down — the
-    // camera stream runs on a native thread and can deliver a frame after
-    // dispose() began. Calling setState() here would throw.
     if (_disposed || !mounted) return;
     _frameCount++;
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
     try {
       _tracker.update(image);
-
-      // Slot tracker drives the AR arrow + refines the detection region,
-      // but detection must NOT depend on it locking — small-hole bins are
-      // hard to track, and waiting for a lock was why insertions were
-      // never counted. Ensure _motion always exists; refine its region
-      // when the tracker has a good lock, otherwise use a default center
-      // region covering the typical bin-slot area.
-      if (_tracker.hasLock) {
-        _stableFrames++;
-        if (_stableFrames == _minStable) _rebuildMotion();
-        if (_stableFrames % 15 == 0)     _rebuildMotion();
-      } else {
-        _stableFrames = 0;
-        // No lock yet — make sure a default detector is running so the
-        // user can still score while pointing roughly at the slot.
-        _motion ??= _buildMotion(
-          left: 0.30, top: 0.18, width: 0.40, height: 0.34,
-        );
-      }
-      _motion?.processImage(image);
+      _updateOcclusion(_tracker.hasLock);
       if (!_disposed && mounted) setState(() {});
     } finally {
       _processingFrame = false;
     }
   }
 
-  int    get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
-  bool   get _lockedAndReady    =>
-      _tracker.hasLock && _stableFrames >= _minStable && _motionReady;
+  int  get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
+  bool get _lockedAndReady    => _occState != _OcclusionState.waitingForLock;
 
   String get _statusText {
-    // Detection runs continuously now (no slot-lock or calibration gate),
-    // so the status just guides the user. _motionReady becomes true a few
-    // frames after the camera starts, regardless of background motion.
-    if (!_cameraReady)   return 'Starting camera…';
-    if (!_motionReady)   return 'Get ready…';
+    if (!_cameraReady)                              return 'Starting camera…';
+    if (_occState == _OcclusionState.waitingForLock) return 'Aim at the bin slot';
+    if (_occState == _OcclusionState.occluded)       return 'Inserting…';
     return 'Insert the bottle into the slot';
   }
 
@@ -503,6 +488,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       final double dy  = target.dy - pivot.dy;
       final double ang = (atan2(dx, -dy) * 3.0).clamp(-pi * 0.78, pi * 0.78);
 
+      final bool isDetecting = _occState == _OcclusionState.occluded;
+
       return Stack(fit: StackFit.expand, children: [
 
         // ── Camera ─────────────────────────────────────────────────────
@@ -534,7 +521,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-        // ── AR ARROW (professional transparent red) ─────────────────────
+        // ── AR ARROW ────────────────────────────────────────────────────
         AnimatedBuilder(
           animation: _arCtrl,
           builder: (_, __) => CustomPaint(
@@ -544,7 +531,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               angle:       ang,
               animValue:   _arCtrl.value,
               hasLock:     _lockedAndReady,
-              isDetecting: _motionReady && _lockedAndReady,
+              isDetecting: isDetecting,
               target:      target,
             ),
           ),
@@ -559,7 +546,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                   horizontal: 20, vertical: 12),
               child: Row(children: [
 
-                // Session count badge
                 ScaleTransition(
                   scale: Tween<double>(begin: 1.0, end: 1.4).animate(
                     CurvedAnimation(
@@ -573,7 +559,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
                 const Spacer(),
 
-                // Countdown
                 _HudBadge(
                   icon: '⏱',
                   value: '$_remaining',
@@ -585,8 +570,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           ),
         ),
 
-        // ── Hint pill when no lock ──────────────────────────────────────
-        if (!_tracker.hasLock)
+        // ── "Aim at slot" hint — only shown while waiting for initial lock
+        if (_occState == _OcclusionState.waitingForLock)
           Positioned(
             top: 120, left: 0, right: 0,
             child: Center(
@@ -680,7 +665,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                       horizontal: 20, vertical: 14),
                   color: Colors.black.withOpacity(0.58),
                   child: const Text(
-                    'Arrow tip points at the bin slot.\nInsert the bottle — detected automatically.',
+                    'Point the arrow at the bin slot, then insert the bottle.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         color: Colors.white70,
@@ -748,20 +733,6 @@ class _HudBadge extends StatelessWidget {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _ProfessionalArrowPainter
-//
-// DESIGN LANGUAGE:
-//   • 20% red, semi-transparent — arrow is clearly visible but doesn't
-//     obstruct the camera feed behind it
-//   • Curved Bézier body — pivots at bottom-center, tip tracks the bin slot
-//   • Inner highlight + edge glow — gives the arrow depth and a 3D feel
-//   • Pulsing opacity on detection — signals bottle is being counted
-//   • Rotating dashed reticle at the target — professional AR crosshair
-//   • Clean, minimal — no over-engineered effects
-//
-// COLOR STATES:
-//   No lock   → #EF5350 red, 18% opacity  (very faint, guiding)
-//   Locked    → #EF5350 red, 58% opacity  (clear, confident)
-//   Detecting → #EF5350 red, 90% opacity  (bright, urgent)
 // ══════════════════════════════════════════════════════════════════════════════
 class _ProfessionalArrowPainter extends CustomPainter {
   const _ProfessionalArrowPainter({
@@ -780,19 +751,16 @@ class _ProfessionalArrowPainter extends CustomPainter {
   final bool   isDetecting;
   final Offset target;
 
-  // Base red color — all arrow elements use this with varying opacity
   static const Color _red      = Color(0xFFEF5350);
   static const Color _redLight = Color(0xFFFF8A80);
   static const Color _redDark  = Color(0xFFB71C1C);
 
-  // Opacity levels per state
   double get _baseOpacity {
     if (isDetecting) return 0.90;
     if (hasLock)     return 0.58;
-    return 0.20; // no lock — very faint
+    return 0.20;
   }
 
-  // Pulsing factor for detecting state
   double get _detectPulse =>
       isDetecting ? 0.5 + sin(animValue * pi * 5) * 0.5 : 0.0;
 
@@ -800,7 +768,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final double o = _baseOpacity + _detectPulse * 0.10;
 
-    // ── Bézier: pivot (tail) → ctrl → target (head) ─────────────────────
     final Offset ctrl = Offset(
       pivot.dx + sin(angle) * 55,
       pivot.dy - cos(angle) * 55,
@@ -824,13 +791,11 @@ class _ProfessionalArrowPainter extends CustomPainter {
 
     const double bodyEnd = 0.82;
 
-    // Build body path
     final Path body = Path()..moveTo(pivot.dx, pivot.dy);
     for (int i = 1; i <= 48; i++) {
       body.lineTo(bez((i / 48) * bodyEnd).dx, bez((i / 48) * bodyEnd).dy);
     }
 
-    // ── 1. Soft outer glow (very subtle depth) ───────────────────────────
     canvas.drawPath(body, Paint()
       ..color = _red.withOpacity(0.08 * o)
       ..style = PaintingStyle.stroke
@@ -838,21 +803,18 @@ class _ProfessionalArrowPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
 
-    // ── 2. Dark core underside ────────────────────────────────────────────
     canvas.drawPath(body, Paint()
       ..color = _redDark.withOpacity(0.55 * o)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 12
       ..strokeCap = StrokeCap.round);
 
-    // ── 3. Main red body — 20% transparent ───────────────────────────────
     canvas.drawPath(body, Paint()
       ..color = _red.withOpacity(0.75 * o)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 8
       ..strokeCap = StrokeCap.round);
 
-    // ── 4. Bright left-edge highlight (makes it look 3D) ─────────────────
     final Path hl = Path()..moveTo(pivot.dx, pivot.dy);
     for (int i = 1; i <= 48; i++) {
       final double  t  = (i / 48) * bodyEnd;
@@ -869,7 +831,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round);
 
-    // ── 5. Energy pulse when detecting ───────────────────────────────────
     if (isDetecting || hasLock) {
       final double pEnd   = animValue * bodyEnd;
       final double pStart = (animValue - 0.16).clamp(0.0, 1.0) * bodyEnd;
@@ -881,9 +842,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
           if (t < pStart || t > pEnd) continue;
           final Offset p = bez(t);
           if (first) { pulse.moveTo(p.dx, p.dy); first = false; }
-          else {
-            pulse.lineTo(p.dx, p.dy);
-          }
+          else { pulse.lineTo(p.dx, p.dy); }
         }
         if (!first) {
           canvas.drawPath(pulse, Paint()
@@ -892,16 +851,12 @@ class _ProfessionalArrowPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..strokeWidth = isDetecting ? 5 : 3
             ..strokeCap = StrokeCap.round
-            ..maskFilter = const MaskFilter.blur(
-                BlurStyle.normal, 2));
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
         }
       }
     }
 
-    // ── 6. 3D arrowhead cone ─────────────────────────────────────────────
     _drawHead(canvas, bez, bezTan, o);
-
-    // ── 7. Target reticle at slot ────────────────────────────────────────
     _drawReticle(canvas, o);
   }
 
@@ -924,11 +879,8 @@ class _ProfessionalArrowPainter extends CustomPainter {
     final Offset base = target - fwd * len;
     final Offset lp   = base + left * hw;
     final Offset rp   = base - left * hw;
-
-    // Depth shadow offset
     final Offset dOff = Offset(fwd.dy * 4, -fwd.dx * 4);
 
-    // Shadow back face
     canvas.drawPath(
       Path()
         ..moveTo(lp.dx + dOff.dx, lp.dy + dOff.dy)
@@ -937,7 +889,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..close(),
       Paint()..color = _redDark.withOpacity(0.55 * o));
 
-    // Soft glow
     canvas.drawPath(
       Path()
         ..moveTo(lp.dx, lp.dy)
@@ -948,7 +899,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..color = _red.withOpacity(0.14 * o)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
 
-    // Main red face
     canvas.drawPath(
       Path()
         ..moveTo(lp.dx, lp.dy)
@@ -957,7 +907,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
         ..close(),
       Paint()..color = _red.withOpacity(0.88 * o));
 
-    // Left highlight sliver
     canvas.drawPath(
       Path()
         ..moveTo(lp.dx, lp.dy)
@@ -974,7 +923,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
 
     final double r = 20.0 + pulse * 8;
 
-    // Outer soft glow when locked
     if (hasLock) {
       canvas.drawCircle(target, r + 10,
         Paint()
@@ -984,7 +932,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
     }
 
-    // Rotating arc segments (AR dashes)
     final double rot = animValue * pi * 2;
     for (int i = 0; i < 6; i++) {
       final double sa = rot + (i / 6) * pi * 2;
@@ -998,7 +945,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round);
     }
 
-    // Inner ring
     if (hasLock) {
       canvas.drawCircle(target, r * 0.48,
         Paint()
@@ -1007,11 +953,9 @@ class _ProfessionalArrowPainter extends CustomPainter {
           ..strokeWidth = 1.4);
     }
 
-    // Center dot
     canvas.drawCircle(target, hasLock ? 4.5 : 2.8,
       Paint()..color = _red.withOpacity(0.90 * o));
 
-    // Crosshair lines
     final double arm = hasLock ? 12.0 : 8.0;
     const double gap = 6.0;
     final Paint cp = Paint()
@@ -1024,7 +968,6 @@ class _ProfessionalArrowPainter extends CustomPainter {
     canvas.drawLine(Offset(cx - gap, cy), Offset(cx - gap - arm, cy), cp);
     canvas.drawLine(Offset(cx + gap, cy), Offset(cx + gap + arm, cy), cp);
 
-    // Status label
     if (hasLock) {
       final String lbl = isDetecting ? 'INSERTING…' : 'SLOT';
       final tp = TextPainter(
@@ -1038,8 +981,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
           )),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas,
-          Offset(cx - tp.width / 2, cy + r + 8));
+      tp.paint(canvas, Offset(cx - tp.width / 2, cy + r + 8));
     }
   }
 
