@@ -8,17 +8,17 @@ import '../../services/sound_spike_detector.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _SlotTracker  v3 — pixel-level centroid
-// Finds the exact center of the tan/amber bin flap in every camera frame.
+// Finds the exact center of the white flap and verifies the black arrow.
 // ══════════════════════════════════════════════════════════════════════════════
 class _SlotTracker {
   static const double _scanTop    = 0.02;
-  static const double _scanBottom = 0.65;
-  static const double _minY       = 88.0;
-  static const double _maxY       = 205.0;
-  static const double _minV       = 130.0;
-  static const int    _minPixels  = 20;
-  static const double _deltaY     = 8.0;
-  static const int    _lockFrames  = 4;
+  static const double _scanBottom = 0.85; // Scan further down
+  static const double _minWhiteY  = 130.0; // Lowered to catch shaded white
+  static const double _maxBlackY  = 85.0;  // Raised to catch grey/shiny black
+  static const int    _minWhitePx = 15;    // Lowered to handle smaller footprint
+  static const int    _minBlackPx = 4;     // Lowered to handle smaller arrow
+  
+  static const int    _lockFrames  = 3; // Faster lock
   static const double _seekAlpha   = 0.35;
   static const double _lockedAlpha = 0.05;
   static const double _unlockDist  = 0.20;
@@ -36,50 +36,70 @@ class _SlotTracker {
     final int fw = image.width;
     final int fh = image.height;
     final bytes = image.planes[0].bytes;
-    final List<int>? vBytes =
-        image.planes.length > 2 ? image.planes[2].bytes : null;
-    final int uvRowStride = image.planes.length > 2
-        ? image.planes[2].bytesPerRow : (fw ~/ 2);
 
     final int py0 = (_scanTop * fh).toInt();
     final int py1 = (_scanBottom * fh).toInt();
 
-    double ambientSum = 0; int ambientCnt = 0;
-    for (int py = py0; py < py1; py += 8) {
-      for (int px = 0; px < fw; px += 8) {
-        final int yi = py * fw + px;
-        if (yi < bytes.length) { ambientSum += bytes[yi]; ambientCnt++; }
-      }
-    }
-    final double ambientY = ambientCnt > 0 ? ambientSum / ambientCnt : 100;
-    final double threshold = ambientY + _deltaY;
-
     double wSumX = 0, wSumY = 0, wTotal = 0;
-    int pixelCount = 0;
+    int whiteCount = 0;
+
+    // Pass 1: Find the white flap
     for (int py = py0; py < py1; py += 4) {
       for (int px = 0; px < fw; px += 4) {
         final int yi = py * fw + px;
         if (yi >= bytes.length) continue;
+        
         final double yVal = bytes[yi].toDouble();
-        if (yVal < _minY || yVal > _maxY || yVal < threshold) continue;
-        if (vBytes != null) {
-          final int vi = (py ~/ 2) * uvRowStride + (px ~/ 2);
-          if (vi < vBytes.length && vBytes[vi].toDouble() < _minV) continue;
+        if (yVal > _minWhiteY) {
+          wSumX += px * yVal; 
+          wSumY += py * yVal;
+          wTotal += yVal; 
+          whiteCount++;
         }
-        wSumX += px * yVal; wSumY += py * yVal;
-        wTotal += yVal; pixelCount++;
       }
     }
 
-    final bool detected = pixelCount >= _minPixels && wTotal > 0;
+    final bool whiteDetected = whiteCount >= _minWhitePx && wTotal > 0;
+    bool arrowDetected = false;
+    double rawX = 0.5;
+    double rawY = 0.5;
+
+    if (whiteDetected) {
+      rawX = (wSumX / wTotal) / fw;
+      rawY = (wSumY / wTotal) / fh;
+
+      // Pass 2: Look for the black arrow near the white flap's center
+      int blackCount = 0;
+      final int cx = (rawX * fw).toInt();
+      final int cy = (rawY * fh).toInt();
+      final int sRx = fw ~/ 4; // Wider search radius (was ~/ 6)
+      final int sRy = fh ~/ 4;
+
+      final int startY = max(0, cy - sRy);
+      final int endY = min(fh, cy + sRy);
+      final int startX = max(0, cx - sRx);
+      final int endX = min(fw, cx + sRx);
+
+      for (int py = startY; py < endY; py += 4) {
+        for (int px = startX; px < endX; px += 4) {
+          final int yi = py * fw + px;
+          if (yi >= bytes.length) continue;
+          
+          if (bytes[yi] < _maxBlackY) {
+            blackCount++;
+          }
+        }
+      }
+      arrowDetected = blackCount >= _minBlackPx;
+    }
+
+    final bool detected = whiteDetected && arrowDetected;
+
     if (!detected) {
       _streak = (_streak - 1).clamp(0, _lockFrames);
       if (_streak == 0) { _locked = false; hasLock = false; }
       return;
     }
-
-    final double rawX = (wSumX / wTotal) / fw;
-    final double rawY = (wSumY / wTotal) / fh;
 
     if (_locked) {
       if (_hypot(rawX - _lockX, rawY - _lockY) > _unlockDist) {
@@ -199,8 +219,26 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ── Slot tracker ────────────────────────────────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
 
-  // ── Sound (optional secondary confirmation) ─────────────────────────────────
-  final SoundSpikeDetector _sound = SoundSpikeDetector();
+  // ── Sound (optional secondary confirmation and fallback) ────────────────────
+  late final SoundSpikeDetector _sound = SoundSpikeDetector(
+    onSpike: _handleSoundSpike,
+  );
+
+  void _handleSoundSpike(SoundSpikeEvent event) {
+    if (_disposed || _detected || !mounted) return;
+    
+    final now = DateTime.now();
+    if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
+    
+    // If the user is pointing at the bin (locked or occluded), and we hear a 
+    // loud bottle thud, count it even if the camera didn't perfectly see the motion.
+    if (_occState == _OcclusionState.locked || _occState == _OcclusionState.occluded) {
+      _lastCountTime = now;
+      _occlusionStart = null;
+      _occState = _OcclusionState.locked;
+      _onBottleDetected();
+    }
+  }
 
   // ── Occlusion-based detection ───────────────────────────────────────────────
   // The arrow locks onto the tan/amber bin opening. When a bottle is inserted
