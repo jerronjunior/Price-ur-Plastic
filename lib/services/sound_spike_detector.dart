@@ -45,11 +45,12 @@ class SoundSpikeDetector {
 
   // How far above baseline counts as a "spike" — a bottle thud is typically
   // a sudden 12-20dB jump above ambient room noise.
-  static const double _spikeDeltaDb = 12.0;
+  // Lowered to 5.0dB to detect small/quiet sounds (safe due to dual verification).
+  static const double _spikeDeltaDb = 5.0;
 
   // Debounce so one physical thud doesn't fire multiple spike events as
   // the sound decays.
-  static const Duration _debounce = Duration(milliseconds: 400);
+  static const Duration _debounce = Duration(milliseconds: 300);
   DateTime? _lastSpikeAt;
 
   bool _disposed = false;

@@ -219,32 +219,23 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ── Slot tracker ────────────────────────────────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
 
-  // ── Dual Verification (Camera + Sound) ──────────────────────────────────────
+  // ── Either Camera OR Sound Verification ─────────────────────────────────────
   late final SoundSpikeDetector _sound = SoundSpikeDetector(
     onSpike: _handleSoundSpike,
   );
 
-  DateTime? _lastCameraEventTime;
-  DateTime? _lastSoundEventTime;
-
   void _handleSoundSpike(SoundSpikeEvent event) {
     if (_disposed || _detected || !mounted) return;
-    _lastSoundEventTime = DateTime.now();
-    _checkDualVerification();
-  }
-
-  void _checkDualVerification() {
-    if (_lastCameraEventTime == null || _lastSoundEventTime == null) return;
     
-    final diff = _lastCameraEventTime!.difference(_lastSoundEventTime!).abs();
-    // Both events must occur within 2.5 seconds of each other
-    if (diff <= const Duration(milliseconds: 2500)) {
+    // If the user is aiming at the bin (locked) or actively inserting (occluded)
+    // and we hear a thud, count it!
+    if (_occState == _OcclusionState.locked || _occState == _OcclusionState.occluded) {
       final now = DateTime.now();
       if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
       
       _lastCountTime = now;
-      _lastCameraEventTime = null;
-      _lastSoundEventTime = null;
+      _occlusionStart = null;
+      _occState = _OcclusionState.locked;
       _onBottleDetected();
     }
   }
@@ -253,14 +244,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // The camera tracker locks onto the white flap. When a bottle is inserted,
   // it covers the flap/arrow → tracker loses lock (hasLock → false). When the
   // bottle clears, the opening reappears → hasLock → true.
-  // This visual cycle combined with a sound spike confirms a real insertion.
+  // EITHER this visual cycle OR a sound spike confirms a real insertion.
   _OcclusionState _occState     = _OcclusionState.waitingForLock;
   int             _stableFrames = 0;
   DateTime?       _occlusionStart;
   DateTime?       _lastCountTime;
 
   static const int      _minStableFrames       = 5;
-  static const Duration _minOcclusion          = Duration(milliseconds: 150);
+  static const Duration _minOcclusion          = Duration(milliseconds: 100);
   static const Duration _maxOcclusion          = Duration(seconds: 4);
   static const Duration _countCooldown         = Duration(seconds: 2);
 
@@ -410,11 +401,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           // Slot reappeared — check if the hide was long enough.
           if (elapsed >= _minOcclusion) {
             // Valid visual hide-and-show cycle!
-            // Wait for dual verification with sound before counting.
-            _lastCameraEventTime = now;
+            // The camera saw the insertion, so count it!
+            _lastCountTime  = now;
             _occlusionStart = null;
             _occState       = _OcclusionState.locked;
-            _checkDualVerification();
+            _onBottleDetected();
           } else {
             // Too brief — tracking flicker, remain locked.
             _occlusionStart = null;
