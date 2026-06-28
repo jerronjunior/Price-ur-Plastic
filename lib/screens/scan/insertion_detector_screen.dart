@@ -95,9 +95,13 @@ class _SlotTracker {
 
     final bool detected = whiteDetected && arrowDetected;
 
+    // Report raw detection immediately so fast bottles are caught instantly.
+    // The state machine already debounces this using `_minOcclusion`.
+    hasLock = detected;
+
     if (!detected) {
       _streak = (_streak - 1).clamp(0, _lockFrames);
-      if (_streak == 0) { _locked = false; hasLock = false; }
+      if (_streak == 0) { _locked = false; }
       return;
     }
 
@@ -219,39 +223,49 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ── Slot tracker ────────────────────────────────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
 
-  // ── Either Camera OR Sound Verification ─────────────────────────────────────
+  // ── Hybrid Verification (Camera Primary + Sound Assist) ─────────────────────
   late final SoundSpikeDetector _sound = SoundSpikeDetector(
     onSpike: _handleSoundSpike,
   );
 
+  DateTime? _pendingShortVisualEvent;
+
   void _handleSoundSpike(SoundSpikeEvent event) {
     if (_disposed || _detected || !mounted) return;
     
-    // If the user is aiming at the bin (locked) or actively inserting (occluded)
-    // and we hear a thud, count it!
-    if (_occState == _OcclusionState.locked || _occState == _OcclusionState.occluded) {
-      final now = DateTime.now();
-      if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
-      
-      _lastCountTime = now;
-      _occlusionStart = null;
-      _occState = _OcclusionState.locked;
-      _onBottleDetected();
+    // If we recently had a short visual flicker (fast bottle drop),
+    // and now we hear a sound, it confirms the insertion!
+    if (_pendingShortVisualEvent != null) {
+      final diff = DateTime.now().difference(_pendingShortVisualEvent!);
+      if (diff <= const Duration(milliseconds: 2000)) {
+        _commitInsertionCount();
+      }
     }
   }
 
+  void _commitInsertionCount() {
+    final now = DateTime.now();
+    if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
+    
+    _lastCountTime = now;
+    _pendingShortVisualEvent = null;
+    _occlusionStart = null;
+    _occState = _OcclusionState.locked;
+    _onBottleDetected();
+  }
+
   // ── Occlusion-based detection ───────────────────────────────────────────────
-  // The camera tracker locks onto the white flap. When a bottle is inserted,
-  // it covers the flap/arrow → tracker loses lock (hasLock → false). When the
-  // bottle clears, the opening reappears → hasLock → true.
-  // EITHER this visual cycle OR a sound spike confirms a real insertion.
+  // 1. Long visual hide (> 250ms) = Count immediately (strong visual proof).
+  // 2. Short visual hide (> 80ms) + Sound Spike = Count (sound confirms fast drop).
+  // 3. Sound alone = NEVER counts.
   _OcclusionState _occState     = _OcclusionState.waitingForLock;
   int             _stableFrames = 0;
   DateTime?       _occlusionStart;
   DateTime?       _lastCountTime;
 
   static const int      _minStableFrames       = 5;
-  static const Duration _minOcclusion          = Duration(milliseconds: 100);
+  static const Duration _minOcclusion          = Duration(milliseconds: 100); // Standard visual proof
+  static const Duration _minOcclusionWithSound = Duration(milliseconds: 50);  // Extremely fast drop + sound
   static const Duration _maxOcclusion          = Duration(seconds: 4);
   static const Duration _countCooldown         = Duration(seconds: 2);
 
@@ -400,14 +414,22 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         if (locked) {
           // Slot reappeared — check if the hide was long enough.
           if (elapsed >= _minOcclusion) {
-            // Valid visual hide-and-show cycle!
-            // The camera saw the insertion, so count it!
-            _lastCountTime  = now;
-            _occlusionStart = null;
-            _occState       = _OcclusionState.locked;
-            _onBottleDetected();
+            // Strong visual proof! Count immediately.
+            _commitInsertionCount();
+          } else if (elapsed >= _minOcclusionWithSound) {
+            // Fast/weak visual proof. Might be a bottle, might be a flicker.
+            // Did we ALREADY hear a sound recently (e.g. while pushing flap)?
+            if (_sound.hadRecentSpike(window: elapsed + const Duration(milliseconds: 1000))) {
+              _commitInsertionCount();
+            } else {
+              // Sound hasn't happened yet. Queue this event. If sound happens 
+              // within 2 seconds, it will confirm and count.
+              _pendingShortVisualEvent = now;
+              _occlusionStart = null;
+              _occState = _OcclusionState.locked;
+            }
           } else {
-            // Too brief — tracking flicker, remain locked.
+            // Too brief (< 80ms) — tracking noise, ignore completely.
             _occlusionStart = null;
             _occState       = _OcclusionState.locked;
           }
