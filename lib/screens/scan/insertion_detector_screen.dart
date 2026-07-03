@@ -13,10 +13,10 @@ import '../../services/sound_spike_detector.dart';
 class _SlotTracker {
   static const double _scanTop    = 0.02;
   static const double _scanBottom = 0.85; // Scan further down
-  static const double _minWhiteY  = 130.0; // Lowered to catch shaded white
-  static const double _maxBlackY  = 85.0;  // Raised to catch grey/shiny black
-  static const int    _minWhitePx = 15;    // Lowered to handle smaller footprint
-  static const int    _minBlackPx = 4;     // Lowered to handle smaller arrow
+  static const double _minWhiteY  = 120.0; // Loosened to allow varying lighting
+  static const double _maxBlackY  = 110.0; // Loosened because printed black can be lighter outdoors
+  static const int    _minWhitePx = 100;   // Require a solid chunk of white
+  static const int    _minBlackPx = 8;     // Require a clear arrow
   
   static const int    _lockFrames  = 3; // Faster lock
   static const double _seekAlpha   = 0.35;
@@ -33,9 +33,13 @@ class _SlotTracker {
   double _lockY  = 0.28;
 
   void update(CameraImage image) {
+    if (image.planes.isEmpty) return;
     final int fw = image.width;
     final int fh = image.height;
-    final bytes = image.planes[0].bytes;
+    final plane = image.planes[0];
+    final bytes = plane.bytes;
+    final int bpr = plane.bytesPerRow;
+    final int pStride = plane.bytesPerPixel ?? 1;
 
     final int py0 = (_scanTop * fh).toInt();
     final int py1 = (_scanBottom * fh).toInt();
@@ -46,9 +50,11 @@ class _SlotTracker {
     // Pass 1: Find the white flap
     for (int py = py0; py < py1; py += 4) {
       for (int px = 0; px < fw; px += 4) {
-        final int yi = py * fw + px;
-        if (yi >= bytes.length) continue;
+        final int yi = py * bpr + px * pStride;
+        if (yi >= bytes.length || yi < 0) continue;
         
+        // On iOS BGRA, this reads the Blue channel, which is close enough to Luma for white/black.
+        // On Android YUV, this reads the Y (Luminance) channel.
         final double yVal = bytes[yi].toDouble();
         if (yVal > _minWhiteY) {
           wSumX += px * yVal; 
@@ -82,8 +88,8 @@ class _SlotTracker {
 
       for (int py = startY; py < endY; py += 4) {
         for (int px = startX; px < endX; px += 4) {
-          final int yi = py * fw + px;
-          if (yi >= bytes.length) continue;
+          final int yi = py * bpr + px * pStride;
+          if (yi >= bytes.length || yi < 0) continue;
           
           if (bytes[yi] < _maxBlackY) {
             blackCount++;
@@ -264,9 +270,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   DateTime?       _lastCountTime;
 
   static const int      _minStableFrames       = 5;
-  static const Duration _minOcclusion          = Duration(milliseconds: 100); // Standard visual proof
-  static const Duration _minOcclusionWithSound = Duration(milliseconds: 50);  // Extremely fast drop + sound
-  static const Duration _maxOcclusion          = Duration(seconds: 4);
+  static const Duration _minOcclusion          = Duration(milliseconds: 150); // Standard visual proof
+  static const Duration _minOcclusionWithSound = Duration(milliseconds: 50);  // Fast drop + sound
+  static const Duration _maxOcclusion          = Duration(seconds: 5);
   static const Duration _countCooldown         = Duration(seconds: 2);
 
   // ── AR state ───────────────────────────────────────────────────────────────
