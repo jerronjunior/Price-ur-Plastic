@@ -6,7 +6,6 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'slot_motion_detection_impl.dart';
-import 'sound_spike_detector.dart';
 import '../../services/training_data_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +226,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _motionReady = false;
   bool _streamStarted = false;
   bool _disposed = false; // guards async camera-frame callbacks
-  final SoundSpikeDetector _sound = SoundSpikeDetector();
   int _stableFrames = 0;
   static const int _minStable = 8;
 
@@ -265,9 +263,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _startTimeout();
     _initCamera();
-    // Fire-and-forget — requests mic permission and starts listening.
-    // Never blocks the camera/scanning flow if denied or unsupported.
-    unawaited(_sound.start());
   }
 
   @override
@@ -277,7 +272,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     // setState()/touching _motion after they've been torn down. This is
     // what fixes the intermittent '_dependents.isEmpty' assertion.
     _disposed = true;
-    _sound.dispose();
     WidgetsBinding.instance.removeObserver(this);
 
     // Stop the image stream BEFORE disposing anything it feeds into.
@@ -372,8 +366,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       regionTop: top,
       regionWidth: width,
       regionHeight: height,
-      soundDetector:
-          _sound, // fuses sound-spike confirmation with camera motion
       onReadyChanged: (v) {
         if (!_disposed && mounted) setState(() => _motionReady = v);
       },
