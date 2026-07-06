@@ -228,15 +228,7 @@ class SlotMotionDetectionImpl {
     double? minChangeFractionOverride,
     double? minDownwardScoreOverride,
     double? maxCornerMotionAvgOverride,
-    // Optional sound-spike detector. CAMERA DETECTION IS COMPULSORY and
-    // works fully on its own — sound is only ever a helper. If a spike
-    // lands near a borderline camera signal, the camera bar is relaxed
-    // slightly for that one attempt. If sound disagrees, says nothing, or
-    // isn't running at all (mic permission denied/unsupported), the
-    // camera decides entirely by itself at the normal, stricter bar.
-    SoundSpikeDetector? soundDetector,
-  })  : _soundDetector = soundDetector,
-        _onMotionDetected = onMotionDetected,
+  })  : _onMotionDetected = onMotionDetected,
         _onReadyChanged = onReadyChanged,
         _regionLeft = regionLeft,
         _regionTop = regionTop,
@@ -247,7 +239,7 @@ class SlotMotionDetectionImpl {
         _minDownwardScore  = minDownwardScoreOverride  ?? _defaultMinDownwardScore,
         _maxCornerMotionAvg = maxCornerMotionAvgOverride ?? _defaultMaxCornerMotionAvg;
 
-  final SoundSpikeDetector? _soundDetector;
+
   final void Function() _onMotionDetected;
   final void Function(bool isReady) _onReadyChanged;
   final void Function(InsertionAttemptResult result)? _onAttemptComplete;
@@ -521,28 +513,14 @@ class SlotMotionDetectionImpl {
           // (i.e. the "motion" was just whole-camera movement, no insertion).
           // ── Camera is the COMPULSORY signal ─────────────────────────────
           // The zone-vs-background motion ratio is always the deciding
-          // check — this works fully on its own with no sound at all.
+          // check — this works fully on its own.
           final zoneVsBackground = avgCornerMotion > 0.001
               ? _peakChangeFraction / avgCornerMotion
               : 99.0;
 
-          // ── Sound is an OPTIONAL helper, never a requirement ────────────
-          // If a spike landed near this moment, it's corroborating evidence
-          // for a borderline camera signal — so the camera bar is relaxed
-          // a little (2.2 → 1.3). If sound disagrees, says nothing, or the
-          // detector isn't running at all (denied permission/unsupported),
-          // the camera still decides entirely on its own at the stricter
-          // bar. Sound can only make a count MORE likely, never block one.
-          final soundConfirmed = _soundDetector?.hadRecentSpike(
-                window: const Duration(milliseconds: 900),
-              ) ??
-              false;
-          final requiredRatio = soundConfirmed ? 1.3 : 2.2;
-
+          final requiredRatio = 2.2;
           final counted = zoneVsBackground >= requiredRatio;
-          final String? rejectedReason = counted
-              ? null
-              : (soundConfirmed ? 'cameraShake' : 'cameraShakeNoSound');
+          final String? rejectedReason = counted ? null : 'cameraShake';
 
           _cornerMotionSum = 0;
           _cornerMotionCount = 0;

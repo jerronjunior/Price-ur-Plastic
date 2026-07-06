@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-import '../../services/sound_spike_detector.dart';
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _SlotTracker  v3 — pixel-level centroid
@@ -26,6 +26,7 @@ class _SlotTracker {
   double slotNormX = 0.50;
   double slotNormY = 0.28;
   bool   hasLock   = false;
+  bool   hasCandidate = false;
 
   int    _streak = 0;
   bool   _locked = false;
@@ -103,6 +104,7 @@ class _SlotTracker {
 
     // Report raw detection immediately so fast bottles are caught instantly.
     // The state machine already debounces this using `_minOcclusion`.
+    hasCandidate = whiteDetected;
     hasLock = detected;
 
     if (!detected) {
@@ -150,7 +152,7 @@ class _SlotTracker {
 
   void reset() {
     slotNormX = 0.50; slotNormY = 0.28;
-    hasLock = false; _locked = false;
+    hasLock = false; hasCandidate = false; _locked = false;
     _lockX = 0.50; _lockY = 0.28; _streak = 0;
   }
 }
@@ -279,32 +281,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ── Slot tracker ────────────────────────────────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
 
-  // ── Hybrid Verification (Camera Primary + Sound Assist) ─────────────────────
-  late final SoundSpikeDetector _sound = SoundSpikeDetector(
-    onSpike: _handleSoundSpike,
-  );
 
-  DateTime? _pendingShortVisualEvent;
-
-  void _handleSoundSpike(SoundSpikeEvent event) {
-    if (_disposed || _detected || !mounted) return;
-    
-    // If we recently had a short visual flicker (fast bottle drop),
-    // and now we hear a sound, it confirms the insertion!
-    if (_pendingShortVisualEvent != null) {
-      final diff = DateTime.now().difference(_pendingShortVisualEvent!);
-      if (diff <= const Duration(milliseconds: 2000)) {
-        _commitInsertionCount();
-      }
-    }
-  }
 
   void _commitInsertionCount() {
     final now = DateTime.now();
     if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
     
     _lastCountTime = now;
-    _pendingShortVisualEvent = null;
     _occlusionStart = null;
     _occState = _OcclusionState.locked;
     _occlusionDetector.reset();
@@ -365,13 +348,13 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _startTimeout();
     _initCamera();
-    unawaited(_sound.start());
+
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _sound.dispose();
+
     WidgetsBinding.instance.removeObserver(this);
 
     if (_cam?.value.isStreamingImages == true) {
@@ -446,9 +429,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     switch (_occState) {
       case _OcclusionState.waitingForLock:
-        if (locked) {
+        final slotCandidateSeen = locked || _tracker.hasCandidate;
+        if (slotCandidateSeen) {
           _stableFrames++;
-          if (_stableFrames >= _minStableFrames) {
+          if (_stableFrames >= 1) {
             _occState = _OcclusionState.locked;
           }
         } else {
