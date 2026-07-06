@@ -165,10 +165,10 @@ class ArrowOcclusionDetector {
   int? _dipStartFrame;
   final List<double> _warm = [];
 
-  static const double _dipRatio = 0.85;      // dark-frac below 85% of baseline = arrow hidden
-  static const double _recoverRatio = 0.90;  // back above 90% = arrow visible again
-  static const int _minDipFrames = 1;        // shorter = noise flicker
-  static const int _maxDipFrames = 60;       // longer = lingering hand, NOT an insertion
+  static const double _dipRatio = 0.96;      // arrow hides when the zone becomes much darker
+  static const double _recoverRatio = 0.98;  // counts once the arrow comes back
+  static const int _minDipFrames = 1;        // a very brief hide should count
+  static const int _maxDipFrames = 12;       // longer than that is likely a linger, not a pass-through
 
   void reset() {
     _baseline = null;
@@ -453,6 +453,25 @@ class SlotMotionDetectionImpl {
       final darkFrac = darkCount / zoneLen;
       final occlusionFired = _occlusion.push(darkFrac);
 
+      if (occlusionFired) {
+        _lastCount = DateTime.now();
+        _model.reset();
+        _occlusion.reset();
+        _onAttemptComplete?.call(InsertionAttemptResult(
+          counted: true,
+          rejectedReason: null,
+          peakChangeFraction: _changedFraction,
+          peakDownwardScore: frameDown,
+          avgCornerMotion: frameCorner,
+          durationMs: _attemptStart != null
+              ? DateTime.now().difference(_attemptStart!).inMilliseconds
+              : 0,
+        ));
+        _onMotionDetected();
+        _previousSample = sample;
+        return;
+      }
+
       // ── PRIMARY DETECTOR: trained insertion-action model ─────────────────
       // Trained on 36 real insertion videos + hard negatives; validated at
       // 36/36 detections with 0 false fires. The arrow-occlusion cycle is
@@ -471,7 +490,7 @@ class SlotMotionDetectionImpl {
         if (occlusionFired) {
           debugPrint('[Occlusion] Arrow dip-and-recover cycle → count');
         }
-        if (occlusionFired || p >= LearnedInsertionModel.fireThreshold) {
+        if (p >= LearnedInsertionModel.fireThreshold) {
           _lastCount = DateTime.now();
           _model.reset(); // fresh window for the next insertion
           _occlusion.reset();
