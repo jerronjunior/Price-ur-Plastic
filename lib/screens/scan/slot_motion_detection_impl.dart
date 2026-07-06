@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 
 enum _PassState {
   idle,
@@ -77,8 +79,8 @@ class LearnedInsertionModel {
   ];
 
   /// Fire when probability exceeds this. Negative video peaked at 0.36,
-  /// weakest real insertion peaked at 0.75 — 0.5 sits safely between.
-  static const double fireThreshold = 0.5;
+  /// weakest real insertion peaked at 0.75 - 0.5 sits safely between.
+  static const double fireThreshold = 0.2;
 
   final List<double> _zone = [];
   final List<double> _down = [];
@@ -163,10 +165,10 @@ class ArrowOcclusionDetector {
   int? _dipStartFrame;
   final List<double> _warm = [];
 
-  static const double _dipRatio = 0.65;      // dark-frac below 65% of baseline = arrow hidden
-  static const double _recoverRatio = 0.85;  // back above 85% = arrow visible again
-  static const int _minDipFrames = 2;        // shorter = noise flicker
-  static const int _maxDipFrames = 30;       // longer = lingering hand, NOT an insertion
+  static const double _dipRatio = 0.85;      // dark-frac below 85% of baseline = arrow hidden
+  static const double _recoverRatio = 0.90;  // back above 90% = arrow visible again
+  static const int _minDipFrames = 1;        // shorter = noise flicker
+  static const int _maxDipFrames = 60;       // longer = lingering hand, NOT an insertion
 
   void reset() {
     _baseline = null;
@@ -264,11 +266,13 @@ class SlotMotionDetectionImpl {
   // Filter 2: min changed fraction in zone
   static const double _defaultMinChangeFraction = 0.06; // handheld: bottle is smaller in frame, motion fraction is lower
   // Filter 3: downward dominance score threshold
-  static const double _defaultMinDownwardScore = 0.20; // handheld: bottle enters at varied angles, relax downward requirement
+  static const double _defaultMinDownwardScore =
+      0.10; // handheld: bottle enters at varied angles, relax downward requirement
   // Filter 5: cooldown after each count
   static const int _cooldownMs = 2000; // faster cooldown for open-top bins
   // Pixel diff threshold for per-pixel motion map
-  static const int _pixelDiffThreshold = 18; // lowered: wire mesh reduces pixel diff
+  static const int _pixelDiffThreshold =
+      12; // lowered: wire mesh reduces pixel diff
   static const int _bands = 20;
 
   // ── Anti camera-shake guard ────────────────────────────────────────────────
@@ -289,8 +293,8 @@ class SlotMotionDetectionImpl {
   //   False-trigger clip  — avg corner motion: 0.363   ← clearly higher
   //
   static const double _cornerFrac = 0.15; // each corner patch = 15% of width/height
-  static const int _cornerPixelDiffThreshold = 18;
-  static const double _defaultMaxCornerMotionAvg = 0.32; // reject if background moved this much
+  static const int _cornerPixelDiffThreshold = 12;
+  static const double _defaultMaxCornerMotionAvg = 0.50; // reject if background moved this much
 
   int _frameCount = 0;
   _PassState _state = _PassState.idle;
@@ -518,7 +522,7 @@ class SlotMotionDetectionImpl {
               ? _peakChangeFraction / avgCornerMotion
               : 99.0;
 
-          final requiredRatio = 2.2;
+          final requiredRatio = 1.2;
           final counted = zoneVsBackground >= requiredRatio;
           final String? rejectedReason = counted ? null : 'cameraShake';
 

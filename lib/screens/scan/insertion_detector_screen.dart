@@ -1,127 +1,110 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-
+import 'slot_motion_detection_impl.dart';
+import 'sound_spike_detector.dart';
+import '../../services/training_data_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _SlotTracker  v3 — pixel-level centroid
-// Finds the exact center of the white flap and verifies the black arrow.
+// Finds the exact center of the tan/amber bin flap in every camera frame.
 // ══════════════════════════════════════════════════════════════════════════════
 class _SlotTracker {
-  static const double _scanTop    = 0.02;
-  static const double _scanBottom = 0.85; // Scan further down
-  static const double _minWhiteY  = 95.0;  // More tolerant to lighting changes
-  static const double _maxBlackY  = 120.0; // Allow darker printed arrows in varied lighting
-  static const int    _minWhitePx = 24;    // Lowered to pick up smaller slot regions
-  static const int    _minBlackPx = 2;     // Very light arrow still counts
-  
-  static const int    _lockFrames  = 3; // Faster lock
-  static const double _seekAlpha   = 0.25;
-  static const double _lockedAlpha = 0.06;
-  static const double _unlockDist  = 0.28;
+  static const double _scanTop = 0.02;
+  static const double _scanBottom = 0.65;
+  static const double _minY = 88.0;
+  static const double _maxY = 205.0;
+  static const double _minV = 130.0;
+  static const int _minPixels = 20;
+  static const double _deltaY = 8.0;
+  static const int _lockFrames = 4;
+  static const double _seekAlpha = 0.35;
+  static const double _lockedAlpha = 0.05;
+  static const double _unlockDist = 0.20;
 
   double slotNormX = 0.50;
   double slotNormY = 0.28;
-  bool   hasLock   = false;
-  bool   hasCandidate = false;
+  bool hasLock = false;
 
-  int    _streak = 0;
-  bool   _locked = false;
-  double _lockX  = 0.50;
-  double _lockY  = 0.28;
+  int _streak = 0;
+  bool _locked = false;
+  double _lockX = 0.50;
+  double _lockY = 0.28;
 
   void update(CameraImage image) {
-    if (image.planes.isEmpty) return;
     final int fw = image.width;
     final int fh = image.height;
-    final plane = image.planes[0];
-    final bytes = plane.bytes;
-    final int bpr = plane.bytesPerRow;
-    final int pStride = plane.bytesPerPixel ?? 1;
+    final Uint8List yPlane = image.planes[0].bytes;
+    final Uint8List? vPlane =
+        image.planes.length > 2 ? image.planes[2].bytes : null;
+    final int uvRowStride =
+        image.planes.length > 2 ? image.planes[2].bytesPerRow : (fw ~/ 2);
 
     final int py0 = (_scanTop * fh).toInt();
     final int py1 = (_scanBottom * fh).toInt();
 
-    double wSumX = 0, wSumY = 0, wTotal = 0;
-    int whiteCount = 0;
+    double ambientSum = 0;
+    int ambientCnt = 0;
+    for (int py = py0; py < py1; py += 8) {
+      for (int px = 0; px < fw; px += 8) {
+        final int yi = py * fw + px;
+        if (yi < yPlane.length) {
+          ambientSum += yPlane[yi];
+          ambientCnt++;
+        }
+      }
+    }
+    final double ambientY = ambientCnt > 0 ? ambientSum / ambientCnt : 100;
+    final double threshold = ambientY + _deltaY;
 
-    // Pass 1: Find the white flap
+    double wSumX = 0, wSumY = 0, wTotal = 0;
+    int pixelCount = 0;
     for (int py = py0; py < py1; py += 4) {
       for (int px = 0; px < fw; px += 4) {
-        final int yi = py * bpr + px * pStride;
-        if (yi >= bytes.length || yi < 0) continue;
-        
-        // On iOS BGRA, this reads the Blue channel, which is close enough to Luma for white/black.
-        // On Android YUV, this reads the Y (Luminance) channel.
-        final double yVal = bytes[yi].toDouble();
-        if (yVal > _minWhiteY) {
-          wSumX += px * yVal; 
-          wSumY += py * yVal;
-          wTotal += yVal; 
-          whiteCount++;
+        final int yi = py * fw + px;
+        if (yi >= yPlane.length) continue;
+        final double yVal = yPlane[yi].toDouble();
+        if (yVal < _minY || yVal > _maxY || yVal < threshold) continue;
+        if (vPlane != null) {
+          final int vi = (py ~/ 2) * uvRowStride + (px ~/ 2);
+          if (vi < vPlane.length && vPlane[vi].toDouble() < _minV) continue;
         }
+        wSumX += px * yVal;
+        wSumY += py * yVal;
+        wTotal += yVal;
+        pixelCount++;
       }
     }
 
-    final bool whiteDetected = whiteCount >= _minWhitePx && wTotal > 0;
-    bool arrowDetected = false;
-    double rawX = 0.5;
-    double rawY = 0.5;
-
-    if (whiteDetected) {
-      rawX = (wSumX / wTotal) / fw;
-      rawY = (wSumY / wTotal) / fh;
-
-      // Pass 2: Look for the black arrow near the white flap's center
-      int blackCount = 0;
-      final int cx = (rawX * fw).toInt();
-      final int cy = (rawY * fh).toInt();
-      final int sRx = fw ~/ 4; // Wider search radius (was ~/ 6)
-      final int sRy = fh ~/ 4;
-
-      final int startY = max(0, cy - sRy);
-      final int endY = min(fh, cy + sRy);
-      final int startX = max(0, cx - sRx);
-      final int endX = min(fw, cx + sRx);
-
-      for (int py = startY; py < endY; py += 4) {
-        for (int px = startX; px < endX; px += 4) {
-          final int yi = py * bpr + px * pStride;
-          if (yi >= bytes.length || yi < 0) continue;
-          
-          if (bytes[yi] < _maxBlackY) {
-            blackCount++;
-          }
-        }
-      }
-      arrowDetected = blackCount >= _minBlackPx;
-    }
-
-    final bool detected = whiteDetected && arrowDetected;
-
-    // Report raw detection immediately so fast bottles are caught instantly.
-    // The state machine already debounces this using `_minOcclusion`.
-    hasCandidate = whiteDetected;
-    hasLock = detected;
-
+    final bool detected = pixelCount >= _minPixels && wTotal > 0;
     if (!detected) {
       _streak = (_streak - 1).clamp(0, _lockFrames);
-      if (_streak == 0) { _locked = false; }
+      if (_streak == 0) {
+        _locked = false;
+        hasLock = false;
+      }
       return;
     }
 
+    final double rawX = (wSumX / wTotal) / fw;
+    final double rawY = (wSumY / wTotal) / fh;
+
     if (_locked) {
       if (_hypot(rawX - _lockX, rawY - _lockY) > _unlockDist) {
-        hasLock = true; return;
+        hasLock = true;
+        return;
       }
     }
 
     _streak = (_streak + 1).clamp(0, _lockFrames + 1);
     if (_streak >= _lockFrames && !_locked) {
-      _locked = true; _lockX = slotNormX; _lockY = slotNormY;
+      _locked = true;
+      _lockX = slotNormX;
+      _lockY = slotNormY;
     }
     final double alpha = _locked ? _lockedAlpha : _seekAlpha;
     slotNormX += (rawX - slotNormX) * alpha;
@@ -137,10 +120,21 @@ class _SlotTracker {
   Offset toScreenOffset(Size screen, int sensorOrientation) {
     double sx, sy;
     switch (sensorOrientation) {
-      case 90:  sx = 1.0 - slotNormY; sy = slotNormX;       break;
-      case 270: sx = slotNormY;       sy = 1.0 - slotNormX; break;
-      case 180: sx = 1.0 - slotNormX; sy = 1.0 - slotNormY; break;
-      default:  sx = slotNormX;       sy = slotNormY;
+      case 90:
+        sx = 1.0 - slotNormY;
+        sy = slotNormX;
+        break;
+      case 270:
+        sx = slotNormY;
+        sy = 1.0 - slotNormX;
+        break;
+      case 180:
+        sx = 1.0 - slotNormX;
+        sy = 1.0 - slotNormY;
+        break;
+      default:
+        sx = slotNormX;
+        sy = slotNormY;
     }
     return Offset(
       sx.clamp(0.05, 0.95) * screen.width,
@@ -148,71 +142,32 @@ class _SlotTracker {
     );
   }
 
+  ({double left, double top, double width, double height}) get cameraRegion => (
+        left: (slotNormX - 0.18).clamp(0.0, 0.80),
+        top: (slotNormY - 0.15).clamp(0.0, 0.80),
+        width: 0.36,
+        height: 0.30,
+      );
+
   double _hypot(double a, double b) => sqrt(a * a + b * b);
 
   void reset() {
-    slotNormX = 0.50; slotNormY = 0.28;
-    hasLock = false; hasCandidate = false; _locked = false;
-    _lockX = 0.50; _lockY = 0.28; _streak = 0;
+    slotNormX = 0.50;
+    slotNormY = 0.28;
+    hasLock = false;
+    _locked = false;
+    _lockX = 0.50;
+    _lockY = 0.28;
+    _streak = 0;
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _FloatingScore — AR "+N pts" popup that rises from the slot on each count
 // ══════════════════════════════════════════════════════════════════════════════
-class OcclusionEventDetector {
-  OcclusionEventDetector({
-    this.minOcclusion = const Duration(milliseconds: 250),
-    this.maxOcclusion = const Duration(seconds: 2),
-    this.cooldown = const Duration(seconds: 2),
-  });
-
-  final Duration minOcclusion;
-  final Duration maxOcclusion;
-  final Duration cooldown;
-
-  DateTime? _occlusionStart;
-  DateTime? _lastCount;
-
-  void reset() {
-    _occlusionStart = null;
-    _lastCount = null;
-  }
-
-  bool update({required bool slotVisible, required DateTime now}) {
-    if (_lastCount != null && now.difference(_lastCount!) < cooldown) {
-      return false;
-    }
-
-    if (slotVisible) {
-      _occlusionStart = null;
-      return false;
-    }
-
-    if (_occlusionStart == null) {
-      _occlusionStart = now;
-      return false;
-    }
-
-    final elapsed = now.difference(_occlusionStart!);
-    if (elapsed > maxOcclusion) {
-      _occlusionStart = null;
-      return false;
-    }
-
-    if (elapsed >= minOcclusion) {
-      _lastCount = now;
-      _occlusionStart = null;
-      return true;
-    }
-
-    return false;
-  }
-}
-
 class _FloatingScore {
-  final Offset   origin;
-  final String   text;
+  final Offset origin;
+  final String text;
   final DateTime born;
 
   const _FloatingScore({
@@ -221,25 +176,15 @@ class _FloatingScore {
     required this.born,
   });
 
-  static const double _lifetime = 1.8;
+  static const double _lifetime = 1.8; // seconds
 
-  double get age      => DateTime.now().difference(born).inMilliseconds / 1000.0;
+  double get age => DateTime.now().difference(born).inMilliseconds / 1000.0;
   double get progress => (age / _lifetime).clamp(0.0, 1.0);
-  bool   get isDead   => age > _lifetime;
-  double get yOffset  => -90.0 * Curves.easeOut.transform(progress);
-  double get opacity  => progress < 0.55
-      ? progress / 0.55
-      : 1.0 - (progress - 0.55) / 0.45;
-  double get scale    => 1.0 + 0.25 * (1.0 - progress);
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Occlusion detection states
-// ══════════════════════════════════════════════════════════════════════════════
-enum _OcclusionState {
-  waitingForLock, // tracker hasn't acquired a stable lock yet
-  locked,         // tracker is locked on the slot, watching for occlusion
-  occluded,       // bottle is covering the slot (hasLock went false)
+  bool get isDead => age > _lifetime;
+  double get yOffset => -90.0 * Curves.easeOut.transform(progress);
+  double get opacity =>
+      progress < 0.55 ? progress / 0.55 : 1.0 - (progress - 0.55) / 0.45;
+  double get scale => 1.0 + 0.25 * (1.0 - progress);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -251,15 +196,15 @@ class InsertionDetectorScreen extends StatefulWidget {
     required this.onDetected,
     required this.onBack,
     this.onTimeout,
-    this.timeoutSeconds  = 20,
+    this.timeoutSeconds = 20,
     this.pointsPerBottle = 10,
   });
 
-  final VoidCallback  onDetected;
-  final VoidCallback  onBack;
+  final VoidCallback onDetected;
+  final VoidCallback onBack;
   final VoidCallback? onTimeout;
-  final int           timeoutSeconds;
-  final int           pointsPerBottle;
+  final int timeoutSeconds;
+  final int pointsPerBottle;
 
   @override
   State<InsertionDetectorScreen> createState() =>
@@ -268,65 +213,37 @@ class InsertionDetectorScreen extends StatefulWidget {
 
 class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-
   // ── Camera ─────────────────────────────────────────────────────────────────
-  CameraController?  _cam;
+  CameraController? _cam;
   CameraDescription? _camDesc;
-  bool _cameraReady     = false;
+  bool _cameraReady = false;
   bool _processingFrame = false;
-  int  _frameCount      = 0;
-  bool _detected        = false;
-  bool _disposed        = false;
+  int _frameCount = 0;
+  bool _detected = false;
 
-  // ── Slot tracker ────────────────────────────────────────────────────────────
+  // ── Detection ──────────────────────────────────────────────────────────────
   final _SlotTracker _tracker = _SlotTracker();
-
-
-
-  void _commitInsertionCount() {
-    final now = DateTime.now();
-    if (_lastCountTime != null && now.difference(_lastCountTime!) < _countCooldown) return;
-    
-    _lastCountTime = now;
-    _occlusionStart = null;
-    _occState = _OcclusionState.locked;
-    _occlusionDetector.reset();
-    _onBottleDetected();
-  }
-
-  // ── Occlusion-based detection ───────────────────────────────────────────────
-  // The app should count when the arrow is briefly hidden by the bottle
-  // long enough to look like a real insertion, without waiting for the slot
-  // to reappear.
-  _OcclusionState _occState     = _OcclusionState.waitingForLock;
-  int             _stableFrames = 0;
-  DateTime?       _occlusionStart;
-  DateTime?       _lastCountTime;
-
-  final OcclusionEventDetector _occlusionDetector = OcclusionEventDetector(
-    minOcclusion: const Duration(milliseconds: 250),
-    maxOcclusion: const Duration(seconds: 2),
-    cooldown: const Duration(seconds: 2),
-  );
-
-  static const int      _minStableFrames       = 5;
-  static const Duration _maxOcclusion          = Duration(seconds: 2);
-  static const Duration _countCooldown         = Duration(seconds: 2);
+  SlotMotionDetectionImpl? _motion;
+  bool _motionReady = false;
+  bool _streamStarted = false;
+  bool _disposed = false; // guards async camera-frame callbacks
+  final SoundSpikeDetector _sound = SoundSpikeDetector();
+  int _stableFrames = 0;
+  static const int _minStable = 8;
 
   // ── AR state ───────────────────────────────────────────────────────────────
   int _sessionCount = 0;
   final List<_FloatingScore> _scores = [];
   Timer? _scoreTimer;
-  Size _screenSize = const Size(400, 800); // Cached to prevent MediaQuery errors async
 
   // ── Timeout ────────────────────────────────────────────────────────────────
   Timer? _timeoutTimer;
   late int _remaining;
 
   // ── Animation controllers ──────────────────────────────────────────────────
-  late AnimationController _arCtrl;
-  late AnimationController _flashCtrl;
-  late AnimationController _badgeCtrl;
+  late AnimationController _arCtrl; // drives arrow + reticle (900ms loop)
+  late AnimationController _flashCtrl; // white flash (500ms one-shot)
+  late AnimationController _badgeCtrl; // count badge bounce (400ms one-shot)
 
   bool _showFlash = false;
 
@@ -348,17 +265,26 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _startTimeout();
     _initCamera();
-
+    // Fire-and-forget — requests mic permission and starts listening.
+    // Never blocks the camera/scanning flow if denied or unsupported.
+    unawaited(_sound.start());
   }
 
   @override
   void dispose() {
+    // Set the guard FIRST so any camera frame already in flight on the
+    // native thread bails out of _onFrame() immediately instead of calling
+    // setState()/touching _motion after they've been torn down. This is
+    // what fixes the intermittent '_dependents.isEmpty' assertion.
     _disposed = true;
-
+    _sound.dispose();
     WidgetsBinding.instance.removeObserver(this);
 
-    if (_cam?.value.isStreamingImages == true) {
-      try { _cam?.stopImageStream(); } catch (_) {}
+    // Stop the image stream BEFORE disposing anything it feeds into.
+    if (_streamStarted && _cam?.value.isStreamingImages == true) {
+      try {
+        _cam?.stopImageStream();
+      } catch (_) {}
     }
 
     _timeoutTimer?.cancel();
@@ -366,6 +292,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _arCtrl.dispose();
     _flashCtrl.dispose();
     _badgeCtrl.dispose();
+    _motion?.dispose();
     _cam?.dispose();
     super.dispose();
   }
@@ -373,7 +300,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     if (s == AppLifecycleState.inactive) _cam?.dispose();
-    if (s == AppLifecycleState.resumed)  _initCamera();
+    if (s == AppLifecycleState.resumed) _initCamera();
   }
 
   void _startTimeout() {
@@ -396,8 +323,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       orElse: () => cams.first,
     );
     _cam = CameraController(_camDesc!, ResolutionPreset.medium,
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420);
+        enableAudio: false, imageFormatGroup: ImageFormatGroup.yuv420);
     try {
       await _cam!.initialize();
       try {
@@ -406,9 +332,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         await _cam!.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
       } catch (_) {}
       if (!mounted) return;
-      setState(() => _cameraReady = true);
+      setState(() {
+        _cameraReady = true;
+        _stableFrames = 0;
+      });
       _tracker.reset();
+      _rebuildMotion();
       await _cam!.startImageStream(_onFrame);
+      _streamStarted = true;
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -416,77 +347,86 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Occlusion detection
-  // ══════════════════════════════════════════════════════════════════════════
-  void _updateOcclusion(bool locked) {
-    if (_disposed || _detected) return;
-
-    final now = DateTime.now();
-
-    if (_lastCountTime != null &&
-        now.difference(_lastCountTime!) < _countCooldown) return;
-
-    switch (_occState) {
-      case _OcclusionState.waitingForLock:
-        final slotCandidateSeen = locked || _tracker.hasCandidate;
-        if (slotCandidateSeen) {
-          _stableFrames++;
-          if (_stableFrames >= 1) {
-            _occState = _OcclusionState.locked;
-          }
-        } else {
-          _stableFrames = 0;
-        }
-        break;
-
-      case _OcclusionState.locked:
-        if (!locked) {
-          _occlusionStart = now;
-          _occState = _OcclusionState.occluded;
-        }
-        break;
-
-      case _OcclusionState.occluded:
-        if (locked) {
-          _occlusionStart = null;
-          _occState = _OcclusionState.locked;
-          break;
-        }
-
-        final elapsed = now.difference(_occlusionStart!);
-        if (elapsed > _maxOcclusion) {
-          _occlusionStart = null;
-          _stableFrames = 0;
-          _occState = _OcclusionState.waitingForLock;
-          break;
-        }
-
-        if (_occlusionDetector.update(slotVisible: false, now: now)) {
-          _commitInsertionCount();
-        }
-        break;
-    }
+  void _rebuildMotion() {
+    final r = _tracker.cameraRegion;
+    _motion?.dispose();
+    _motion = _buildMotion(
+      left: r.left,
+      top: r.top,
+      width: r.width,
+      height: r.height,
+    );
   }
 
-  // ── Bottle inserted callback ────────────────────────────────────────────────
+  // Single place that constructs the calibrated detector — used both for
+  // the tracker-refined region and the default no-lock region. This is
+  // where the 35-video calibration actually reaches the live app.
+  SlotMotionDetectionImpl _buildMotion({
+    required double left,
+    required double top,
+    required double width,
+    required double height,
+  }) {
+    return SlotMotionDetectionImpl(
+      regionLeft: left,
+      regionTop: top,
+      regionWidth: width,
+      regionHeight: height,
+      soundDetector:
+          _sound, // fuses sound-spike confirmation with camera motion
+      onReadyChanged: (v) {
+        if (!_disposed && mounted) setState(() => _motionReady = v);
+      },
+      onMotionDetected: _onBottleDetected,
+      // Report every attempt (counted or rejected) for ongoing self-training.
+      onAttemptComplete: (result) {
+        TrainingDataService().onInsertionAttempt(
+          counted: result.counted,
+          rejectedReason: result.rejectedReason,
+          peakChangeFraction: result.peakChangeFraction,
+          peakDownwardScore: result.peakDownwardScore,
+          avgCornerMotion: result.avgCornerMotion,
+          durationMs: result.durationMs,
+        );
+      },
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Bottle inserted callback
+  // Called by SlotMotionDetectionImpl when all 5 filters pass:
+  //   1. Motion is within the tracked slot zone
+  //   2. ≥12% of zone pixels changed
+  //   3. Motion direction is downward (not sideways)
+  //   4. State machine completed: idle→entering→inside→exiting
+  //   5. 2.2s cooldown has elapsed
+  // ══════════════════════════════════════════════════════════════════════════
   void _onBottleDetected() {
     if (_detected || _disposed || !mounted) return;
+    // NOTE: previously also required _stableFrames >= _minStable (slot lock),
+    // but that blocked real insertions on hard-to-track small-hole bins.
+    // The SlotMotionDetectionImpl state machine (entering→inside→exiting +
+    // corner-motion anti-shake + cooldown) is itself the reliability gate.
 
     _detected = true;
     _timeoutTimer?.cancel();
 
+    // 1. White flash
     _showFlash = true;
     _flashCtrl.forward(from: 0).then((_) {
       if (mounted) setState(() => _showFlash = false);
     });
 
+    // 2. Session counter increment + badge bounce
     _sessionCount++;
     _badgeCtrl.forward(from: 0);
 
-    final origin = _tracker.toScreenOffset(_screenSize, _sensorOrientation);
+    // 3. Spawn AR floating score at slot position
+    final sz = MediaQuery.of(context).size;
+    final origin = _tracker.toScreenOffset(sz, _sensorOrientation);
     _spawnScore(origin);
 
+    // 4. Proceed after short delay (lets flash + popup show first)
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) widget.onDetected();
     });
@@ -495,8 +435,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   void _spawnScore(Offset origin) {
     _scores.add(_FloatingScore(
       origin: origin,
-      text:   '+${widget.pointsPerBottle} pts',
-      born:   DateTime.now(),
+      text: '+${widget.pointsPerBottle} pts',
+      born: DateTime.now(),
     ));
     _scoreTimer?.cancel();
     _scoreTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
@@ -509,27 +449,57 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   // ── Frame processing ────────────────────────────────────────────────────────
   void _onFrame(CameraImage image) {
+    // Bail immediately if the widget is being/has been torn down — the
+    // camera stream runs on a native thread and can deliver a frame after
+    // dispose() began. Calling setState() here would throw.
     if (_disposed || !mounted) return;
     _frameCount++;
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
     try {
       _tracker.update(image);
-      _updateOcclusion(_tracker.hasLock);
+
+      // Slot tracker drives the AR arrow + refines the detection region,
+      // but detection must NOT depend on it locking — small-hole bins are
+      // hard to track, and waiting for a lock was why insertions were
+      // never counted. Ensure _motion always exists; refine its region
+      // when the tracker has a good lock, otherwise use a default center
+      // region covering the typical bin-slot area.
+      if (_tracker.hasLock) {
+        _stableFrames++;
+        if (_stableFrames == _minStable) _rebuildMotion();
+        if (_stableFrames % 15 == 0) _rebuildMotion();
+      } else {
+        _stableFrames = 0;
+        // No lock yet — make sure a default detector is running so the
+        // user can still score while pointing roughly at the slot.
+        _motion ??= _buildMotion(
+          left: 0.30,
+          top: 0.18,
+          width: 0.40,
+          height: 0.34,
+        );
+      }
+      _motion?.processImage(image);
       if (!_disposed && mounted) setState(() {});
     } finally {
       _processingFrame = false;
     }
   }
 
-  int  get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
-  bool get _lockedAndReady    => _occState != _OcclusionState.waitingForLock;
+  int get _sensorOrientation => _camDesc?.sensorOrientation ?? 90;
+  bool get _lockedAndReady =>
+      _tracker.hasLock && _stableFrames >= _minStable && _motionReady;
 
   String get _statusText {
-    if (!_cameraReady)                              return 'Starting camera…';
-    if (_occState == _OcclusionState.waitingForLock) return 'Aim at the bin slot';
-    if (_occState == _OcclusionState.occluded)       return 'Inserting…';
-    return 'Insert the bottle into the slot';
+    // Detection runs continuously now (no slot-lock or calibration gate).
+    // The live AI probability is embedded here as a diagnostic — if you
+    // never see "· AI" in the status line, this file is not in the build.
+    if (!_cameraReady) return 'Starting camera…';
+    if (!_motionReady) return 'Get ready…';
+    final p = _motion?.lastProbability;
+    final pTxt = p == null ? '--' : (p * 100).toStringAsFixed(0);
+    return 'Insert the bottle into the slot · AI $pTxt%';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -537,8 +507,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    _screenSize = MediaQuery.sizeOf(context);
-    
     return Scaffold(
       backgroundColor: Colors.black,
       extendBodyBehindAppBar: true,
@@ -565,18 +533,15 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
 
     return LayoutBuilder(builder: (_, box) {
-      final Size   sz     = Size(box.maxWidth, box.maxHeight);
+      final Size sz = Size(box.maxWidth, box.maxHeight);
       final Offset target = _tracker.toScreenOffset(sz, _sensorOrientation);
-      final Offset pivot  = Offset(sz.width * 0.50, sz.height * 0.72);
+      final Offset pivot = Offset(sz.width * 0.50, sz.height * 0.72);
 
-      final double dx  = target.dx - pivot.dx;
-      final double dy  = target.dy - pivot.dy;
+      final double dx = target.dx - pivot.dx;
+      final double dy = target.dy - pivot.dy;
       final double ang = (atan2(dx, -dy) * 3.0).clamp(-pi * 0.78, pi * 0.78);
 
-      final bool isDetecting = _occState == _OcclusionState.occluded;
-
       return Stack(fit: StackFit.expand, children: [
-
         // ── Camera ─────────────────────────────────────────────────────
         Positioned.fill(child: CameraPreview(_cam!)),
 
@@ -606,35 +571,36 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
             ),
           ),
 
-        // ── AR ARROW ────────────────────────────────────────────────────
+        // ── AR ARROW (professional transparent red) ─────────────────────
         AnimatedBuilder(
           animation: _arCtrl,
           builder: (_, __) => CustomPaint(
             size: sz,
             painter: _ProfessionalArrowPainter(
-              pivot:       pivot,
-              angle:       ang,
-              animValue:   _arCtrl.value,
-              hasLock:     _lockedAndReady,
-              isDetecting: isDetecting,
-              target:      target,
+              pivot: pivot,
+              angle: ang,
+              animValue: _arCtrl.value,
+              hasLock: _lockedAndReady,
+              isDetecting: _motionReady && _lockedAndReady,
+              target: target,
             ),
           ),
         ),
 
         // ── Top HUD ─────────────────────────────────────────────────────
         Positioned(
-          top: 0, left: 0, right: 0,
+          top: 0,
+          left: 0,
+          right: 0,
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               child: Row(children: [
-
+                // Session count badge
                 ScaleTransition(
                   scale: Tween<double>(begin: 1.0, end: 1.4).animate(
-                    CurvedAnimation(
-                        parent: _badgeCtrl, curve: Curves.elasticOut)),
+                      CurvedAnimation(
+                          parent: _badgeCtrl, curve: Curves.elasticOut)),
                   child: _HudBadge(
                     icon: '🍾',
                     value: '$_sessionCount',
@@ -644,6 +610,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
                 const Spacer(),
 
+                // Countdown
                 _HudBadge(
                   icon: '⏱',
                   value: '$_remaining',
@@ -655,19 +622,20 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           ),
         ),
 
-        // ── "Aim at slot" hint — only shown while waiting for initial lock
-        if (_occState == _OcclusionState.waitingForLock)
+        // ── Hint pill when no lock ──────────────────────────────────────
+        if (!_tracker.hasLock)
           Positioned(
-            top: 120, left: 0, right: 0,
+            top: 120,
+            left: 0,
+            right: 0,
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.65),
                   borderRadius: BorderRadius.circular(24),
-                  border: Border.all(
-                      color: Colors.white.withOpacity(0.15)),
+                  border: Border.all(color: Colors.white.withOpacity(0.15)),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Icon(Icons.center_focus_weak,
@@ -686,8 +654,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         // ── AR Floating score popups ────────────────────────────────────
         for (final s in List<_FloatingScore>.from(_scores))
           Positioned(
-            left:  s.origin.dx - 55,
-            top:   s.origin.dy + s.yOffset - 24,
+            left: s.origin.dx - 55,
+            top: s.origin.dy + s.yOffset - 24,
             width: 110,
             child: Opacity(
               opacity: s.opacity.clamp(0.0, 1.0),
@@ -701,12 +669,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                     fontWeight: FontWeight.w900,
                     color: Colors.white,
                     shadows: [
-                      Shadow(
-                          color: Color(0xFFEF5350),
-                          blurRadius: 18),
-                      Shadow(
-                          color: Colors.black,
-                          blurRadius: 6),
+                      Shadow(color: Color(0xFFEF5350), blurRadius: 18),
+                      Shadow(color: Colors.black, blurRadius: 6),
                     ],
                   ),
                 ),
@@ -716,7 +680,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
         // ── Status label ────────────────────────────────────────────────
         Positioned(
-          bottom: 96, left: 0, right: 0,
+          bottom: 96,
+          left: 0,
+          right: 0,
           child: Center(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
@@ -728,9 +694,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.3,
-                    shadows: [
-                      Shadow(color: Colors.black, blurRadius: 8)
-                    ],
+                    shadows: [Shadow(color: Colors.black, blurRadius: 8)],
                   )),
             ),
           ),
@@ -738,7 +702,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
         // ── Bottom instruction card ─────────────────────────────────────
         Positioned(
-          left: 0, right: 0, bottom: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
           child: SafeArea(
             top: false,
             child: Padding(
@@ -746,16 +712,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(18),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 14),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   color: Colors.black.withOpacity(0.58),
                   child: const Text(
-                    'Point the arrow at the bin slot, then insert the bottle.',
+                    'Arrow tip points at the bin slot.\nInsert the bottle — detected automatically.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                        height: 1.5),
+                        color: Colors.white70, fontSize: 13, height: 1.5),
                   ),
                 ),
               ),
@@ -774,13 +738,13 @@ class _HudBadge extends StatelessWidget {
   const _HudBadge({
     required this.icon,
     required this.value,
-    this.highlight    = false,
-    this.dangerColor  = false,
+    this.highlight = false,
+    this.dangerColor = false,
   });
   final String icon;
   final String value;
-  final bool   highlight;
-  final bool   dangerColor;
+  final bool highlight;
+  final bool dangerColor;
 
   @override
   Widget build(BuildContext context) {
@@ -818,6 +782,20 @@ class _HudBadge extends StatelessWidget {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // _ProfessionalArrowPainter
+//
+// DESIGN LANGUAGE:
+//   • 20% red, semi-transparent — arrow is clearly visible but doesn't
+//     obstruct the camera feed behind it
+//   • Curved Bézier body — pivots at bottom-center, tip tracks the bin slot
+//   • Inner highlight + edge glow — gives the arrow depth and a 3D feel
+//   • Pulsing opacity on detection — signals bottle is being counted
+//   • Rotating dashed reticle at the target — professional AR crosshair
+//   • Clean, minimal — no over-engineered effects
+//
+// COLOR STATES:
+//   No lock   → #EF5350 red, 18% opacity  (very faint, guiding)
+//   Locked    → #EF5350 red, 58% opacity  (clear, confident)
+//   Detecting → #EF5350 red, 90% opacity  (bright, urgent)
 // ══════════════════════════════════════════════════════════════════════════════
 class _ProfessionalArrowPainter extends CustomPainter {
   const _ProfessionalArrowPainter({
@@ -832,20 +810,23 @@ class _ProfessionalArrowPainter extends CustomPainter {
   final Offset pivot;
   final double angle;
   final double animValue;
-  final bool   hasLock;
-  final bool   isDetecting;
+  final bool hasLock;
+  final bool isDetecting;
   final Offset target;
 
-  static const Color _red      = Color(0xFFEF5350);
+  // Base red color — all arrow elements use this with varying opacity
+  static const Color _red = Color(0xFFEF5350);
   static const Color _redLight = Color(0xFFFF8A80);
-  static const Color _redDark  = Color(0xFFB71C1C);
+  static const Color _redDark = Color(0xFFB71C1C);
 
+  // Opacity levels per state
   double get _baseOpacity {
     if (isDetecting) return 0.90;
-    if (hasLock)     return 0.58;
-    return 0.20;
+    if (hasLock) return 0.58;
+    return 0.20; // no lock — very faint
   }
 
+  // Pulsing factor for detecting state
   double get _detectPulse =>
       isDetecting ? 0.5 + sin(animValue * pi * 5) * 0.5 : 0.0;
 
@@ -853,6 +834,7 @@ class _ProfessionalArrowPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final double o = _baseOpacity + _detectPulse * 0.10;
 
+    // ── Bézier: pivot (tail) → ctrl → target (head) ─────────────────────
     final Offset ctrl = Offset(
       pivot.dx + sin(angle) * 55,
       pivot.dy - cos(angle) * 55,
@@ -876,48 +858,62 @@ class _ProfessionalArrowPainter extends CustomPainter {
 
     const double bodyEnd = 0.82;
 
+    // Build body path
     final Path body = Path()..moveTo(pivot.dx, pivot.dy);
     for (int i = 1; i <= 48; i++) {
       body.lineTo(bez((i / 48) * bodyEnd).dx, bez((i / 48) * bodyEnd).dy);
     }
 
-    canvas.drawPath(body, Paint()
-      ..color = _red.withOpacity(0.08 * o)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 24
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+    // ── 1. Soft outer glow (very subtle depth) ───────────────────────────
+    canvas.drawPath(
+        body,
+        Paint()
+          ..color = _red.withOpacity(0.08 * o)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 24
+          ..strokeCap = StrokeCap.round
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
 
-    canvas.drawPath(body, Paint()
-      ..color = _redDark.withOpacity(0.55 * o)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 12
-      ..strokeCap = StrokeCap.round);
+    // ── 2. Dark core underside ────────────────────────────────────────────
+    canvas.drawPath(
+        body,
+        Paint()
+          ..color = _redDark.withOpacity(0.55 * o)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 12
+          ..strokeCap = StrokeCap.round);
 
-    canvas.drawPath(body, Paint()
-      ..color = _red.withOpacity(0.75 * o)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
-      ..strokeCap = StrokeCap.round);
+    // ── 3. Main red body — 20% transparent ───────────────────────────────
+    canvas.drawPath(
+        body,
+        Paint()
+          ..color = _red.withOpacity(0.75 * o)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 8
+          ..strokeCap = StrokeCap.round);
 
+    // ── 4. Bright left-edge highlight (makes it look 3D) ─────────────────
     final Path hl = Path()..moveTo(pivot.dx, pivot.dy);
     for (int i = 1; i <= 48; i++) {
-      final double  t  = (i / 48) * bodyEnd;
-      final Offset  pt = bez(t);
-      final Offset  tn = bezTan(t);
-      final double  tl = tn.distance;
+      final double t = (i / 48) * bodyEnd;
+      final Offset pt = bez(t);
+      final Offset tn = bezTan(t);
+      final double tl = tn.distance;
       if (tl < 0.001) continue;
-      final Offset  n  = Offset(-tn.dy / tl, tn.dx / tl);
+      final Offset n = Offset(-tn.dy / tl, tn.dx / tl);
       hl.lineTo(pt.dx + n.dx * 2.5, pt.dy + n.dy * 2.5);
     }
-    canvas.drawPath(hl, Paint()
-      ..color = _redLight.withOpacity(0.45 * o)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round);
+    canvas.drawPath(
+        hl,
+        Paint()
+          ..color = _redLight.withOpacity(0.45 * o)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round);
 
+    // ── 5. Energy pulse when detecting ───────────────────────────────────
     if (isDetecting || hasLock) {
-      final double pEnd   = animValue * bodyEnd;
+      final double pEnd = animValue * bodyEnd;
       final double pStart = (animValue - 0.16).clamp(0.0, 1.0) * bodyEnd;
       if (pEnd > pStart) {
         final Path pulse = Path();
@@ -926,22 +922,30 @@ class _ProfessionalArrowPainter extends CustomPainter {
           final double t = (i / 55) * bodyEnd;
           if (t < pStart || t > pEnd) continue;
           final Offset p = bez(t);
-          if (first) { pulse.moveTo(p.dx, p.dy); first = false; }
-          else { pulse.lineTo(p.dx, p.dy); }
+          if (first) {
+            pulse.moveTo(p.dx, p.dy);
+            first = false;
+          } else
+            pulse.lineTo(p.dx, p.dy);
         }
         if (!first) {
-          canvas.drawPath(pulse, Paint()
-            ..color = Colors.white.withOpacity(
-                isDetecting ? 0.70 * o : 0.30 * o)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = isDetecting ? 5 : 3
-            ..strokeCap = StrokeCap.round
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
+          canvas.drawPath(
+              pulse,
+              Paint()
+                ..color =
+                    Colors.white.withOpacity(isDetecting ? 0.70 * o : 0.30 * o)
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = isDetecting ? 5 : 3
+                ..strokeCap = StrokeCap.round
+                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
         }
       }
     }
 
+    // ── 6. 3D arrowhead cone ─────────────────────────────────────────────
     _drawHead(canvas, bez, bezTan, o);
+
+    // ── 7. Target reticle at slot ────────────────────────────────────────
     _drawReticle(canvas, o);
   }
 
@@ -952,95 +956,114 @@ class _ProfessionalArrowPainter extends CustomPainter {
     double o,
   ) {
     const double bodyEnd = 0.82;
-    const double len     = 28.0;
-    const double hw      = 16.0;
+    const double len = 28.0;
+    const double hw = 16.0;
 
     final Offset tan = bezTan(bodyEnd);
-    final double tl  = tan.distance;
+    final double tl = tan.distance;
     if (tl < 0.001) return;
 
-    final Offset fwd  = tan / tl;
+    final Offset fwd = tan / tl;
     final Offset left = Offset(-fwd.dy, fwd.dx);
     final Offset base = target - fwd * len;
-    final Offset lp   = base + left * hw;
-    final Offset rp   = base - left * hw;
+    final Offset lp = base + left * hw;
+    final Offset rp = base - left * hw;
+
+    // Depth shadow offset
     final Offset dOff = Offset(fwd.dy * 4, -fwd.dx * 4);
 
+    // Shadow back face
     canvas.drawPath(
-      Path()
-        ..moveTo(lp.dx + dOff.dx, lp.dy + dOff.dy)
-        ..lineTo(rp.dx + dOff.dx, rp.dy + dOff.dy)
-        ..lineTo(target.dx + dOff.dx, target.dy + dOff.dy)
-        ..close(),
-      Paint()..color = _redDark.withOpacity(0.55 * o));
+        Path()
+          ..moveTo(lp.dx + dOff.dx, lp.dy + dOff.dy)
+          ..lineTo(rp.dx + dOff.dx, rp.dy + dOff.dy)
+          ..lineTo(target.dx + dOff.dx, target.dy + dOff.dy)
+          ..close(),
+        Paint()..color = _redDark.withOpacity(0.55 * o));
 
+    // Soft glow
     canvas.drawPath(
-      Path()
-        ..moveTo(lp.dx, lp.dy)
-        ..lineTo(rp.dx, rp.dy)
-        ..lineTo(target.dx, target.dy)
-        ..close(),
-      Paint()
-        ..color = _red.withOpacity(0.14 * o)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
+        Path()
+          ..moveTo(lp.dx, lp.dy)
+          ..lineTo(rp.dx, rp.dy)
+          ..lineTo(target.dx, target.dy)
+          ..close(),
+        Paint()
+          ..color = _red.withOpacity(0.14 * o)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
 
+    // Main red face
     canvas.drawPath(
-      Path()
-        ..moveTo(lp.dx, lp.dy)
-        ..lineTo(rp.dx, rp.dy)
-        ..lineTo(target.dx, target.dy)
-        ..close(),
-      Paint()..color = _red.withOpacity(0.88 * o));
+        Path()
+          ..moveTo(lp.dx, lp.dy)
+          ..lineTo(rp.dx, rp.dy)
+          ..lineTo(target.dx, target.dy)
+          ..close(),
+        Paint()..color = _red.withOpacity(0.88 * o));
 
+    // Left highlight sliver
     canvas.drawPath(
-      Path()
-        ..moveTo(lp.dx, lp.dy)
-        ..lineTo(target.dx, target.dy)
-        ..lineTo(lp.dx + left.dx * 4, lp.dy + left.dy * 4)
-        ..close(),
-      Paint()..color = _redLight.withOpacity(0.38 * o));
+        Path()
+          ..moveTo(lp.dx, lp.dy)
+          ..lineTo(target.dx, target.dy)
+          ..lineTo(lp.dx + left.dx * 4, lp.dy + left.dy * 4)
+          ..close(),
+        Paint()..color = _redLight.withOpacity(0.38 * o));
   }
 
   void _drawReticle(Canvas canvas, double o) {
     final double pulse = isDetecting
         ? 0.5 + sin(animValue * pi * 5) * 0.5
-        : hasLock ? 0.5 + sin(animValue * pi * 2) * 0.3 : 0.25;
+        : hasLock
+            ? 0.5 + sin(animValue * pi * 2) * 0.3
+            : 0.25;
 
     final double r = 20.0 + pulse * 8;
 
+    // Outer soft glow when locked
     if (hasLock) {
-      canvas.drawCircle(target, r + 10,
-        Paint()
-          ..color = _red.withOpacity(0.10 * o)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
+      canvas.drawCircle(
+          target,
+          r + 10,
+          Paint()
+            ..color = _red.withOpacity(0.10 * o)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 8
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
     }
 
+    // Rotating arc segments (AR dashes)
     final double rot = animValue * pi * 2;
     for (int i = 0; i < 6; i++) {
       final double sa = rot + (i / 6) * pi * 2;
       canvas.drawArc(
-        Rect.fromCircle(center: target, radius: r),
-        sa, pi * 2 / 6 * 0.55, false,
-        Paint()
-          ..color = _red.withOpacity((0.65 + pulse * 0.35) * o)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = hasLock ? 2.8 : 1.6
-          ..strokeCap = StrokeCap.round);
+          Rect.fromCircle(center: target, radius: r),
+          sa,
+          pi * 2 / 6 * 0.55,
+          false,
+          Paint()
+            ..color = _red.withOpacity((0.65 + pulse * 0.35) * o)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = hasLock ? 2.8 : 1.6
+            ..strokeCap = StrokeCap.round);
     }
 
+    // Inner ring
     if (hasLock) {
-      canvas.drawCircle(target, r * 0.48,
-        Paint()
-          ..color = _red.withOpacity(0.28 * o)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.4);
+      canvas.drawCircle(
+          target,
+          r * 0.48,
+          Paint()
+            ..color = _red.withOpacity(0.28 * o)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.4);
     }
 
+    // Center dot
     canvas.drawCircle(target, hasLock ? 4.5 : 2.8,
-      Paint()..color = _red.withOpacity(0.90 * o));
+        Paint()..color = _red.withOpacity(0.90 * o));
 
+    // Crosshair lines
     final double arm = hasLock ? 12.0 : 8.0;
     const double gap = 6.0;
     final Paint cp = Paint()
@@ -1053,17 +1076,19 @@ class _ProfessionalArrowPainter extends CustomPainter {
     canvas.drawLine(Offset(cx - gap, cy), Offset(cx - gap - arm, cy), cp);
     canvas.drawLine(Offset(cx + gap, cy), Offset(cx + gap + arm, cy), cp);
 
+    // Status label
     if (hasLock) {
       final String lbl = isDetecting ? 'INSERTING…' : 'SLOT';
       final tp = TextPainter(
-        text: TextSpan(text: lbl,
-          style: TextStyle(
-            color: _red.withOpacity(0.88 * o),
-            fontSize: isDetecting ? 11 : 10,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.6,
-            shadows: const [Shadow(color: Colors.black, blurRadius: 5)],
-          )),
+        text: TextSpan(
+            text: lbl,
+            style: TextStyle(
+              color: _red.withOpacity(0.88 * o),
+              fontSize: isDetecting ? 11 : 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.6,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 5)],
+            )),
         textDirection: TextDirection.ltr,
       )..layout();
       tp.paint(canvas, Offset(cx - tp.width / 2, cy + r + 8));
@@ -1072,10 +1097,10 @@ class _ProfessionalArrowPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ProfessionalArrowPainter old) =>
-      old.pivot       != pivot       ||
-      old.angle       != angle       ||
-      old.animValue   != animValue   ||
-      old.hasLock     != hasLock     ||
+      old.pivot != pivot ||
+      old.angle != angle ||
+      old.animValue != animValue ||
+      old.hasLock != hasLock ||
       old.isDetecting != isDetecting ||
-      old.target      != target;
+      old.target != target;
 }
