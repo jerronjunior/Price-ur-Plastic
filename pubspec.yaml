@@ -33,14 +33,11 @@ dependencies:
   tflite_flutter: ^0.11.0
   image: ^4.2.0
   path_provider: ^2.1.2
-  camera_windows: ^0.2.6+2
   google_maps_flutter: ^2.4.6
 
   location: ^8.0.1
   http: ^1.1.0
   url_launcher: ^6.3.0
-  firebase_remote_config: ^6.5.3
-  shared_preferences: ^2.5.3
   
   # Computer vision for bottle counting
 
@@ -55,17 +52,17 @@ flutter_launcher_icons:
   ios: true
   web:
     generate: true
-    image_path: assets/images/logo.jpeg
+    image_path: assets/images/logo.webp
     background_color: "#ffffff"
     theme_color: "#1565C0"
   windows:
     generate: true
-    image_path: assets/images/logo.jpeg
+    image_path: assets/images/logo.webp
     icon_size: 48
   macos:
     generate: true
-    image_path: assets/images/logo.jpeg
-  image_path: assets/images/logo.jpeg
+    image_path: assets/images/logo.webp
+  image_path: assets/images/logo.webp
   remove_alpha_ios: true
 
 flutter:
@@ -73,5 +70,5 @@ flutter:
 
   # Assets
   assets:
-    - assets/images/logo.jpeg
+    - assets/images/logo.webp
     - assets/models/ssd_mobilenet.tflite

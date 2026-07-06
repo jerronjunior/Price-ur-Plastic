@@ -250,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             children: [
                               Expanded(
                                 child: _StatBox(
-                                  imagePath: 'assets/images/logo.jpeg',
+                                  imagePath: 'assets/images/logo.webp',
                                   value: '$bottles',
                                   label: 'BOTTLE COUNT',
                                 ),
