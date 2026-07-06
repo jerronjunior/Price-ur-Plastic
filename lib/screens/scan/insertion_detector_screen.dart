@@ -13,15 +13,15 @@ import '../../services/sound_spike_detector.dart';
 class _SlotTracker {
   static const double _scanTop    = 0.02;
   static const double _scanBottom = 0.85; // Scan further down
-  static const double _minWhiteY  = 120.0; // Loosened to allow varying lighting
-  static const double _maxBlackY  = 110.0; // Loosened because printed black can be lighter outdoors
-  static const int    _minWhitePx = 100;   // Require a solid chunk of white
-  static const int    _minBlackPx = 8;     // Require a clear arrow
+  static const double _minWhiteY  = 95.0;  // More tolerant to lighting changes
+  static const double _maxBlackY  = 120.0; // Allow darker printed arrows in varied lighting
+  static const int    _minWhitePx = 24;    // Lowered to pick up smaller slot regions
+  static const int    _minBlackPx = 2;     // Very light arrow still counts
   
   static const int    _lockFrames  = 3; // Faster lock
-  static const double _seekAlpha   = 0.35;
-  static const double _lockedAlpha = 0.05;
-  static const double _unlockDist  = 0.20;
+  static const double _seekAlpha   = 0.25;
+  static const double _lockedAlpha = 0.06;
+  static const double _unlockDist  = 0.28;
 
   double slotNormX = 0.50;
   double slotNormY = 0.28;
@@ -158,6 +158,56 @@ class _SlotTracker {
 // ══════════════════════════════════════════════════════════════════════════════
 // _FloatingScore — AR "+N pts" popup that rises from the slot on each count
 // ══════════════════════════════════════════════════════════════════════════════
+class OcclusionEventDetector {
+  OcclusionEventDetector({
+    this.minOcclusion = const Duration(milliseconds: 250),
+    this.maxOcclusion = const Duration(seconds: 2),
+    this.cooldown = const Duration(seconds: 2),
+  });
+
+  final Duration minOcclusion;
+  final Duration maxOcclusion;
+  final Duration cooldown;
+
+  DateTime? _occlusionStart;
+  DateTime? _lastCount;
+
+  void reset() {
+    _occlusionStart = null;
+    _lastCount = null;
+  }
+
+  bool update({required bool slotVisible, required DateTime now}) {
+    if (_lastCount != null && now.difference(_lastCount!) < cooldown) {
+      return false;
+    }
+
+    if (slotVisible) {
+      _occlusionStart = null;
+      return false;
+    }
+
+    if (_occlusionStart == null) {
+      _occlusionStart = now;
+      return false;
+    }
+
+    final elapsed = now.difference(_occlusionStart!);
+    if (elapsed > maxOcclusion) {
+      _occlusionStart = null;
+      return false;
+    }
+
+    if (elapsed >= minOcclusion) {
+      _lastCount = now;
+      _occlusionStart = null;
+      return true;
+    }
+
+    return false;
+  }
+}
+
 class _FloatingScore {
   final Offset   origin;
   final String   text;
@@ -257,22 +307,27 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _pendingShortVisualEvent = null;
     _occlusionStart = null;
     _occState = _OcclusionState.locked;
+    _occlusionDetector.reset();
     _onBottleDetected();
   }
 
   // ── Occlusion-based detection ───────────────────────────────────────────────
-  // 1. Long visual hide (> 250ms) = Count immediately (strong visual proof).
-  // 2. Short visual hide (> 80ms) + Sound Spike = Count (sound confirms fast drop).
-  // 3. Sound alone = NEVER counts.
+  // The app should count when the arrow is briefly hidden by the bottle
+  // long enough to look like a real insertion, without waiting for the slot
+  // to reappear.
   _OcclusionState _occState     = _OcclusionState.waitingForLock;
   int             _stableFrames = 0;
   DateTime?       _occlusionStart;
   DateTime?       _lastCountTime;
 
+  final OcclusionEventDetector _occlusionDetector = OcclusionEventDetector(
+    minOcclusion: const Duration(milliseconds: 250),
+    maxOcclusion: const Duration(seconds: 2),
+    cooldown: const Duration(seconds: 2),
+  );
+
   static const int      _minStableFrames       = 5;
-  static const Duration _minOcclusion          = Duration(milliseconds: 150); // Standard visual proof
-  static const Duration _minOcclusionWithSound = Duration(milliseconds: 50);  // Fast drop + sound
-  static const Duration _maxOcclusion          = Duration(seconds: 5);
+  static const Duration _maxOcclusion          = Duration(seconds: 2);
   static const Duration _countCooldown         = Duration(seconds: 2);
 
   // ── AR state ───────────────────────────────────────────────────────────────
@@ -399,47 +454,34 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         } else {
           _stableFrames = 0;
         }
+        break;
 
       case _OcclusionState.locked:
         if (!locked) {
           _occlusionStart = now;
           _occState = _OcclusionState.occluded;
         }
+        break;
 
       case _OcclusionState.occluded:
-        final elapsed = now.difference(_occlusionStart!);
-
-        if (elapsed > _maxOcclusion) {
-          // Too long — camera moved away from the bin, not a bottle.
-          _occlusionStart = null;
-          _stableFrames   = 0;
-          _occState       = _OcclusionState.waitingForLock;
-          return;
-        }
-
         if (locked) {
-          // Slot reappeared — check if the hide was long enough.
-          if (elapsed >= _minOcclusion) {
-            // Strong visual proof! Count immediately.
-            _commitInsertionCount();
-          } else if (elapsed >= _minOcclusionWithSound) {
-            // Fast/weak visual proof. Might be a bottle, might be a flicker.
-            // Did we ALREADY hear a sound recently (e.g. while pushing flap)?
-            if (_sound.hadRecentSpike(window: elapsed + const Duration(milliseconds: 1000))) {
-              _commitInsertionCount();
-            } else {
-              // Sound hasn't happened yet. Queue this event. If sound happens 
-              // within 2 seconds, it will confirm and count.
-              _pendingShortVisualEvent = now;
-              _occlusionStart = null;
-              _occState = _OcclusionState.locked;
-            }
-          } else {
-            // Too brief (< 80ms) — tracking noise, ignore completely.
-            _occlusionStart = null;
-            _occState       = _OcclusionState.locked;
-          }
+          _occlusionStart = null;
+          _occState = _OcclusionState.locked;
+          break;
         }
+
+        final elapsed = now.difference(_occlusionStart!);
+        if (elapsed > _maxOcclusion) {
+          _occlusionStart = null;
+          _stableFrames = 0;
+          _occState = _OcclusionState.waitingForLock;
+          break;
+        }
+
+        if (_occlusionDetector.update(slotVisible: false, now: now)) {
+          _commitInsertionCount();
+        }
+        break;
     }
   }
 

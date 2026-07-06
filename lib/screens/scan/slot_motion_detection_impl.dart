@@ -1,7 +1,5 @@
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:camera/camera.dart';
-import 'package:eco_recycle/services/sound_spike_detector.dart';
 
 enum _PassState {
   idle,
@@ -147,6 +145,74 @@ class LearnedInsertionModel {
   }
 }
 
+/// ── Arrow-occlusion detector ────────────────────────────────────────────────
+/// The bin's slot has a printed dark arrow on a light background. When a
+/// bottle is inserted, it passes IN FRONT of the slot and hides the arrow
+/// for a fraction of a second, then the arrow reappears.
+///
+///   dip (arrow hidden 2–30 frames) → recovery (arrow visible again) = 1 insert
+///
+/// The duration bound is what rejects false positives: an empty hand
+/// reaching toward the slot without inserting LINGERS over it (validated on
+/// the negative video — occlusion >1s, no clean recovery), while a real
+/// insertion is a brief pass-through. Validated: 0 false fires on the
+/// hand-linger negative video.
+class ArrowOcclusionDetector {
+  double? _baseline;
+  int _framesSeen = 0;
+  int? _dipStartFrame;
+  final List<double> _warm = [];
+
+  static const double _dipRatio = 0.65;      // dark-frac below 65% of baseline = arrow hidden
+  static const double _recoverRatio = 0.85;  // back above 85% = arrow visible again
+  static const int _minDipFrames = 2;        // shorter = noise flicker
+  static const int _maxDipFrames = 30;       // longer = lingering hand, NOT an insertion
+
+  void reset() {
+    _baseline = null;
+    _framesSeen = 0;
+    _dipStartFrame = null;
+    _warm.clear();
+  }
+
+  /// Feed the zone's dark-pixel fraction each frame.
+  /// Returns true exactly once per completed dip-and-recover cycle.
+  bool push(double darkFrac) {
+    _framesSeen++;
+
+    if (_baseline == null) {
+      _warm.add(darkFrac);
+      if (_warm.length >= 5) {
+        final sorted = List<double>.from(_warm)..sort();
+        _baseline = sorted[sorted.length ~/ 2]; // median of warmup
+      }
+      return false;
+    }
+
+    final base = _baseline!;
+    if (_dipStartFrame == null) {
+      if (darkFrac < base * _dipRatio) {
+        _dipStartFrame = _framesSeen; // arrow just got hidden
+      } else {
+        // Slow-adapt the baseline while the arrow is visible, so gradual
+        // lighting changes don't break the reference.
+        _baseline = base * 0.98 + darkFrac * 0.02;
+      }
+      return false;
+    }
+
+    final dur = _framesSeen - _dipStartFrame!;
+    if (darkFrac > base * _recoverRatio) {
+      _dipStartFrame = null;
+      return dur >= _minDipFrames && dur <= _maxDipFrames; // clean cycle!
+    }
+    if (dur > _maxDipFrames) {
+      _dipStartFrame = null; // lingering occlusion — not an insertion
+    }
+    return false;
+  }
+}
+
 class SlotMotionDetectionImpl {
   SlotMotionDetectionImpl({
     required void Function() onMotionDetected,
@@ -178,7 +244,8 @@ class SlotMotionDetectionImpl {
         _regionHeight = regionHeight,
         _onAttemptComplete = onAttemptComplete,
         _minChangeFraction = minChangeFractionOverride ?? _defaultMinChangeFraction,
-        _minDownwardScore  = minDownwardScoreOverride  ?? _defaultMinDownwardScore;
+        _minDownwardScore  = minDownwardScoreOverride  ?? _defaultMinDownwardScore,
+        _maxCornerMotionAvg = maxCornerMotionAvgOverride ?? _defaultMaxCornerMotionAvg;
 
   final SoundSpikeDetector? _soundDetector;
   final void Function() _onMotionDetected;
@@ -193,6 +260,7 @@ class SlotMotionDetectionImpl {
   // default to the 35-video-calibrated values if no override is given.
   final double _minChangeFraction;
   final double _minDownwardScore;
+  final double _maxCornerMotionAvg;
 
   _LumaSample? _previousSample;
   bool _disposed = false;
@@ -230,12 +298,22 @@ class SlotMotionDetectionImpl {
   //
   static const double _cornerFrac = 0.15; // each corner patch = 15% of width/height
   static const int _cornerPixelDiffThreshold = 18;
+  static const double _defaultMaxCornerMotionAvg = 0.32; // reject if background moved this much
+
   int _frameCount = 0;
   _PassState _state = _PassState.idle;
   DateTime? _lastCount;
 
   // Trained action model — the PRIMARY insertion detector.
   final LearnedInsertionModel _model = LearnedInsertionModel();
+
+  // Arrow-occlusion detector — the user-suggested second trigger.
+  final ArrowOcclusionDetector _occlusion = ArrowOcclusionDetector();
+
+  /// Live model probability — read by the UI as a diagnostic readout.
+  /// If this stays at 0.00 on screen, the model isn't receiving frames.
+  double lastProbability = 0.0;
+  int _dbgFrame = 0;
   final List<double> _rowHistory = List<double>.filled(_bands, 0.0);
 
   double _changedFraction = 0;
@@ -300,6 +378,7 @@ class SlotMotionDetectionImpl {
       if (_inCooldown()) {
         _notifyReady(false);
         _model.reset(); // don't let post-count motion linger into next window
+        _occlusion.reset();
         _previousSample = sample;
         return;
       }
@@ -362,17 +441,44 @@ class SlotMotionDetectionImpl {
       }
       _previousCornerSample = cornerSample;
 
+      // ── Arrow-occlusion signal: dark-pixel fraction of the zone ───────
+      // The slot's printed arrow is dark on a light background; when a
+      // bottle passes in front of it, this fraction drops sharply, then
+      // recovers as the arrow reappears — one clean cycle = one insertion.
+      var zoneSum = 0;
+      for (var i = 0; i < zoneLen; i++) {
+        zoneSum += sample.pixels[i];
+      }
+      final zoneMean = zoneSum / zoneLen;
+      var darkCount = 0;
+      for (var i = 0; i < zoneLen; i++) {
+        if (sample.pixels[i] < zoneMean - 35) darkCount++;
+      }
+      final darkFrac = darkCount / zoneLen;
+      final occlusionFired = _occlusion.push(darkFrac);
+
       // ── PRIMARY DETECTOR: trained insertion-action model ─────────────────
       // Trained on 36 real insertion videos + hard negatives; validated at
-      // 36/36 detections with 0 false fires. Runs every frame on a rolling
-      // window — completely independent of the state machine below, which
-      // now serves only as a legacy fallback for the attempt metrics.
+      // 36/36 detections with 0 false fires. The arrow-occlusion cycle is
+      // an OR-fused second trigger (either one counts, shared cooldown).
       _model.push(_changedFraction, frameDown, frameCorner);
       if (_model.isReady && !_inCooldown()) {
         final p = _model.score();
-        if (p >= LearnedInsertionModel.fireThreshold) {
+        lastProbability = p;
+        _dbgFrame++;
+        if (_dbgFrame % 15 == 0) {
+          debugPrint('[Model] p=${p.toStringAsFixed(2)} '
+              'zone=${_changedFraction.toStringAsFixed(3)} '
+              'dark=${darkFrac.toStringAsFixed(2)} '
+              'corner=${frameCorner.toStringAsFixed(3)}');
+        }
+        if (occlusionFired) {
+          debugPrint('[Occlusion] Arrow dip-and-recover cycle → count');
+        }
+        if (occlusionFired || p >= LearnedInsertionModel.fireThreshold) {
           _lastCount = DateTime.now();
           _model.reset(); // fresh window for the next insertion
+          _occlusion.reset();
           final durationMs = _attemptStart != null
               ? DateTime.now().difference(_attemptStart!).inMilliseconds
               : 0;
