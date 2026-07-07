@@ -6,6 +6,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'slot_motion_detection_impl.dart';
+import 'sound_spike_detector.dart';
 import '../../services/training_data_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -226,6 +227,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _motionReady = false;
   bool _streamStarted = false;
   bool _disposed = false; // guards async camera-frame callbacks
+  final SoundSpikeDetector _sound = SoundSpikeDetector();
   int _stableFrames = 0;
   static const int _minStable = 8;
 
@@ -263,6 +265,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _startTimeout();
     _initCamera();
+    // Fire-and-forget — requests mic permission and starts listening.
+    // Never blocks the camera/scanning flow if denied or unsupported.
+    unawaited(_sound.start());
   }
 
   @override
@@ -272,6 +277,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     // setState()/touching _motion after they've been torn down. This is
     // what fixes the intermittent '_dependents.isEmpty' assertion.
     _disposed = true;
+    _sound.dispose();
     WidgetsBinding.instance.removeObserver(this);
 
     // Stop the image stream BEFORE disposing anything it feeds into.
@@ -341,22 +347,22 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     }
   }
 
+  ({double left, double top, double width, double height})? _builtRegion;
+
+  bool _regionDrifted() {
+    final b = _builtRegion;
+    if (b == null) return true;
+    final r = _tracker.cameraRegion;
+    return (r.left - b.left).abs() > 0.05 ||
+        (r.top - b.top).abs() > 0.05 ||
+        (r.width - b.width).abs() > 0.05 ||
+        (r.height - b.height).abs() > 0.05;
+  }
+
   void _rebuildMotion() {
     final r = _tracker.cameraRegion;
-    // Reposition the existing detector rather than recreating it — a fresh
-    // instance needs ~13 frames of warmup before its arrow-occlusion baseline
-    // and trained-model window are even live, and this runs every 15 frames,
-    // so recreating here left almost no time to ever detect an insertion.
-    final existing = _motion;
-    if (existing != null) {
-      existing.updateRegion(
-        left: r.left,
-        top: r.top,
-        width: r.width,
-        height: r.height,
-      );
-      return;
-    }
+    _builtRegion = r;
+    _motion?.dispose();
     _motion = _buildMotion(
       left: r.left,
       top: r.top,
@@ -379,6 +385,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       regionTop: top,
       regionWidth: width,
       regionHeight: height,
+      soundDetector:
+          _sound, // fuses sound-spike confirmation with camera motion
       onReadyChanged: (v) {
         if (!_disposed && mounted) setState(() => _motionReady = v);
       },
@@ -473,7 +481,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       if (_tracker.hasLock) {
         _stableFrames++;
         if (_stableFrames == _minStable) _rebuildMotion();
-        if (_stableFrames % 15 == 0) _rebuildMotion();
+        // Only rebuild when the tracked slot actually MOVED — rebuilding
+        // resets the occlusion baseline, and doing that every 15 frames
+        // could wipe the arrow reference right as a bottle covers it.
+        if (_stableFrames % 15 == 0 && _regionDrifted()) _rebuildMotion();
       } else {
         _stableFrames = 0;
         // No lock yet — make sure a default detector is running so the

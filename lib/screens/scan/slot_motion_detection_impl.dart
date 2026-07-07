@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
+import 'sound_spike_detector.dart';
 
 enum _PassState {
   idle,
@@ -25,6 +26,7 @@ class InsertionAttemptResult {
   });
 
   final bool counted;
+
   /// null if counted; otherwise 'cameraShake' or 'lowConfidence'
   final String? rejectedReason;
   final double peakChangeFraction;
@@ -68,19 +70,40 @@ class LearnedInsertionModel {
 
   // Weights from training (standardized feature space).
   static const List<double> _w = [
-    -0.6583, -3.1216, 0.0067, -0.9005, 1.2888, 3.4524, -0.4411, -0.5628,
+    -0.6583,
+    -3.1216,
+    0.0067,
+    -0.9005,
+    1.2888,
+    3.4524,
+    -0.4411,
+    -0.5628,
   ];
   static const double _b = 1.1092;
   static const List<double> _mu = [
-    0.3301, 0.3980, 0.5078, 0.5818, 0.3212, 1.1090, -0.0141, 0.0480,
+    0.3301,
+    0.3980,
+    0.5078,
+    0.5818,
+    0.3212,
+    1.1090,
+    -0.0141,
+    0.0480,
   ];
   static const List<double> _sd = [
-    0.1262, 0.1514, 0.0776, 0.0889, 0.1143, 0.3940, 0.0929, 0.0370,
+    0.1262,
+    0.1514,
+    0.0776,
+    0.0889,
+    0.1143,
+    0.3940,
+    0.0929,
+    0.0370,
   ];
 
   /// Fire when probability exceeds this. Negative video peaked at 0.36,
-  /// weakest real insertion peaked at 0.75 - 0.5 sits safely between.
-  static const double fireThreshold = 0.2;
+  /// weakest real insertion peaked at 0.75 — 0.5 sits safely between.
+  static const double fireThreshold = 0.5;
 
   final List<double> _zone = [];
   final List<double> _down = [];
@@ -129,7 +152,10 @@ class LearnedInsertionModel {
         zLate += z;
       }
     }
-    zMean /= n; dMean /= n; cMean /= n; rMean /= n;
+    zMean /= n;
+    dMean /= n;
+    cMean /= n;
+    rMean /= n;
     final buildup = zLate / (n - half) - zEarly / half;
 
     double variance = 0;
@@ -152,33 +178,42 @@ class LearnedInsertionModel {
 /// bottle is inserted, it passes IN FRONT of the slot and hides the arrow
 /// for a fraction of a second, then the arrow reappears.
 ///
-///   dip (arrow hidden 2–30 frames) → recovery (arrow visible again) = 1 insert
+///   arrow hidden for ~3 consecutive frames → COUNT IMMEDIATELY (+1)
+///   arrow must become visible again before the next count can fire
 ///
-/// The duration bound is what rejects false positives: an empty hand
-/// reaching toward the slot without inserting LINGERS over it (validated on
-/// the negative video — occlusion >1s, no clean recovery), while a real
-/// insertion is a brief pass-through. Validated: 0 false fires on the
-/// hand-linger negative video.
+/// Counting at hide-time (not after recovery) gives instant feedback the
+/// moment the bottle covers the slot. The re-arm requirement (arrow must
+/// reappear first) plus the shared cooldown prevent a lingering hand from
+/// producing more than one count.
 class ArrowOcclusionDetector {
   double? _baseline;
   int _framesSeen = 0;
   int? _dipStartFrame;
+  bool _firedThisDip = false; // re-arm only after the arrow reappears
   final List<double> _warm = [];
 
-  static const double _dipRatio = 0.96;      // arrow hides when the zone becomes much darker
-  static const double _recoverRatio = 0.98;  // counts once the arrow comes back
-  static const int _minDipFrames = 1;        // a very brief hide should count
-  static const int _maxDipFrames = 12;       // longer than that is likely a linger, not a pass-through
+  static const double _dipRatio =
+      0.65; // dark-frac below 65% of baseline = arrow hidden
+  static const double _recoverRatio =
+      0.85; // back above 85% = arrow visible again
+  static const int _confirmFrames =
+      3; // hidden this many frames = confirmed, COUNT NOW
 
   void reset() {
     _baseline = null;
     _framesSeen = 0;
     _dipStartFrame = null;
+    _firedThisDip = false;
     _warm.clear();
   }
 
   /// Feed the zone's dark-pixel fraction each frame.
-  /// Returns true exactly once per completed dip-and-recover cycle.
+  ///
+  /// Fires TRUE the moment the printed arrow has been hidden for
+  /// [_confirmFrames] consecutive frames (~0.1s) — i.e. the instant the
+  /// bottle covers the slot's arrow, matching "when the arrow hides,
+  /// count as one". It then stays silent until the arrow becomes VISIBLE
+  /// again (re-arm), so a hand lingering over the slot cannot double-count.
   bool push(double darkFrac) {
     _framesSeen++;
 
@@ -192,9 +227,11 @@ class ArrowOcclusionDetector {
     }
 
     final base = _baseline!;
+    final hidden = darkFrac < base * _dipRatio;
+
     if (_dipStartFrame == null) {
-      if (darkFrac < base * _dipRatio) {
-        _dipStartFrame = _framesSeen; // arrow just got hidden
+      if (hidden) {
+        _dipStartFrame = _framesSeen; // arrow just got covered
       } else {
         // Slow-adapt the baseline while the arrow is visible, so gradual
         // lighting changes don't break the reference.
@@ -203,13 +240,17 @@ class ArrowOcclusionDetector {
       return false;
     }
 
-    final dur = _framesSeen - _dipStartFrame!;
-    if (darkFrac > base * _recoverRatio) {
+    // Currently in a dip (arrow hidden)
+    if (!hidden && darkFrac > base * _recoverRatio) {
+      // Arrow reappeared — re-arm for the next insertion.
       _dipStartFrame = null;
-      return dur >= _minDipFrames && dur <= _maxDipFrames; // clean cycle!
+      _firedThisDip = false;
+      return false;
     }
-    if (dur > _maxDipFrames) {
-      _dipStartFrame = null; // lingering occlusion — not an insertion
+
+    if (!_firedThisDip && (_framesSeen - _dipStartFrame!) >= _confirmFrames) {
+      _firedThisDip = true; // COUNT — arrow confirmed hidden by the bottle
+      return true;
     }
     return false;
   }
@@ -230,42 +271,36 @@ class SlotMotionDetectionImpl {
     double? minChangeFractionOverride,
     double? minDownwardScoreOverride,
     double? maxCornerMotionAvgOverride,
-  })  : _onMotionDetected = onMotionDetected,
+    // Optional sound-spike detector. CAMERA DETECTION IS COMPULSORY and
+    // works fully on its own — sound is only ever a helper. If a spike
+    // lands near a borderline camera signal, the camera bar is relaxed
+    // slightly for that one attempt. If sound disagrees, says nothing, or
+    // isn't running at all (mic permission denied/unsupported), the
+    // camera decides entirely by itself at the normal, stricter bar.
+    SoundSpikeDetector? soundDetector,
+  })  : _soundDetector = soundDetector,
+        _onMotionDetected = onMotionDetected,
         _onReadyChanged = onReadyChanged,
         _regionLeft = regionLeft,
         _regionTop = regionTop,
         _regionWidth = regionWidth,
         _regionHeight = regionHeight,
         _onAttemptComplete = onAttemptComplete,
-        _minChangeFraction = minChangeFractionOverride ?? _defaultMinChangeFraction,
-        _minDownwardScore  = minDownwardScoreOverride  ?? _defaultMinDownwardScore,
-        _maxCornerMotionAvg = maxCornerMotionAvgOverride ?? _defaultMaxCornerMotionAvg;
+        _minChangeFraction =
+            minChangeFractionOverride ?? _defaultMinChangeFraction,
+        _minDownwardScore =
+            minDownwardScoreOverride ?? _defaultMinDownwardScore,
+        _maxCornerMotionAvg =
+            maxCornerMotionAvgOverride ?? _defaultMaxCornerMotionAvg;
 
-
+  final SoundSpikeDetector? _soundDetector;
   final void Function() _onMotionDetected;
   final void Function(bool isReady) _onReadyChanged;
   final void Function(InsertionAttemptResult result)? _onAttemptComplete;
-  double _regionLeft;
-  double _regionTop;
-  double _regionWidth;
-  double _regionHeight;
-
-  /// Reposition the tracked slot zone WITHOUT resetting detection state.
-  /// The tracker refines its lock every few frames — recreating the whole
-  /// detector on every refinement would wipe the arrow-occlusion baseline
-  /// and the trained model's rolling window before either gets enough live
-  /// frames to ever see a full insertion cycle. Just move the region instead.
-  void updateRegion({
-    required double left,
-    required double top,
-    required double width,
-    required double height,
-  }) {
-    _regionLeft = left;
-    _regionTop = top;
-    _regionWidth = width;
-    _regionHeight = height;
-  }
+  final double _regionLeft;
+  final double _regionTop;
+  final double _regionWidth;
+  final double _regionHeight;
 
   // Instance thresholds — overridable per-instance via Remote Config,
   // default to the 35-video-calibrated values if no override is given.
@@ -281,15 +316,16 @@ class SlotMotionDetectionImpl {
   static const int _sampleStep = 2;
 
   // Filter 2: min changed fraction in zone
-  static const double _defaultMinChangeFraction = 0.06; // handheld: bottle is smaller in frame, motion fraction is lower
+  static const double _defaultMinChangeFraction =
+      0.06; // handheld: bottle is smaller in frame, motion fraction is lower
   // Filter 3: downward dominance score threshold
   static const double _defaultMinDownwardScore =
-      0.10; // handheld: bottle enters at varied angles, relax downward requirement
+      0.20; // handheld: bottle enters at varied angles, relax downward requirement
   // Filter 5: cooldown after each count
   static const int _cooldownMs = 2000; // faster cooldown for open-top bins
   // Pixel diff threshold for per-pixel motion map
   static const int _pixelDiffThreshold =
-      12; // lowered: wire mesh reduces pixel diff
+      18; // lowered: wire mesh reduces pixel diff
   static const int _bands = 20;
 
   // ── Anti camera-shake guard ────────────────────────────────────────────────
@@ -309,9 +345,11 @@ class SlotMotionDetectionImpl {
   //   35 real insertions — avg corner motion: 0.088 to 0.295 (max 0.295)
   //   False-trigger clip  — avg corner motion: 0.363   ← clearly higher
   //
-  static const double _cornerFrac = 0.15; // each corner patch = 15% of width/height
-  static const int _cornerPixelDiffThreshold = 12;
-  static const double _defaultMaxCornerMotionAvg = 0.50; // reject if background moved this much
+  static const double _cornerFrac =
+      0.15; // each corner patch = 15% of width/height
+  static const int _cornerPixelDiffThreshold = 18;
+  static const double _defaultMaxCornerMotionAvg =
+      0.32; // reject if background moved this much
 
   int _frameCount = 0;
   _PassState _state = _PassState.idle;
@@ -342,7 +380,7 @@ class SlotMotionDetectionImpl {
   // for every attempt (counted or not) so real usage keeps improving
   // calibration over time, not just the one-time 35-video snapshot.
   double _peakChangeFraction = 0;
-  double _peakDownwardScore  = 0;
+  double _peakDownwardScore = 0;
   DateTime? _attemptStart;
 
   void processImage(CameraImage image) {
@@ -470,26 +508,6 @@ class SlotMotionDetectionImpl {
       final darkFrac = darkCount / zoneLen;
       final occlusionFired = _occlusion.push(darkFrac);
 
-      if (occlusionFired) {
-        debugPrint('[Occlusion] Arrow dip-and-recover cycle → count');
-        _lastCount = DateTime.now();
-        _model.reset();
-        _occlusion.reset();
-        _onAttemptComplete?.call(InsertionAttemptResult(
-          counted: true,
-          rejectedReason: null,
-          peakChangeFraction: _changedFraction,
-          peakDownwardScore: frameDown,
-          avgCornerMotion: frameCorner,
-          durationMs: _attemptStart != null
-              ? DateTime.now().difference(_attemptStart!).inMilliseconds
-              : 0,
-        ));
-        _onMotionDetected();
-        _previousSample = sample;
-        return;
-      }
-
       // ── PRIMARY DETECTOR: trained insertion-action model ─────────────────
       // Trained on 36 real insertion videos + hard negatives; validated at
       // 36/36 detections with 0 false fires. The arrow-occlusion cycle is
@@ -505,7 +523,10 @@ class SlotMotionDetectionImpl {
               'dark=${darkFrac.toStringAsFixed(2)} '
               'corner=${frameCorner.toStringAsFixed(3)}');
         }
-        if (p >= LearnedInsertionModel.fireThreshold) {
+        if (occlusionFired) {
+          debugPrint('[Occlusion] Printed arrow hidden by bottle → count');
+        }
+        if (occlusionFired || p >= LearnedInsertionModel.fireThreshold) {
           _lastCount = DateTime.now();
           _model.reset(); // fresh window for the next insertion
           _occlusion.reset();
@@ -513,12 +534,12 @@ class SlotMotionDetectionImpl {
               ? DateTime.now().difference(_attemptStart!).inMilliseconds
               : 0;
           _onAttemptComplete?.call(InsertionAttemptResult(
-            counted:            true,
-            rejectedReason:     null,
+            counted: true,
+            rejectedReason: null,
             peakChangeFraction: _changedFraction,
-            peakDownwardScore:  frameDown,
-            avgCornerMotion:    frameCorner,
-            durationMs:         durationMs,
+            peakDownwardScore: frameDown,
+            avgCornerMotion: frameCorner,
+            durationMs: durationMs,
           ));
           _onMotionDetected();
           _previousSample = sample;
@@ -527,7 +548,8 @@ class SlotMotionDetectionImpl {
       }
 
       if (_changedFraction < _minChangeFraction) {
-        final shouldCount = _state == _PassState.inside || _state == _PassState.exiting;
+        final shouldCount =
+            _state == _PassState.inside || _state == _PassState.exiting;
         _state = _PassState.idle;
         _resetRows();
         _notifyReady(true);
@@ -540,8 +562,9 @@ class SlotMotionDetectionImpl {
           // bin region did, the whole camera was shaken/moved — not a real
           // bottle insertion. Suppress the count but keep the cooldown,
           // so a single mis-trigger doesn't immediately retry.
-          final avgCornerMotion =
-              _cornerMotionCount > 0 ? _cornerMotionSum / _cornerMotionCount : 0.0;
+          final avgCornerMotion = _cornerMotionCount > 0
+              ? _cornerMotionSum / _cornerMotionCount
+              : 0.0;
 
           // Adaptive anti-shake: compare slot-zone motion to background motion
           // as a RATIO, not an absolute threshold. Works for handheld use —
@@ -551,14 +574,28 @@ class SlotMotionDetectionImpl {
           // (i.e. the "motion" was just whole-camera movement, no insertion).
           // ── Camera is the COMPULSORY signal ─────────────────────────────
           // The zone-vs-background motion ratio is always the deciding
-          // check — this works fully on its own.
+          // check — this works fully on its own with no sound at all.
           final zoneVsBackground = avgCornerMotion > 0.001
               ? _peakChangeFraction / avgCornerMotion
               : 99.0;
 
-          final requiredRatio = 1.2;
+          // ── Sound is an OPTIONAL helper, never a requirement ────────────
+          // If a spike landed near this moment, it's corroborating evidence
+          // for a borderline camera signal — so the camera bar is relaxed
+          // a little (2.2 → 1.3). If sound disagrees, says nothing, or the
+          // detector isn't running at all (denied permission/unsupported),
+          // the camera still decides entirely on its own at the stricter
+          // bar. Sound can only make a count MORE likely, never block one.
+          final soundConfirmed = _soundDetector?.hadRecentSpike(
+                window: const Duration(milliseconds: 900),
+              ) ??
+              false;
+          final requiredRatio = soundConfirmed ? 1.3 : 2.2;
+
           final counted = zoneVsBackground >= requiredRatio;
-          final String? rejectedReason = counted ? null : 'cameraShake';
+          final String? rejectedReason = counted
+              ? null
+              : (soundConfirmed ? 'cameraShake' : 'cameraShakeNoSound');
 
           _cornerMotionSum = 0;
           _cornerMotionCount = 0;
@@ -570,12 +607,12 @@ class SlotMotionDetectionImpl {
               ? DateTime.now().difference(_attemptStart!).inMilliseconds
               : 0;
           _onAttemptComplete?.call(InsertionAttemptResult(
-            counted:            counted,
-            rejectedReason:     rejectedReason,
+            counted: counted,
+            rejectedReason: rejectedReason,
             peakChangeFraction: _peakChangeFraction,
-            peakDownwardScore:  _peakDownwardScore,
-            avgCornerMotion:    avgCornerMotion,
-            durationMs:         durationMs,
+            peakDownwardScore: _peakDownwardScore,
+            avgCornerMotion: avgCornerMotion,
+            durationMs: durationMs,
           ));
 
           if (counted) {
@@ -596,7 +633,8 @@ class SlotMotionDetectionImpl {
       final bandMax = bandMotion.reduce((a, b) => a > b ? a : b);
       if (bandMax > 0) {
         for (var b = 0; b < _bands; b++) {
-          _rowHistory[b] = _rowHistory[b] * 0.6 + (bandMotion[b] / bandMax) * 0.4;
+          _rowHistory[b] =
+              _rowHistory[b] * 0.6 + (bandMotion[b] / bandMax) * 0.4;
         }
       }
 
@@ -634,13 +672,14 @@ class SlotMotionDetectionImpl {
 
       switch (_state) {
         case _PassState.idle:
-          if (relPos < 0.55 && _changedFraction > _minChangeFraction * 0.8) { // wider zone for open-top bins
+          if (relPos < 0.55 && _changedFraction > _minChangeFraction * 0.8) {
+            // wider zone for open-top bins
             _state = _PassState.entering;
             // Fresh attempt — clear any stale tracking from a prior attempt.
             _cornerMotionSum = 0;
             _cornerMotionCount = 0;
             _peakChangeFraction = _changedFraction;
-            _peakDownwardScore  = 0;
+            _peakDownwardScore = 0;
             _attemptStart = DateTime.now();
           }
           break;
@@ -695,10 +734,12 @@ class SlotMotionDetectionImpl {
     final regionHeight = (height * safeHeight).round().clamp(1, height - top);
 
     if (Platform.isIOS) {
-      return _extractBGRA(image, left, top, regionWidth, regionHeight, width, height);
+      return _extractBGRA(
+          image, left, top, regionWidth, regionHeight, width, height);
     }
 
-    return _extractYUV(image, left, top, regionWidth, regionHeight, width, height);
+    return _extractYUV(
+        image, left, top, regionWidth, regionHeight, width, height);
   }
 
   _LumaSample? _extractYUV(
@@ -721,7 +762,9 @@ class SlotMotionDetectionImpl {
 
     for (var y = top; y < top + regionHeight && y < height; y += _sampleStep) {
       var rowCols = 0;
-      for (var x = left; x < left + regionWidth && x < width; x += _sampleStep) {
+      for (var x = left;
+          x < left + regionWidth && x < width;
+          x += _sampleStep) {
         final offset = y * bytesPerRow + x;
         if (offset >= 0 && offset < bytes.length) {
           out.add(bytes[offset] & 0xff);
@@ -758,7 +801,9 @@ class SlotMotionDetectionImpl {
 
     for (var y = top; y < top + regionHeight && y < height; y += _sampleStep) {
       var rowCols = 0;
-      for (var x = left; x < left + regionWidth && x < width; x += _sampleStep) {
+      for (var x = left;
+          x < left + regionWidth && x < width;
+          x += _sampleStep) {
         final offset = y * bytesPerRow + x * 4 + 1;
         if (offset >= 0 && offset < bytes.length) {
           out.add(bytes[offset] & 0xff);

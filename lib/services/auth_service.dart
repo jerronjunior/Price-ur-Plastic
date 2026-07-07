@@ -46,8 +46,20 @@ class AuthService {
         password: password,
       );
       return AppAuthResult(user: _mapUser(cred.user));
-    } on FirebaseAuthException catch (e) {
-      throw AppAuthException(code: e.code, message: e.message);
+    } catch (e) {
+      if (e is FirebaseAuthException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      } else if (e is FirebaseException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      }
+      String code = 'unknown';
+      String message = e.toString();
+      try {
+        final dynamic err = e;
+        if (err.code != null) code = err.code.toString();
+        if (err.message != null) message = err.message.toString();
+      } catch (_) {}
+      throw AppAuthException(code: code, message: message);
     }
   }
 
@@ -61,8 +73,20 @@ class AuthService {
         password: password,
       );
       return AppAuthResult(user: _mapUser(cred.user));
-    } on FirebaseAuthException catch (e) {
-      throw AppAuthException(code: e.code, message: e.message);
+    } catch (e) {
+      if (e is FirebaseAuthException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      } else if (e is FirebaseException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      }
+      String code = 'unknown';
+      String message = e.toString();
+      try {
+        final dynamic err = e;
+        if (err.code != null) code = err.code.toString();
+        if (err.message != null) message = err.message.toString();
+      } catch (_) {}
+      throw AppAuthException(code: code, message: message);
     }
   }
 
@@ -73,8 +97,20 @@ class AuthService {
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
-    } on FirebaseAuthException catch (e) {
-      throw AppAuthException(code: e.code, message: e.message);
+    } catch (e) {
+      if (e is FirebaseAuthException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      } else if (e is FirebaseException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      }
+      String code = 'unknown';
+      String message = e.toString();
+      try {
+        final dynamic err = e;
+        if (err.code != null) code = err.code.toString();
+        if (err.message != null) message = err.message.toString();
+      } catch (_) {}
+      throw AppAuthException(code: code, message: message);
     }
   }
 
@@ -97,8 +133,20 @@ class AuthService {
           EmailAuthProvider.credential(email: email, password: currentPassword);
       await user.reauthenticateWithCredential(credential);
       await user.updatePassword(newPassword);
-    } on FirebaseAuthException catch (e) {
-      throw AppAuthException(code: e.code, message: e.message);
+    } catch (e) {
+      if (e is FirebaseAuthException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      } else if (e is FirebaseException) {
+        throw AppAuthException(code: e.code, message: e.message);
+      }
+      String code = 'unknown';
+      String message = e.toString();
+      try {
+        final dynamic err = e;
+        if (err.code != null) code = err.code.toString();
+        if (err.message != null) message = err.message.toString();
+      } catch (_) {}
+      throw AppAuthException(code: code, message: message);
     }
   }
 
