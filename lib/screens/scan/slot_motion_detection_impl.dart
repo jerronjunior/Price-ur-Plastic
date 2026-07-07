@@ -245,10 +245,27 @@ class SlotMotionDetectionImpl {
   final void Function() _onMotionDetected;
   final void Function(bool isReady) _onReadyChanged;
   final void Function(InsertionAttemptResult result)? _onAttemptComplete;
-  final double _regionLeft;
-  final double _regionTop;
-  final double _regionWidth;
-  final double _regionHeight;
+  double _regionLeft;
+  double _regionTop;
+  double _regionWidth;
+  double _regionHeight;
+
+  /// Reposition the tracked slot zone WITHOUT resetting detection state.
+  /// The tracker refines its lock every few frames — recreating the whole
+  /// detector on every refinement would wipe the arrow-occlusion baseline
+  /// and the trained model's rolling window before either gets enough live
+  /// frames to ever see a full insertion cycle. Just move the region instead.
+  void updateRegion({
+    required double left,
+    required double top,
+    required double width,
+    required double height,
+  }) {
+    _regionLeft = left;
+    _regionTop = top;
+    _regionWidth = width;
+    _regionHeight = height;
+  }
 
   // Instance thresholds — overridable per-instance via Remote Config,
   // default to the 35-video-calibrated values if no override is given.
@@ -454,6 +471,7 @@ class SlotMotionDetectionImpl {
       final occlusionFired = _occlusion.push(darkFrac);
 
       if (occlusionFired) {
+        debugPrint('[Occlusion] Arrow dip-and-recover cycle → count');
         _lastCount = DateTime.now();
         _model.reset();
         _occlusion.reset();
@@ -486,9 +504,6 @@ class SlotMotionDetectionImpl {
               'zone=${_changedFraction.toStringAsFixed(3)} '
               'dark=${darkFrac.toStringAsFixed(2)} '
               'corner=${frameCorner.toStringAsFixed(3)}');
-        }
-        if (occlusionFired) {
-          debugPrint('[Occlusion] Arrow dip-and-recover cycle → count');
         }
         if (p >= LearnedInsertionModel.fireThreshold) {
           _lastCount = DateTime.now();

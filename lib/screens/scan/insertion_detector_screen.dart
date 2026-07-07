@@ -343,7 +343,20 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   void _rebuildMotion() {
     final r = _tracker.cameraRegion;
-    _motion?.dispose();
+    // Reposition the existing detector rather than recreating it — a fresh
+    // instance needs ~13 frames of warmup before its arrow-occlusion baseline
+    // and trained-model window are even live, and this runs every 15 frames,
+    // so recreating here left almost no time to ever detect an insertion.
+    final existing = _motion;
+    if (existing != null) {
+      existing.updateRegion(
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+      );
+      return;
+    }
     _motion = _buildMotion(
       left: r.left,
       top: r.top,
