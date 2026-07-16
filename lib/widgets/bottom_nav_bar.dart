@@ -4,12 +4,17 @@ import 'package:provider/provider.dart';
 import '../core/theme.dart';
 import '../providers/auth_provider.dart';
 
-/// Shared bottom navigation bar widget
+/// Shared bottom navigation bar — persists across tabs; only [currentIndex]
+/// changes which item is highlighted. Branch order: 0=Home, 1=Leaderboard,
+/// 2=Rewards, 3=Profile. Scan is not a shell branch (it's an immersive
+/// full-screen camera flow pushed on top), so it's never "active" here.
 class AppBottomNavBar extends StatelessWidget {
-  final String currentRoute;
+  final int currentIndex;
+  final ValueChanged<int> onTabSelected;
 
   const AppBottomNavBar({
-    required this.currentRoute,
+    required this.currentIndex,
+    required this.onTabSelected,
     super.key,
   });
 
@@ -29,36 +34,34 @@ class AppBottomNavBar extends StatelessWidget {
           _BottomNavItem(
             icon: Icons.home,
             label: 'Home',
-            isActive: currentRoute == '/' || currentRoute == '/home',
-            onTap: () => context.go('/'),
+            isActive: currentIndex == 0,
+            onTap: () => onTabSelected(0),
           ),
           // Hide leaderboard for admin users
           if (!(context.watch<AuthProvider>().isAdmin))
             _BottomNavItem(
               icon: Icons.leaderboard,
               label: 'Leaderboard',
-              isActive: currentRoute == '/leaderboard',
-              onTap: () => context.go('/leaderboard'),
+              isActive: currentIndex == 1,
+              onTap: () => onTabSelected(1),
             ),
           _BottomNavItem(
             icon: Icons.qr_code_2,
             label: 'Scan',
-            isActive: currentRoute == '/scan' ||
-                currentRoute == '/scan-flow' ||
-                currentRoute == '/scan-bin',
-            onTap: () => context.go('/scan'),
+            isActive: false,
+            onTap: () => context.push('/scan'),
           ),
           _BottomNavItem(
             icon: Icons.card_giftcard,
             label: 'Rewards',
-            isActive: currentRoute == '/rewards',
-            onTap: () => context.go('/rewards'),
+            isActive: currentIndex == 2,
+            onTap: () => onTabSelected(2),
           ),
           _BottomNavItem(
             icon: Icons.person,
             label: 'Profile',
-            isActive: currentRoute == '/profile',
-            onTap: () => context.go('/profile'),
+            isActive: currentIndex == 3,
+            onTap: () => onTabSelected(3),
           ),
         ],
       ),

@@ -2,16 +2,12 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/theme.dart';
 import '../../models/reward_config_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../services/firestore_service.dart';
-import '../../widgets/bottom_nav_bar.dart';
-import '../../widgets/notification_panel.dart';
 
 class RewardsScreen extends StatefulWidget {
   const RewardsScreen({super.key});
@@ -26,7 +22,6 @@ class _RewardsScreenState extends State<RewardsScreen>
   late AnimationController _celebrationController;
   late Animation<double> _turnsAnimation;
 
-  bool _showNotificationPanel = false;
   // ── spinCost is now read from Firestore via StreamBuilder ──────────────────
   // No longer hardcoded — changes in admin panel reflect here instantly
   bool _isSpinning = false;
@@ -156,80 +151,15 @@ class _RewardsScreenState extends State<RewardsScreen>
   @override
   Widget build(BuildContext context) {
     final user     = context.watch<AuthProvider>().user;
-    final hasUnread= context.watch<NotificationProvider>().hasUnread;
     final points   = user?.totalPoints ?? 0;
     final firestore= context.read<FirestoreService>();
 
     return Scaffold(
       backgroundColor: Colors.white,
-      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/rewards'),
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              // ── Header ──────────────────────────────────────────────────
-              Container(
-                width: double.infinity,
-                color: AppTheme.primaryBlue,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 24, vertical: 20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.person, color: Colors.white),
-                      onPressed: () => context.push('/profile'),
-                    ),
-                    const Text(
-                      'REWARDS',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          const Icon(Icons.notifications,
-                              color: Colors.white),
-                          if (hasUnread)
-                            const Positioned(
-                              right: -1,
-                              top: -1,
-                              child: SizedBox(
-                                width: 10,
-                                height: 10,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.red,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      onPressed: () {
-                        if (!_showNotificationPanel) {
-                          context
-                              .read<NotificationProvider>()
-                              .markAllAsRead();
-                        }
-                        setState(() => _showNotificationPanel =
-                            !_showNotificationPanel);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-              // ── StreamBuilder — reads ALL config live from Firestore ─────
-              // When admin changes spinCost / pointsPerBottle / wheelGifts
-              // in the web panel, this rebuilds automatically.
-              Expanded(
-                child: StreamBuilder<RewardConfigModel>(
+      // ── StreamBuilder — reads ALL config live from Firestore ─────
+      // When admin changes spinCost / pointsPerBottle / wheelGifts
+      // in the web panel, this rebuilds automatically.
+      body: StreamBuilder<RewardConfigModel>(
                   stream: firestore.rewardConfigStream(),
                   builder: (context, snapshot) {
                     // ── Extract every config value from Firestore ──────────
@@ -496,33 +426,6 @@ class _RewardsScreenState extends State<RewardsScreen>
                     );
                   },
                 ),
-              ),
-            ],
-          ),
-
-          if (_showNotificationPanel)
-            Positioned(
-              right: 0, top: 0, bottom: 0,
-              child: GestureDetector(
-                onTap: () => setState(
-                    () => _showNotificationPanel = false),
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  child: GestureDetector(
-                    onTap: () {},
-                    child: NotificationPanel(
-                      notifications: context
-                          .watch<NotificationProvider>()
-                          .notifications,
-                      onClose: () => setState(
-                          () => _showNotificationPanel = false),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

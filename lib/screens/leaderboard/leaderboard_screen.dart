@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
-import '../../providers/notification_provider.dart';
 import '../../services/firestore_service.dart';
-import '../../widgets/bottom_nav_bar.dart';
-import '../../widgets/notification_panel.dart';
 
 String _displayNameFor(UserModel user) {
   final trimmedName = user.name.trim();
@@ -31,7 +27,6 @@ class LeaderboardScreen extends StatefulWidget {
 
 class _LeaderboardScreenState extends State<LeaderboardScreen>
     with SingleTickerProviderStateMixin {
-  bool _showNotificationPanel = false;
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
 
@@ -54,93 +49,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   Widget build(BuildContext context) {
     final firestore = context.read<FirestoreService>();
     final currentUserId = context.read<AuthProvider>().userId;
-    final hasUnread = context.watch<NotificationProvider>().hasUnread;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF1F8E9),
-      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/leaderboard'),
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              // ── Header ────────────────────────────────────────────────
-              Container(
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF2E7D32), Color(0xFF1B5E20)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                padding: const EdgeInsets.fromLTRB(8, 8, 8, 20),
-                child: SafeArea(
-                  bottom: false,
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.person, color: Colors.white),
-                            onPressed: () => context.push('/profile'),
-                          ),
-                          const Expanded(
-                            child: Center(
-                              child: Text(
-                                'LEADERBOARD',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 2,
-                                ),
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                const Icon(Icons.notifications,
-                                    color: Colors.white),
-                                if (hasUnread)
-                                  const Positioned(
-                                    right: -1,
-                                    top: -1,
-                                    child: SizedBox(
-                                      width: 10,
-                                      height: 10,
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: Colors.red,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            onPressed: () {
-                              if (!_showNotificationPanel) {
-                                context
-                                    .read<NotificationProvider>()
-                                    .markAllAsRead();
-                              }
-                              setState(() =>
-                                  _showNotificationPanel =
-                                      !_showNotificationPanel);
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ── Live leaderboard ───────────────────────────────────────
-              Expanded(
-                child: StreamBuilder<List<UserModel>>(
+      body: StreamBuilder<List<UserModel>>(
                   stream: firestore.leaderboardStreamAll(),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
@@ -253,32 +165,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     );
                   },
                 ),
-              ),
-            ],
-          ),
-
-          if (_showNotificationPanel)
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () =>
-                    setState(() => _showNotificationPanel = false),
-                child: Container(
-                  color: Colors.black38,
-                  alignment: Alignment.centerRight,
-                  child: GestureDetector(
-                    onTap: () {},
-                    child: NotificationPanel(
-                      notifications:
-                          context.watch<NotificationProvider>().notifications,
-                      onClose: () =>
-                          setState(() => _showNotificationPanel = false),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

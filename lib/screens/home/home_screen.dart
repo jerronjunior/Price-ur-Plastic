@@ -7,9 +7,6 @@ import '../../core/theme.dart';
 import '../../services/firestore_service.dart';
 import '../../models/bin_model.dart';
 import '../../providers/auth_provider.dart';
-import '../../providers/notification_provider.dart';
-import '../../widgets/bottom_nav_bar.dart';
-import '../../widgets/notification_panel.dart';
 
 /// Home: points, bottles count, XP progress, and stat boxes.
 class HomeScreen extends StatefulWidget {
@@ -21,7 +18,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _showWelcome = false;
-  bool _showNotificationPanel = false;
   late final Stream<List<BinModel>> _binsStream =
       FirestoreService().getAllBinsStream();
 
@@ -50,14 +46,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasUnread = context.watch<NotificationProvider>().hasUnread;
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/'),
-      body: Stack(
-        children: [
-          // Main Content
-          StreamBuilder(
+      body: StreamBuilder(
             stream: context.read<AuthProvider>().userStream,
             builder: (context, snapshot) {
               final user = snapshot.data ?? context.read<AuthProvider>().user;
@@ -85,65 +76,6 @@ class _HomeScreenState extends State<HomeScreen> {
               return SingleChildScrollView(
                 child: Column(
                   children: [
-                    // Blue Header with HOME title
-                    Container(
-                      width: double.infinity,
-                      color: AppTheme.primaryBlue,
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.person, color: Colors.white),
-                            onPressed: () => context.push('/profile'),
-                          ),
-                          const Text(
-                            'HOME',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          IconButton(
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                const Icon(Icons.notifications,
-                                    color: Colors.white),
-                                if (hasUnread)
-                                  const Positioned(
-                                    right: -1,
-                                    top: -1,
-                                    child: SizedBox(
-                                      width: 10,
-                                      height: 10,
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: Colors.red,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            onPressed: () {
-                              if (!_showNotificationPanel) {
-                                context
-                                    .read<NotificationProvider>()
-                                    .markAllAsRead();
-                              }
-                              setState(() {
-                                _showNotificationPanel =
-                                    !_showNotificationPanel;
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
                     // Welcome Section - Green rounded box with animation
                     AnimatedOpacity(
                       opacity: _showWelcome ? 1.0 : 0.0,
@@ -390,38 +322,6 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-          // Notification Panel Overlay
-          if (_showNotificationPanel)
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              child: GestureDetector(
-                onTap: () {
-                  // Close panel when tapping outside
-                  setState(() {
-                    _showNotificationPanel = false;
-                  });
-                },
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  child: GestureDetector(
-                    onTap: () {},
-                    child: NotificationPanel(
-                      notifications:
-                          context.watch<NotificationProvider>().notifications,
-                      onClose: () {
-                        setState(() {
-                          _showNotificationPanel = false;
-                        });
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

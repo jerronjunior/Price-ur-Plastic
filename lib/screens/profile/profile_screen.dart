@@ -8,9 +8,6 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
-import '../../providers/notification_provider.dart';
-import '../../widgets/bottom_nav_bar.dart';
-import '../../widgets/notification_panel.dart';
 import '../../services/storage_service.dart';
 
 /// Profile screen: user info, edit profile, logout.
@@ -27,7 +24,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _emailController;
   late TextEditingController _mobileController;
   bool _isEditing = false;
-  bool _showNotificationPanel = false;
   bool _uploadingImage = false;
   final ImagePicker _imagePicker = ImagePicker();
   final StorageService _storageService = StorageService();
@@ -308,13 +304,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasUnread = context.watch<NotificationProvider>().hasUnread;
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      bottomNavigationBar: const AppBottomNavBar(currentRoute: '/profile'),
-      body: Stack(
-        children: [
-          StreamBuilder(
+      body: StreamBuilder(
             stream: context.read<AuthProvider>().userStream,
             builder: (context, snapshot) {
               final authProvider = context.read<AuthProvider>();
@@ -379,69 +371,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               return SingleChildScrollView(
                 child: Column(
                   children: [
-                    // Blue Header
-                    Container(
-                      width: double.infinity,
-                      color: AppTheme.primaryBlue,
-                      padding: EdgeInsets.fromLTRB(
-                        24,
-                        20 + MediaQuery.of(context).padding.top,
-                        24,
-                        20,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.person, color: Colors.white),
-                            onPressed: () {},
-                          ),
-                          const Text(
-                            'PROFILE',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          IconButton(
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                const Icon(Icons.notifications,
-                                    color: Colors.white),
-                                if (hasUnread)
-                                  const Positioned(
-                                    right: -1,
-                                    top: -1,
-                                    child: SizedBox(
-                                      width: 10,
-                                      height: 10,
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: Colors.red,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            onPressed: () {
-                              if (!_showNotificationPanel) {
-                                context
-                                    .read<NotificationProvider>()
-                                    .markAllAsRead();
-                              }
-                              setState(() {
-                                _showNotificationPanel =
-                                    !_showNotificationPanel;
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
                     const SizedBox(height: 20),
                     // User Info Card
                     Padding(
@@ -739,37 +668,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
             },
           ),
-          // Notification Panel Overlay
-          if (_showNotificationPanel)
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              child: GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _showNotificationPanel = false;
-                  });
-                },
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  child: GestureDetector(
-                    onTap: () {},
-                    child: NotificationPanel(
-                      notifications:
-                          context.watch<NotificationProvider>().notifications,
-                      onClose: () {
-                        setState(() {
-                          _showNotificationPanel = false;
-                        });
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }
