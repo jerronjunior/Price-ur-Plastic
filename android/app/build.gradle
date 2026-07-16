@@ -86,6 +86,11 @@ android {
                 "META-INF/*.kotlin_module"
             ]
         }
+        jniLibs {
+            excludes += [
+                "**/libtensorflowlite_gpu_jni.so"
+            ]
+        }
     }
 }
 

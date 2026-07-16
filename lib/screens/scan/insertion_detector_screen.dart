@@ -435,7 +435,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _badgeCtrl.forward(from: 0);
 
     // 3. Spawn AR floating score at slot position
-    final sz = MediaQuery.of(context).size;
+    final sz = MediaQuery.sizeOf(context);
     final origin = _tracker.toScreenOffset(sz, _sensorOrientation);
     _spawnScore(origin);
 
