@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -10,12 +11,21 @@ import 'app/app_router.dart';
 import 'providers/auth_provider.dart';
 import 'providers/notification_provider.dart';
 import 'services/auth_service.dart';
+import 'services/camera_service.dart';
 import 'services/firestore_service.dart';
 import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   String? startupError;
+
+  // Warm the camera-list cache in the background so the first tap on Scan
+  // doesn't pay for the availableCameras() platform-channel round trip on
+  // top of the actual camera hardware open — shortens the black loading
+  // screen users see the first time they open Scan each session.
+  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    unawaited(CameraService.getCameras());
+  }
 
   try {
     final isSupportedFirebasePlatform = kIsWeb ||

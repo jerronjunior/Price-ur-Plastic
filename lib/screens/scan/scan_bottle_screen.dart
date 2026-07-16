@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart' hide BarcodeFormat;
 
 import '../../services/bottle_tflite_service.dart';
+import '../../services/camera_service.dart';
 
 class ScanBottleScreen extends StatefulWidget {
   const ScanBottleScreen({
@@ -25,10 +26,12 @@ class ScanBottleScreen extends StatefulWidget {
   State<ScanBottleScreen> createState() => _ScanBottleScreenState();
 }
 
-class _ScanBottleScreenState extends State<ScanBottleScreen> {
+class _ScanBottleScreenState extends State<ScanBottleScreen>
+    with WidgetsBindingObserver {
   CameraController? _cameraController;
   MobileScannerController? _desktopScannerController;
   Timer? _mobileScanTimer;
+  bool _cameraStarting = false; // guards re-entrant _initMobileCamera() calls
 
   final BottleTfliteService _tflite = BottleTfliteService();
 
@@ -75,7 +78,33 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bootstrap();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (_isDesktopPlatform) return;
+    // The OS can force-close the camera hardware while the app is
+    // backgrounded — reusing that controller on resume leaves the preview
+    // permanently black/stuck, so always tear down and reopen fresh.
+    if (s == AppLifecycleState.inactive || s == AppLifecycleState.paused) {
+      _mobileScanTimer?.cancel();
+      _teardownMobileCamera();
+    } else if (s == AppLifecycleState.resumed) {
+      _initMobileCamera();
+    }
+  }
+
+  Future<void> _teardownMobileCamera() async {
+    final cam = _cameraController;
+    _cameraController = null;
+    if (mounted) setState(() => _cameraReady = false);
+    if (cam != null) {
+      try {
+        await cam.dispose();
+      } catch (_) {}
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -97,19 +126,17 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
   }
 
   Future<void> _initMobileCamera() async {
+    if (_cameraStarting) return;
+    _cameraStarting = true;
     try {
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) return;
+      final back = await CameraService.getBackCamera();
+      if (back == null || !mounted) return;
 
-      final back = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
+      final cam = CameraController(back, ResolutionPreset.low, enableAudio: false);
+      _cameraController = cam;
+      await cam.initialize();
 
-      _cameraController = CameraController(back, ResolutionPreset.low, enableAudio: false);
-      await _cameraController!.initialize();
-
-      if (!mounted) return;
+      if (!mounted || _cameraController != cam) return; // torn down while awaiting
       setState(() => _cameraReady = true);
 
       _mobileScanTimer?.cancel();
@@ -124,6 +151,8 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
       if (!mounted) return;
       setState(() => _error = 'Camera init failed. Please retry.');
       debugPrint('Mobile camera init error: $e');
+    } finally {
+      _cameraStarting = false;
     }
   }
 
@@ -351,6 +380,7 @@ class _ScanBottleScreenState extends State<ScanBottleScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _mobileScanTimer?.cancel();
     _cameraController?.dispose();
     _desktopScannerController?.dispose();

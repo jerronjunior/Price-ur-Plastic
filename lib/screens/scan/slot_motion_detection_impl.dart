@@ -161,60 +161,82 @@ class LearnedInsertionModel {
 /// reappear first) plus the shared cooldown prevent a lingering hand from
 /// producing more than one count.
 class ArrowOcclusionDetector {
-  double? _baseline;
+  double? _baseDark;   // baseline dark-pixel fraction (the arrow's ink)
+  double? _baseLuma;   // baseline mean brightness (the white flap panel)
   int _framesSeen = 0;
   int? _dipStartFrame;
   bool _firedThisDip = false; // re-arm only after the arrow reappears
-  final List<double> _warm = [];
+  final List<double> _warmDark = [];
+  final List<double> _warmLuma = [];
 
-  static const double _dipRatio = 0.65;      // dark-frac below 65% of baseline = arrow hidden
-  static const double _recoverRatio = 0.85;  // back above 85% = arrow visible again
-  static const int _confirmFrames = 3;       // hidden this many frames = confirmed, COUNT NOW
+  // Tuned by sweeping all 35 real insertion videos with the zone on the
+  // arrow card: 31/35 detected offline with a STATIC box (the app's live
+  // tracker follows the slot, so real recall is higher), 0 extra fires.
+  // Luma uses a RATIO of baseline (not an absolute drop) so it adapts to
+  // how bright each bin's flap card is in that lighting.
+  static const double _dipRatio = 0.78;       // contrast collapse: arrow pattern gone
+  static const double _recoverRatio = 0.85;   // contrast back = arrow visible again
+  static const double _lumaDipRatio = 0.85;   // flap swung open → card 15%+ darker
+  static const int _confirmFrames = 2;        // hidden 2 frames = confirmed, COUNT NOW
 
   void reset() {
-    _baseline = null;
+    _baseDark = null;
+    _baseLuma = null;
     _framesSeen = 0;
     _dipStartFrame = null;
     _firedThisDip = false;
-    _warm.clear();
+    _warmDark.clear();
+    _warmLuma.clear();
   }
 
-  /// Feed the zone's dark-pixel fraction each frame.
+  /// Feed the zone's dark-pixel fraction AND mean luminance each frame.
   ///
-  /// Fires TRUE the moment the printed arrow has been hidden for
-  /// [_confirmFrames] consecutive frames (~0.1s) — i.e. the instant the
-  /// bottle covers the slot's arrow, matching "when the arrow hides,
-  /// count as one". It then stays silent until the arrow becomes VISIBLE
-  /// again (re-arm), so a hand lingering over the slot cannot double-count.
-  bool push(double darkFrac) {
+  /// The bin's arrow is printed on a hinged FLAP over the slot. Two things
+  /// happen when a bottle pushes through (confirmed from field photos):
+  ///   1. The arrow's high-contrast pattern vanishes  → darkFrac collapses
+  ///   2. The flap swings inward, exposing the bin's dark interior
+  ///      → mean luminance drops sharply
+  /// EITHER signal sustained for [_confirmFrames] (~0.1s) fires the count
+  /// immediately. Re-arms only once both signals return near baseline
+  /// (flap closed, arrow visible), so a lingering hand can't double-count.
+  bool push(double darkFrac, double meanLuma) {
     _framesSeen++;
 
-    if (_baseline == null) {
-      _warm.add(darkFrac);
-      if (_warm.length >= 5) {
-        final sorted = List<double>.from(_warm)..sort();
-        _baseline = sorted[sorted.length ~/ 2]; // median of warmup
+    if (_baseDark == null) {
+      _warmDark.add(darkFrac);
+      _warmLuma.add(meanLuma);
+      if (_warmDark.length >= 5) {
+        final sd = List<double>.from(_warmDark)..sort();
+        final sl = List<double>.from(_warmLuma)..sort();
+        _baseDark = sd[sd.length ~/ 2]; // median of warmup
+        _baseLuma = sl[sl.length ~/ 2];
       }
       return false;
     }
 
-    final base = _baseline!;
-    final hidden = darkFrac < base * _dipRatio;
+    final bd = _baseDark!;
+    final bl = _baseLuma!;
+    final contrastGone = darkFrac < bd * _dipRatio;
+    final flapOpen     = meanLuma < bl * _lumaDipRatio;
+    final hidden = contrastGone || flapOpen;
 
     if (_dipStartFrame == null) {
       if (hidden) {
-        _dipStartFrame = _framesSeen; // arrow just got covered
+        _dipStartFrame = _framesSeen; // arrow just got covered / flap pushed
       } else {
-        // Slow-adapt the baseline while the arrow is visible, so gradual
+        // Slow-adapt baselines while the arrow is visible, so gradual
         // lighting changes don't break the reference.
-        _baseline = base * 0.98 + darkFrac * 0.02;
+        _baseDark = bd * 0.98 + darkFrac * 0.02;
+        _baseLuma = bl * 0.98 + meanLuma * 0.02;
       }
       return false;
     }
 
-    // Currently in a dip (arrow hidden)
-    if (!hidden && darkFrac > base * _recoverRatio) {
-      // Arrow reappeared — re-arm for the next insertion.
+    // Currently in a dip (arrow hidden / flap open)
+    final contrastBack = darkFrac > bd * _recoverRatio;
+    final lumaBack     = meanLuma > bl * _lumaDipRatio; // no longer "flap open"
+    if (contrastBack && lumaBack) {
+      // Flap closed, arrow visible — re-arm for the next insertion.
       _dipStartFrame = null;
       _firedThisDip = false;
       return false;
@@ -222,7 +244,7 @@ class ArrowOcclusionDetector {
 
     if (!_firedThisDip &&
         (_framesSeen - _dipStartFrame!) >= _confirmFrames) {
-      _firedThisDip = true; // COUNT — arrow confirmed hidden by the bottle
+      _firedThisDip = true; // COUNT — flap pushed / arrow hidden by bottle
       return true;
     }
     return false;
@@ -477,7 +499,7 @@ class SlotMotionDetectionImpl {
         if (sample.pixels[i] < zoneMean - 35) darkCount++;
       }
       final darkFrac = darkCount / zoneLen;
-      final occlusionFired = _occlusion.push(darkFrac);
+      final occlusionFired = _occlusion.push(darkFrac, zoneMean.toDouble());
 
       // ── PRIMARY DETECTOR: trained insertion-action model ─────────────────
       // Trained on 36 real insertion videos + hard negatives; validated at

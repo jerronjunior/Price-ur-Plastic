@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import '../../services/bin_detector.dart';
+import '../../services/camera_service.dart';
 import '../../services/training_data_service.dart';
 
 export '../../services/bin_detector.dart' show BinType;
@@ -45,12 +46,13 @@ class ScanBinScreen extends StatefulWidget {
 }
 
 class _ScanBinScreenState extends State<ScanBinScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   CameraController? _cam;
   bool _cameraReady     = false;
   bool _processingFrame = false;
   int  _frameCount      = 0;
   bool _confirmed       = false;
+  bool _cameraStarting  = false; // guards re-entrant _initCamera() calls
 
   final BinDetector _detector = BinDetector();
   late AnimationController _pulseCtrl;
@@ -58,6 +60,7 @@ class _ScanBinScreenState extends State<ScanBinScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800))
       ..repeat(reverse: true);
@@ -66,33 +69,63 @@ class _ScanBinScreenState extends State<ScanBinScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseCtrl.dispose();
     _cam?.stopImageStream();
     _cam?.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    // The OS can force-close the camera hardware while the app is
+    // backgrounded — reusing that controller on resume leaves the preview
+    // permanently black/stuck, so always tear down and reopen fresh.
+    if (s == AppLifecycleState.inactive || s == AppLifecycleState.paused) {
+      _teardownCamera();
+    } else if (s == AppLifecycleState.resumed) {
+      _initCamera();
+    }
+  }
+
+  Future<void> _teardownCamera() async {
+    final cam = _cam;
+    _cam = null;
+    if (mounted) setState(() => _cameraReady = false);
+    if (cam != null) {
+      try {
+        if (cam.value.isStreamingImages) await cam.stopImageStream();
+      } catch (_) {}
+      try {
+        await cam.dispose();
+      } catch (_) {}
+    }
+  }
+
   Future<void> _initCamera() async {
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
-    final camera = cameras.firstWhere(
-      (c) => c.lensDirection == CameraLensDirection.back,
-      orElse: () => cameras.first,
-    );
-    _cam = CameraController(
-      camera, ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
-    );
+    if (_cameraStarting) return;
+    _cameraStarting = true;
     try {
-      await _cam!.initialize();
-      if (!mounted) return;
-      setState(() => _cameraReady = true);
-      await _cam!.startImageStream(_onFrame);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Camera error: $e')));
+      final camera = await CameraService.getBackCamera();
+      if (camera == null || !mounted) return;
+      final cam = CameraController(
+        camera, ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420,
+      );
+      _cam = cam;
+      try {
+        await cam.initialize();
+        if (!mounted || _cam != cam) return; // torn down while awaiting
+        setState(() => _cameraReady = true);
+        await cam.startImageStream(_onFrame);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Camera error: $e')));
+      }
+    } finally {
+      _cameraStarting = false;
     }
   }
 
