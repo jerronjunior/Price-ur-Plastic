@@ -322,29 +322,50 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
       final backCam = await CameraService.getBackCamera();
       if (backCam == null || !mounted || _disposed) return;
       _camDesc = backCam;
-      final cam = CameraController(_camDesc!, ResolutionPreset.medium,
-          enableAudio: false,
-          imageFormatGroup: ImageFormatGroup.yuv420);
-      _cam = cam;
-      try {
-        await cam.initialize();
-        if (_disposed || _cam != cam) return; // torn down while awaiting
+
+      // The previous scan screen (bin/bottle) disposes its own
+      // CameraController on its way out, but that dispose isn't awaited by
+      // the flow orchestrator — the OS can still be releasing the camera
+      // hardware when this screen mounts. On some devices that makes
+      // initialize() hang forever with no exception, which used to leave
+      // this screen stuck on the loading spinner. A timeout turns the hang
+      // into a retryable error instead.
+      const maxAttempts = 3;
+      for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (_disposed || !mounted) return;
+        final cam = CameraController(_camDesc!, ResolutionPreset.medium,
+            enableAudio: false,
+            imageFormatGroup: ImageFormatGroup.yuv420);
+        _cam = cam;
         try {
-          final mn = await cam.getMinZoomLevel();
-          final mx = await cam.getMaxZoomLevel();
-          await cam.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
-        } catch (_) {}
-        if (!mounted || _disposed || _cam != cam) return;
-        setState(() { _cameraReady = true; _stableFrames = 0; });
-        _tracker.reset();
-        _rebuildMotion();
-        await cam.startImageStream(_onFrame);
-        if (_disposed || _cam != cam) return;
-        _streamStarted = true;
-      } catch (e) {
-        if (!mounted || _disposed) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Camera error: $e')));
+          await cam.initialize().timeout(const Duration(seconds: 5));
+          if (_disposed || _cam != cam) return; // torn down while awaiting
+          try {
+            final mn = await cam.getMinZoomLevel();
+            final mx = await cam.getMaxZoomLevel();
+            await cam.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
+          } catch (_) {}
+          if (!mounted || _disposed || _cam != cam) return;
+          setState(() { _cameraReady = true; _stableFrames = 0; });
+          _tracker.reset();
+          _rebuildMotion();
+          await cam.startImageStream(_onFrame);
+          if (_disposed || _cam != cam) return;
+          _streamStarted = true;
+          return;
+        } catch (e) {
+          if (_cam == cam) _cam = null;
+          try {
+            await cam.dispose();
+          } catch (_) {}
+          if (_disposed || !mounted) return;
+          if (attempt == maxAttempts) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text('Camera error: $e')));
+            return;
+          }
+          await Future.delayed(Duration(milliseconds: 400 * attempt));
+        }
       }
     } finally {
       _cameraStarting = false;
