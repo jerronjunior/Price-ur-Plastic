@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 
 import 'slot_motion_detection_impl.dart';
 import 'sound_spike_detector.dart';
-import '../../services/camera_service.dart';
 import '../../services/training_data_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -196,7 +195,6 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _processingFrame = false;
   int  _frameCount      = 0;
   bool _detected        = false;
-  bool _cameraStarting  = false; // guards re-entrant _initCamera() calls
 
   // ── Detection ──────────────────────────────────────────────────────────────
   final _SlotTracker       _tracker = _SlotTracker();
@@ -242,9 +240,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
     _startTimeout();
     _initCamera();
-    // Fire-and-forget — requests mic permission and starts listening.
-    // Never blocks the camera/scanning flow if denied or unsupported.
-    unawaited(_sound.start());
+    // NOTE: _sound.start() is intentionally NOT called here. It requests
+    // the microphone permission, and doing that while the camera plugin
+    // is simultaneously requesting the camera permission can deadlock
+    // camera init (stuck loading spinner). It now starts inside
+    // _initCamera(), only after the camera stream is already running.
   }
 
   @override
@@ -276,31 +276,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.inactive || s == AppLifecycleState.paused) {
-      _teardownCamera();
-    } else if (s == AppLifecycleState.resumed) {
-      _initCamera();
-    }
-  }
-
-  /// Cleanly releases the camera when the app loses focus. The OS can also
-  /// force-close the camera hardware behind our back in this state, so on
-  /// resume we always open a fresh CameraController rather than trying to
-  /// reuse this one — reusing a controller the OS already killed is what
-  /// caused the camera to get permanently stuck on some devices.
-  Future<void> _teardownCamera() async {
-    final cam = _cam;
-    _cam = null;
-    _streamStarted = false;
-    if (mounted) setState(() => _cameraReady = false);
-    if (cam != null) {
-      try {
-        if (cam.value.isStreamingImages) await cam.stopImageStream();
-      } catch (_) {}
-      try {
-        await cam.dispose();
-      } catch (_) {}
-    }
+    if (s == AppLifecycleState.inactive) _cam?.dispose();
+    if (s == AppLifecycleState.resumed)  _initCamera();
   }
 
   void _startTimeout() {
@@ -316,63 +293,72 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   Future<void> _initCamera() async {
-    if (_cameraStarting || _disposed) return;
-    _cameraStarting = true;
     try {
-      final backCam = await CameraService.getBackCamera();
-      if (backCam == null || !mounted || _disposed) return;
-      _camDesc = backCam;
-
-      // The previous scan screen (bin/bottle) disposes its own
-      // CameraController on its way out, but that dispose isn't awaited by
-      // the flow orchestrator — the OS can still be releasing the camera
-      // hardware when this screen mounts. On some devices that makes
-      // initialize() hang forever with no exception, which used to leave
-      // this screen stuck on the loading spinner. A timeout turns the hang
-      // into a retryable error instead.
-      const maxAttempts = 3;
-      for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (_disposed || !mounted) return;
-        final cam = CameraController(_camDesc!, ResolutionPreset.medium,
-            enableAudio: false,
-            imageFormatGroup: ImageFormatGroup.yuv420);
-        _cam = cam;
-        try {
-          await cam.initialize().timeout(const Duration(seconds: 5));
-          if (_disposed || _cam != cam) return; // torn down while awaiting
-          try {
-            final mn = await cam.getMinZoomLevel();
-            final mx = await cam.getMaxZoomLevel();
-            await cam.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
-          } catch (_) {}
-          if (!mounted || _disposed || _cam != cam) return;
-          setState(() { _cameraReady = true; _stableFrames = 0; });
-          _tracker.reset();
-          _rebuildMotion();
-          await cam.startImageStream(_onFrame);
-          if (_disposed || _cam != cam) return;
-          _streamStarted = true;
-          return;
-        } catch (e) {
-          if (_cam == cam) _cam = null;
-          try {
-            await cam.dispose();
-          } catch (_) {}
-          if (_disposed || !mounted) return;
-          if (attempt == maxAttempts) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text('Camera error: $e')));
-            return;
-          }
-          await Future.delayed(Duration(milliseconds: 400 * attempt));
-        }
+      // availableCameras() is INSIDE the try now — if it throws or the
+      // permission dialog is dismissed, the user gets an error + Retry
+      // instead of an eternal loading spinner.
+      final cams = await availableCameras()
+          .timeout(const Duration(seconds: 8));
+      if (cams.isEmpty) {
+        _showCameraError('No camera found on this device');
+        return;
       }
-    } finally {
-      _cameraStarting = false;
+      _camDesc = cams.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cams.first,
+      );
+      _cam = CameraController(_camDesc!, ResolutionPreset.medium,
+          enableAudio: false,
+          imageFormatGroup: ImageFormatGroup.yuv420);
+
+      // Timeout guards against the init hanging (e.g. a permission dialog
+      // race) — without it the screen shows the spinner forever.
+      await _cam!.initialize().timeout(const Duration(seconds: 12));
+
+      try {
+        final mn = await _cam!.getMinZoomLevel();
+        final mx = await _cam!.getMaxZoomLevel();
+        await _cam!.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() { _cameraReady = true; _stableFrames = 0; });
+      _tracker.reset();
+      _rebuildMotion();
+      await _cam!.startImageStream(_onFrame);
+      _streamStarted = true;
+
+      // Start the sound helper ONLY after the camera is fully up, so its
+      // microphone permission request can't race the camera permission.
+      unawaited(_sound.start());
+    } on TimeoutException {
+      _showCameraError('Camera took too long to start');
+    } catch (e) {
+      _showCameraError('Camera error: $e');
     }
   }
 
-  ({double left, double top, double width, double height})? _builtRegion;
+  void _showCameraError(String msg) {
+    debugPrint('[Insertion] $msg');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      duration: const Duration(seconds: 8),
+      action: SnackBarAction(
+        label: 'Retry',
+        onPressed: () {
+          try {
+            _cam?.dispose();
+          } catch (_) {}
+          _cam = null;
+          _streamStarted = false;
+          if (mounted) setState(() => _cameraReady = false);
+          _initCamera();
+        },
+      ),
+    ));
+  }
+
+  Rect? _builtRegion;
 
   bool _regionDrifted() {
     final b = _builtRegion;
