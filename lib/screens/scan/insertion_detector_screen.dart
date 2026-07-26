@@ -197,6 +197,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   bool _detected        = false;
   bool _cameraStarting  = false; // guards re-entrant _initCamera() calls
 
+  // The camera plugin's initialize() resolves as soon as the hardware opens,
+  // but the preview texture stays black until the first real frame lands —
+  // without this flag the UI cut straight from the spinner to a raw black
+  // CameraPreview for a beat, which read as a "blank page" flash.
+  bool _firstFrameSeen  = false;
+
   // ── Detection ──────────────────────────────────────────────────────────────
   final _SlotTracker       _tracker = _SlotTracker();
   SlotMotionDetectionImpl? _motion;
@@ -293,7 +299,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     final cam = _cam;
     _cam = null;
     _streamStarted = false;
-    if (mounted) setState(() => _cameraReady = false);
+    if (mounted) {
+      setState(() { _cameraReady = false; _firstFrameSeen = false; });
+    } else {
+      _cameraReady = false;
+      _firstFrameSeen = false;
+    }
     if (cam != null) {
       try {
         if (cam.value.isStreamingImages) await cam.stopImageStream();
@@ -396,7 +407,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           } catch (_) {}
           _cam = null;
           _streamStarted = false;
-          if (mounted) setState(() => _cameraReady = false);
+          if (mounted) {
+            setState(() { _cameraReady = false; _firstFrameSeen = false; });
+          }
           _initCamera();
         },
       ),
@@ -517,6 +530,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     // dispose() began. Calling setState() here would throw.
     if (_disposed || !mounted) return;
     _frameCount++;
+    if (!_firstFrameSeen) {
+      // First real frame has landed — safe to reveal the camera preview now
+      // instead of the (still black) texture underneath the spinner.
+      _firstFrameSeen = true;
+      setState(() {});
+    }
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
     try {
@@ -593,12 +612,21 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   Widget _buildBody() {
-    if (!_cameraReady || _cam == null || !_cam!.value.isInitialized) {
-      return const Center(
-          child: CircularProgressIndicator(color: Color(0xFFEF5350)));
-    }
+    final bool ready = _cameraReady && _firstFrameSeen &&
+        _cam != null && _cam!.value.isInitialized;
 
-    return LayoutBuilder(builder: (_, box) {
+    // Cross-fade instead of hard-cutting straight to the camera texture —
+    // smooths over the transition now that we wait for the first real frame.
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      child: ready ? _buildCameraUI() : const Center(
+          key: ValueKey('loading'),
+          child: CircularProgressIndicator(color: Color(0xFFEF5350))),
+    );
+  }
+
+  Widget _buildCameraUI() {
+    return LayoutBuilder(key: const ValueKey('camera'), builder: (_, box) {
       final Size   sz     = Size(box.maxWidth, box.maxHeight);
       final Offset target = _tracker.toScreenOffset(sz, _sensorOrientation);
       final Offset pivot  = Offset(sz.width * 0.50, sz.height * 0.72);

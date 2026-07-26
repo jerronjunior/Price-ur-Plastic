@@ -1,4 +1,4 @@
-package com.example.eco_recycle
+package com.ideafactory.ecorecycle
 
 import io.flutter.embedding.android.FlutterActivity
 
