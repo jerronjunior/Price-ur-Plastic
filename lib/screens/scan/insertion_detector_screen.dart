@@ -192,16 +192,21 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   CameraController?  _cam;
   CameraDescription? _camDesc;
   bool _cameraReady     = false;
+  bool _firstFrameSeen  = false; // first REAL frame rendered — controls fade-in
+
+  // Cached screen size — captured safely during build(). NEVER call
+  // MediaQuery.of(context) from _onBottleDetected() or any other callback
+  // triggered by the camera's native frame stream: that stream runs
+  // completely outside Flutter's build/frame pipeline, and looking up an
+  // InheritedWidget (MediaQuery) from an context at an arbitrary moment
+  // like that can hit Flutter's element-tree assertion ("check that it
+  // really is our descendant") if a rebuild is in flight anywhere in the
+  // app at that exact instant. Reading a cached value avoids the lookup
+  // entirely.
+  Size _screenSize = const Size(400, 800); // sane fallback before first build
   bool _processingFrame = false;
   int  _frameCount      = 0;
   bool _detected        = false;
-  bool _cameraStarting  = false; // guards re-entrant _initCamera() calls
-
-  // The camera plugin's initialize() resolves as soon as the hardware opens,
-  // but the preview texture stays black until the first real frame lands —
-  // without this flag the UI cut straight from the spinner to a raw black
-  // CameraPreview for a beat, which read as a "blank page" flash.
-  bool _firstFrameSeen  = false;
 
   // ── Detection ──────────────────────────────────────────────────────────────
   final _SlotTracker       _tracker = _SlotTracker();
@@ -283,36 +288,8 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.inactive || s == AppLifecycleState.paused) {
-      _teardownCamera();
-    } else if (s == AppLifecycleState.resumed) {
-      _initCamera();
-    }
-  }
-
-  /// Cleanly releases the camera when the app loses focus. The OS can also
-  /// force-close the camera hardware behind our back in this state, so on
-  /// resume we always open a fresh CameraController rather than trying to
-  /// reuse this one — reusing a controller the OS already killed is what
-  /// caused the camera to get permanently stuck on some devices.
-  Future<void> _teardownCamera() async {
-    final cam = _cam;
-    _cam = null;
-    _streamStarted = false;
-    if (mounted) {
-      setState(() { _cameraReady = false; _firstFrameSeen = false; });
-    } else {
-      _cameraReady = false;
-      _firstFrameSeen = false;
-    }
-    if (cam != null) {
-      try {
-        if (cam.value.isStreamingImages) await cam.stopImageStream();
-      } catch (_) {}
-      try {
-        await cam.dispose();
-      } catch (_) {}
-    }
+    if (s == AppLifecycleState.inactive) _cam?.dispose();
+    if (s == AppLifecycleState.resumed)  _initCamera();
   }
 
   void _startTimeout() {
@@ -328,21 +305,12 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   Future<void> _initCamera() async {
-    // Without this guard, initState()'s call can race a later call from
-    // didChangeAppLifecycleState(resumed) or the Retry snackbar action —
-    // both write the shared _cam field with no way to tell which
-    // CameraController "won", which is how the camera got stuck locked by
-    // an orphaned controller on some devices.
-    if (_cameraStarting || _disposed) return;
-    _cameraStarting = true;
-    CameraController? cam;
     try {
       // availableCameras() is INSIDE the try now — if it throws or the
       // permission dialog is dismissed, the user gets an error + Retry
       // instead of an eternal loading spinner.
       final cams = await availableCameras()
           .timeout(const Duration(seconds: 8));
-      if (_disposed || !mounted) return;
       if (cams.isEmpty) {
         _showCameraError('No camera found on this device');
         return;
@@ -351,45 +319,33 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cams.first,
       );
-      cam = CameraController(_camDesc!, ResolutionPreset.medium,
+      _cam = CameraController(_camDesc!, ResolutionPreset.medium,
           enableAudio: false,
           imageFormatGroup: ImageFormatGroup.yuv420);
-      _cam = cam;
 
       // Timeout guards against the init hanging (e.g. a permission dialog
       // race) — without it the screen shows the spinner forever.
-      await cam.initialize().timeout(const Duration(seconds: 12));
-      if (_disposed || _cam != cam) return; // torn down while awaiting
+      await _cam!.initialize().timeout(const Duration(seconds: 12));
 
       try {
-        final mn = await cam.getMinZoomLevel();
-        final mx = await cam.getMaxZoomLevel();
-        await cam.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
+        final mn = await _cam!.getMinZoomLevel();
+        final mx = await _cam!.getMaxZoomLevel();
+        await _cam!.setZoomLevel((mn <= 1.0 && mx >= 1.0) ? 1.0 : mn);
       } catch (_) {}
-      if (!mounted || _disposed || _cam != cam) return;
+      if (!mounted) return;
       setState(() { _cameraReady = true; _stableFrames = 0; });
       _tracker.reset();
       _rebuildMotion();
-      await cam.startImageStream(_onFrame);
-      if (_disposed || _cam != cam) return;
+      await _cam!.startImageStream(_onFrame);
       _streamStarted = true;
 
       // Start the sound helper ONLY after the camera is fully up, so its
       // microphone permission request can't race the camera permission.
       unawaited(_sound.start());
     } on TimeoutException {
-      // The native initialize() call may still complete in the background
-      // after we stop waiting on it — dispose this controller so it can't
-      // sit there holding the camera hardware and blocking the retry.
-      if (_cam == cam) _cam = null;
-      try { await cam?.dispose(); } catch (_) {}
-      if (!_disposed && mounted) _showCameraError('Camera took too long to start');
+      _showCameraError('Camera took too long to start');
     } catch (e) {
-      if (_cam == cam) _cam = null;
-      try { await cam?.dispose(); } catch (_) {}
-      if (!_disposed && mounted) _showCameraError('Camera error: $e');
-    } finally {
-      _cameraStarting = false;
+      _showCameraError('Camera error: $e');
     }
   }
 
@@ -408,7 +364,10 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
           _cam = null;
           _streamStarted = false;
           if (mounted) {
-            setState(() { _cameraReady = false; _firstFrameSeen = false; });
+            setState(() {
+              _cameraReady = false;
+              _firstFrameSeen = false;
+            });
           }
           _initCamera();
         },
@@ -498,7 +457,7 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     _badgeCtrl.forward(from: 0);
 
     // 3. Spawn AR floating score at slot position
-    final sz     = MediaQuery.of(context).size;
+    final sz     = _screenSize; // cached in build() — never read live here
     final origin = _tracker.toScreenOffset(sz, _sensorOrientation);
     _spawnScore(origin);
 
@@ -531,10 +490,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
     if (_disposed || !mounted) return;
     _frameCount++;
     if (!_firstFrameSeen) {
-      // First real frame has landed — safe to reveal the camera preview now
-      // instead of the (still black) texture underneath the spinner.
       _firstFrameSeen = true;
-      setState(() {});
+      // One-time rebuild to fade the loading cover out over the live feed.
+      if (mounted) setState(() {});
     }
     if (_frameCount % 2 != 0 || _processingFrame || _detected) return;
     _processingFrame = true;
@@ -592,6 +550,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    // Safe: MediaQuery.of(context) called here is a normal, synchronous
+    // part of the build phase — this is the ONLY place in this file that
+    // should ever call it.
+    _screenSize = MediaQuery.of(context).size;
+
     return Scaffold(
       backgroundColor: Colors.black,
       extendBodyBehindAppBar: true,
@@ -612,21 +575,14 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   }
 
   Widget _buildBody() {
-    final bool ready = _cameraReady && _firstFrameSeen &&
-        _cam != null && _cam!.value.isInitialized;
+    if (!_cameraReady || _cam == null || !_cam!.value.isInitialized) {
+      // Branded loading state (matches the screen's dark theme) instead of
+      // a bare spinner on black — shown only until the camera initializes.
+      return const Center(
+          child: CircularProgressIndicator(color: Color(0xFFEF5350)));
+    }
 
-    // Cross-fade instead of hard-cutting straight to the camera texture —
-    // smooths over the transition now that we wait for the first real frame.
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 280),
-      child: ready ? _buildCameraUI() : const Center(
-          key: ValueKey('loading'),
-          child: CircularProgressIndicator(color: Color(0xFFEF5350))),
-    );
-  }
-
-  Widget _buildCameraUI() {
-    return LayoutBuilder(key: const ValueKey('camera'), builder: (_, box) {
+    return LayoutBuilder(builder: (_, box) {
       final Size   sz     = Size(box.maxWidth, box.maxHeight);
       final Offset target = _tracker.toScreenOffset(sz, _sensorOrientation);
       final Offset pivot  = Offset(sz.width * 0.50, sz.height * 0.72);
@@ -639,6 +595,26 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
 
         // ── Camera ─────────────────────────────────────────────────────
         Positioned.fill(child: CameraPreview(_cam!)),
+
+        // ── Smooth reveal: keep a cover over the preview until the FIRST
+        // real frame has rendered, then fade it out. Without this, there's
+        // a visible ~0.5s black flash between "initialized" and the first
+        // frame actually appearing.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: _firstFrameSeen ? 0.0 : 1.0,
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOut,
+              child: Container(
+                color: Colors.black,
+                child: const Center(
+                  child: CircularProgressIndicator(color: Color(0xFFEF5350)),
+                ),
+              ),
+            ),
+          ),
+        ),
 
         // ── Subtle vignette overlay ─────────────────────────────────────
         Positioned.fill(
