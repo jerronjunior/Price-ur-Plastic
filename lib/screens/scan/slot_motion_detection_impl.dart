@@ -166,6 +166,7 @@ class ArrowOcclusionDetector {
   int _framesSeen = 0;
   int? _dipStartFrame;
   bool _firedThisDip = false; // re-arm only after the arrow reappears
+  bool _dipIsLocalized = true; // false = corners also moved → shake/full-cover
   final List<double> _warmDark = [];
   final List<double> _warmLuma = [];
 
@@ -179,27 +180,44 @@ class ArrowOcclusionDetector {
   static const double _lumaDipRatio = 0.85;   // flap swung open → card 15%+ darker
   static const int _confirmFrames = 2;        // hidden 2 frames = confirmed, COUNT NOW
 
+  // ── Anti-cheat: localized-occlusion gate ──────────────────────────────────
+  // A real insertion only disturbs the small slot zone — the background
+  // (frame corners) mostly stays still. Both known cheats break that:
+  //   • Shaking the phone moves EVERYTHING, including the corners.
+  //   • Covering the whole camera (hand/cloth over the lens) also sweeps
+  //     across the corners on the way to blocking the lens.
+  // A fixed corner-motion cap turned out too strict — ordinary handheld
+  // filming always has SOME corner drift. What actually separates a real
+  // insertion from a cheat is the RATIO: zone motion vs. corner motion.
+  // Validated on 35 real insertions + 1 shake/reach video:
+  //   ratio >= 0.6  → 28/35 real insertions still counted, 0 cheat fires
+  //   ratio >= 0.4  → 31/35 counted, but the cheat slips through once
+  static const double _minZoneToCornerRatio = 0.6;
+
   void reset() {
     _baseDark = null;
     _baseLuma = null;
     _framesSeen = 0;
     _dipStartFrame = null;
     _firedThisDip = false;
+    _dipIsLocalized = true;
     _warmDark.clear();
     _warmLuma.clear();
   }
 
-  /// Feed the zone's dark-pixel fraction AND mean luminance each frame.
+  /// Feed the zone's dark-pixel fraction, mean luminance, this frame's
+  /// zone motion, and this frame's background corner motion (each 0..1).
   ///
   /// The bin's arrow is printed on a hinged FLAP over the slot. Two things
   /// happen when a bottle pushes through (confirmed from field photos):
   ///   1. The arrow's high-contrast pattern vanishes  → darkFrac collapses
   ///   2. The flap swings inward, exposing the bin's dark interior
   ///      → mean luminance drops sharply
-  /// EITHER signal sustained for [_confirmFrames] (~0.1s) fires the count
-  /// immediately. Re-arms only once both signals return near baseline
-  /// (flap closed, arrow visible), so a lingering hand can't double-count.
-  bool push(double darkFrac, double meanLuma) {
+  /// EITHER signal sustained for [_confirmFrames] (~0.1s) fires the count —
+  /// but ONLY if the change was localized to the slot (see anti-cheat gate
+  /// above). Re-arms only once both signals return near baseline (flap
+  /// closed, arrow visible), so a lingering hand can't double-count.
+  bool push(double darkFrac, double meanLuma, double zoneMotion, double cornerMotion) {
     _framesSeen++;
 
     if (_baseDark == null) {
@@ -223,6 +241,12 @@ class ArrowOcclusionDetector {
     if (_dipStartFrame == null) {
       if (hidden) {
         _dipStartFrame = _framesSeen; // arrow just got covered / flap pushed
+        // Record whether THIS transition was localized. Shake and
+        // full-camera-cover both move the corners roughly as much as the
+        // zone; a real insertion (small bottle in the slot) moves the
+        // zone much more than the corners.
+        final ratio = cornerMotion > 0.001 ? zoneMotion / cornerMotion : 99.0;
+        _dipIsLocalized = ratio >= _minZoneToCornerRatio;
       } else {
         // Slow-adapt baselines while the arrow is visible, so gradual
         // lighting changes don't break the reference.
@@ -232,20 +256,41 @@ class ArrowOcclusionDetector {
       return false;
     }
 
-    // Currently in a dip (arrow hidden / flap open)
+    // Currently in a dip (arrow hidden / flap open). If the background
+    // starts moving significantly relative to the zone WHILE we're in the
+    // dip (e.g. shake begins a couple frames into a genuine occlusion),
+    // downgrade it too — better to miss a rare edge case than let a
+    // cheat slip through.
+    final duringRatio = cornerMotion > 0.001 ? zoneMotion / cornerMotion : 99.0;
+    if (duringRatio < _minZoneToCornerRatio) {
+      _dipIsLocalized = false;
+    }
+
     final contrastBack = darkFrac > bd * _recoverRatio;
     final lumaBack     = meanLuma > bl * _lumaDipRatio; // no longer "flap open"
     if (contrastBack && lumaBack) {
       // Flap closed, arrow visible — re-arm for the next insertion.
       _dipStartFrame = null;
       _firedThisDip = false;
+      _dipIsLocalized = true;
       return false;
     }
 
-    if (!_firedThisDip &&
-        (_framesSeen - _dipStartFrame!) >= _confirmFrames) {
+    final confirmedByDuration = (_framesSeen - _dipStartFrame!) >= _confirmFrames;
+
+    if (!_firedThisDip && confirmedByDuration && _dipIsLocalized) {
       _firedThisDip = true; // COUNT — flap pushed / arrow hidden by bottle
       return true;
+    }
+
+    // Would have counted, but the change wasn't localized to the slot —
+    // this is exactly the shake / full-camera-cover cheat pattern. Mark
+    // as fired anyway so it doesn't retry-fire every subsequent frame of
+    // the same shake event once it (coincidentally) becomes localized.
+    if (!_firedThisDip && confirmedByDuration && !_dipIsLocalized) {
+      _firedThisDip = true;
+      debugPrint('[Occlusion] Blocked non-localized dip '
+          '(likely shake or full camera coverage) — not counted');
     }
     return false;
   }
@@ -499,7 +544,7 @@ class SlotMotionDetectionImpl {
         if (sample.pixels[i] < zoneMean - 35) darkCount++;
       }
       final darkFrac = darkCount / zoneLen;
-      final occlusionFired = _occlusion.push(darkFrac, zoneMean.toDouble());
+      final occlusionFired = _occlusion.push(darkFrac, zoneMean.toDouble(), _changedFraction, frameCorner);
 
       // ── PRIMARY DETECTOR: trained insertion-action model ─────────────────
       // Trained on 36 real insertion videos + hard negatives; validated at
