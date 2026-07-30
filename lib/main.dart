@@ -1,4 +1,4 @@
-import 'dart:async' show unawaited;
+import 'dart:async' show unawaited, runZonedGuarded;
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -15,57 +15,102 @@ import 'services/camera_service.dart';
 import 'services/firestore_service.dart';
 import 'firebase_options.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  String? startupError;
+void main() {
+  // Any widget that throws mid-build (including Flutter framework
+  // assertions like element-tree "is not our descendant" races) would
+  // otherwise fall through to Flutter's default ErrorWidget, which dumps
+  // the raw exception + stack trace onto the screen. Users should never
+  // see that — log it for us instead and show a friendly fallback.
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    debugPrint('[UI error] ${details.exception}\n${details.stack}');
+    return const _FriendlyErrorFallback();
+  };
 
-  // Warm the camera-list cache in the background so the first tap on Scan
-  // doesn't pay for the availableCameras() platform-channel round trip on
-  // top of the actual camera hardware open — shortens the black loading
-  // screen users see the first time they open Scan each session.
-  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-    unawaited(CameraService.getCameras());
-  }
+  // Catches anything that still escapes the widget tree (e.g. errors
+  // thrown from a callback outside the build phase) so it's logged
+  // instead of silently crashing the isolate or surfacing to the user.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    String? startupError;
 
-  try {
-    final isSupportedFirebasePlatform = kIsWeb ||
-        Platform.isAndroid ||
-        Platform.isIOS ||
-        Platform.isMacOS;
+    // Warm the camera-list cache in the background so the first tap on Scan
+    // doesn't pay for the availableCameras() platform-channel round trip on
+    // top of the actual camera hardware open — shortens the black loading
+    // screen users see the first time they open Scan each session.
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      unawaited(CameraService.getCameras());
+    }
 
-    if (!isSupportedFirebasePlatform) {
-      startupError =
-          'This build is running on ${Platform.operatingSystem}.\n\n'
-          'Firebase is configured for Android in this project.\n'
-          'Run the app on an Android device/emulator using "flutter run -d android".';
-    } else {
-      // Check if Firebase is already initialized by native side to prevent duplicate-app errors
-      try {
-        // Wait a moment for native initialization to complete if it's happening
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(
-            options: DefaultFirebaseOptions.currentPlatform,
-          );
-        }
-      } on FirebaseException catch (e) {
-        // If Firebase is already initialized by native side, that's OK - use the existing instance
-        if (e.code == 'duplicate-app') {
-          // This is expected - native Android initializes Firebase automatically
-          // The app is already ready to use
-        } else {
-          rethrow;
+    try {
+      final isSupportedFirebasePlatform = kIsWeb ||
+          Platform.isAndroid ||
+          Platform.isIOS ||
+          Platform.isMacOS;
+
+      if (!isSupportedFirebasePlatform) {
+        startupError =
+            'This build is running on ${Platform.operatingSystem}.\n\n'
+            'Firebase is configured for Android in this project.\n'
+            'Run the app on an Android device/emulator using "flutter run -d android".';
+      } else {
+        // Check if Firebase is already initialized by native side to prevent duplicate-app errors
+        try {
+          // Wait a moment for native initialization to complete if it's happening
+          await Future.delayed(const Duration(milliseconds: 500));
+
+          if (Firebase.apps.isEmpty) {
+            await Firebase.initializeApp(
+              options: DefaultFirebaseOptions.currentPlatform,
+            );
+          }
+        } on FirebaseException catch (e) {
+          // If Firebase is already initialized by native side, that's OK - use the existing instance
+          if (e.code == 'duplicate-app') {
+            // This is expected - native Android initializes Firebase automatically
+            // The app is already ready to use
+          } else {
+            rethrow;
+          }
         }
       }
+    } catch (e) {
+      startupError =
+          'Firebase initialization failed.\n\n$e\n\n'
+          'Please verify Firebase setup and try running on Android.';
     }
-  } catch (e) {
-    startupError =
-        'Firebase initialization failed.\n\n$e\n\n'
-        'Please verify Firebase setup and try running on Android.';
-  }
 
-  runApp(EcoRecycleApp(startupError: startupError));
+    runApp(EcoRecycleApp(startupError: startupError));
+  }, (error, stack) {
+    debugPrint('[Uncaught error] $error\n$stack');
+  });
+}
+
+/// Shown instead of Flutter's raw red/grey error screen whenever a widget
+/// throws mid-build. Deliberately generic — the real exception only ever
+/// goes to the console via ErrorWidget.builder above, never to the user.
+class _FriendlyErrorFallback extends StatelessWidget {
+  const _FriendlyErrorFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.refresh_rounded, color: Color(0xFFEF5350), size: 36),
+          SizedBox(height: 12),
+          Text(
+            'Something went wrong loading this screen.\nPlease go back and try again.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class EcoRecycleApp extends StatefulWidget {
