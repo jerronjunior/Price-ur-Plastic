@@ -565,16 +565,28 @@ class SlotMotionDetectionImpl {
         // The printed-arrow occlusion is the ONLY counting trigger:
         //   • armed only while the AR arrow is locked on the slot
         //   • requires real motion in the zone at hide-time (not a shadow)
+        //   • requires the entering/inside/exiting state machine to have
+        //     already registered genuine downward-biased motion (_state !=
+        //     idle) — darkness + zone motion ALONE can't tell a bottle
+        //     passing through the slot apart from a hand merely reaching
+        //     in to position it, and field reports showed a hand hovering
+        //     over the arrow (without ever releasing a bottle) was enough
+        //     to fire a count on its own. Requiring _state != idle means
+        //     the same downward-motion evidence the non-occlusion path
+        //     already demands (see Filter 3/4 below) must ALSO have been
+        //     seen before an occlusion can count.
         // The AI model no longer fires counts — field testing showed it
         // trips on APPROACH motion (bottle nearing the slot), causing
         // counts BEFORE the actual insertion. It remains as a live
         // diagnostic (the AI % readout and [Model] logs).
         final shouldCount = occlusionFired &&
             occlusionArmed &&
-            _changedFraction >= 0.03;
+            _changedFraction >= 0.03 &&
+            _state != _PassState.idle;
         if (occlusionFired && !shouldCount) {
           debugPrint('[Occlusion] hide detected but not counted '
-              '(armed=$occlusionArmed zone=${_changedFraction.toStringAsFixed(3)})');
+              '(armed=$occlusionArmed zone=${_changedFraction.toStringAsFixed(3)} '
+              'state=$_state)');
         }
         if (shouldCount) {
           debugPrint('[Occlusion] Printed arrow hidden by bottle → count');
