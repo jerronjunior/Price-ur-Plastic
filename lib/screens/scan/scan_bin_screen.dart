@@ -57,6 +57,14 @@ class _ScanBinScreenState extends State<ScanBinScreen>
   final BinDetector _detector = BinDetector();
   late AnimationController _pulseCtrl;
 
+  // Cached during build() — _proceed()/_initCamera() reach ScaffoldMessenger
+  // from the camera stream callback and from async catch blocks, both
+  // outside the build phase. A live ScaffoldMessenger.of(context) lookup
+  // from there can hit Flutter's "check that it really is our descendant"
+  // element-tree assertion if a rebuild is in flight anywhere in the app
+  // at that exact instant. Reading a cached reference avoids the lookup.
+  ScaffoldMessengerState? _messenger;
+
   @override
   void initState() {
     super.initState();
@@ -121,8 +129,7 @@ class _ScanBinScreenState extends State<ScanBinScreen>
         await cam.startImageStream(_onFrame);
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Camera error: $e')));
+        _messenger?.showSnackBar(SnackBar(content: Text('Camera error: $e')));
       }
     } finally {
       _cameraStarting = false;
@@ -153,7 +160,7 @@ class _ScanBinScreenState extends State<ScanBinScreen>
     // bin-color model can be retrained from real, in-the-field detections.
     unawaited(_saveBinTrainingSample(type));
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    _messenger?.showSnackBar(SnackBar(
       content: const Row(children: [
         Icon(Icons.check_circle, color: Colors.white, size: 18),
         SizedBox(width: 8),
@@ -198,6 +205,10 @@ class _ScanBinScreenState extends State<ScanBinScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Safe: this is a normal, synchronous part of the build phase — the
+    // ONLY place in this file that should ever call ScaffoldMessenger.of().
+    _messenger = ScaffoldMessenger.of(context);
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(

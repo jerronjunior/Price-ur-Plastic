@@ -51,6 +51,14 @@ class _BinImageVerificationScreenState
   late AnimationController _flashCtrl;
   bool _showFlash = false;
 
+  // Cached during build() — _captureImage()/_initCamera() reach
+  // ScaffoldMessenger from the camera stream callback and from async catch
+  // blocks, both outside the build phase. A live ScaffoldMessenger.of(context)
+  // lookup from there can hit Flutter's "check that it really is our
+  // descendant" element-tree assertion if a rebuild is in flight anywhere
+  // in the app at that exact instant. Reading a cached reference avoids it.
+  ScaffoldMessengerState? _messenger;
+
   @override
   void initState() {
     super.initState();
@@ -139,7 +147,7 @@ class _BinImageVerificationScreenState
       await _cam!.startImageStream(_onFrame);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _messenger?.showSnackBar(
         SnackBar(content: Text('Camera error: $e')),
       );
     }
@@ -226,7 +234,7 @@ class _BinImageVerificationScreenState
       if (mounted) widget.onImageCaptured(image);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _messenger?.showSnackBar(
         SnackBar(content: Text('Error capturing image: $e')),
       );
       _captured = false;
@@ -245,6 +253,10 @@ class _BinImageVerificationScreenState
 
   @override
   Widget build(BuildContext context) {
+    // Safe: this is a normal, synchronous part of the build phase — the
+    // ONLY place in this file that should ever call ScaffoldMessenger.of().
+    _messenger = ScaffoldMessenger.of(context);
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(

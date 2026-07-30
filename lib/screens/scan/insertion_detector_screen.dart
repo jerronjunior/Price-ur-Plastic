@@ -204,6 +204,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // app at that exact instant. Reading a cached value avoids the lookup
   // entirely.
   Size _screenSize = const Size(400, 800); // sane fallback before first build
+
+  // Same reasoning as _screenSize above — cached during build() so
+  // _showCameraError() (reached from async catch/timeout blocks, i.e.
+  // outside the build phase) never calls ScaffoldMessenger.of(context) live.
+  ScaffoldMessengerState? _messenger;
   bool _processingFrame = false;
   int  _frameCount      = 0;
   bool _detected        = false;
@@ -352,7 +357,9 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   void _showCameraError(String msg) {
     debugPrint('[Insertion] $msg');
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    final messenger = _messenger;
+    if (messenger == null) return; // no build() has run yet — nothing to show into
+    messenger.showSnackBar(SnackBar(
       content: Text(msg),
       duration: const Duration(seconds: 8),
       action: SnackBarAction(
@@ -550,10 +557,11 @@ class _InsertionDetectorScreenState extends State<InsertionDetectorScreen>
   // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    // Safe: MediaQuery.of(context) called here is a normal, synchronous
-    // part of the build phase — this is the ONLY place in this file that
-    // should ever call it.
+    // Safe: MediaQuery.of(context)/ScaffoldMessenger.of(context) called here
+    // are a normal, synchronous part of the build phase — this is the ONLY
+    // place in this file that should ever call them.
     _screenSize = MediaQuery.of(context).size;
+    _messenger  = ScaffoldMessenger.of(context);
 
     return Scaffold(
       backgroundColor: Colors.black,
