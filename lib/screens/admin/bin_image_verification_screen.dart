@@ -36,6 +36,16 @@ class _BinImageVerificationScreenState
   bool _processingFrame = false;
   int _frameCount = 0;
   bool _captured = false;
+  bool _cameraStarting = false; // guards re-entrant _initCamera() calls
+
+  // Every camera lifecycle operation (init or teardown) is chained onto this
+  // future so init and teardown never run concurrently on the same
+  // CameraController. Without this, a permission dialog appearing during
+  // cam.initialize() (which itself fires AppLifecycleState.inactive on
+  // Android) raced the inactive-handler's dispose() against the still-pending
+  // initialize()/startImageStream() call, throwing "CameraController was
+  // used after being disposed" straight to the user.
+  Future<void> _cameraChain = Future.value();
 
   // ── Frame quality detection ────────────────────────────────────────────────
   int _stableQualityFrames = 0;
@@ -90,17 +100,22 @@ class _BinImageVerificationScreenState
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) async {
+  void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
-      final old = _cam;
-      _cam = null;
-      if (mounted) setState(() => _cameraReady = false);
-      if (old != null) {
-        try { if (old.value.isStreamingImages) await old.stopImageStream(); } catch (_) {}
-        try { await old.dispose(); } catch (_) {}
-      }
+      _cameraChain = _cameraChain.then((_) => _teardownCamera());
+    } else if (state == AppLifecycleState.resumed && _cam == null) {
+      _initCamera();
     }
-    if (state == AppLifecycleState.resumed && _cam == null) _initCamera();
+  }
+
+  Future<void> _teardownCamera() async {
+    final old = _cam;
+    _cam = null;
+    if (mounted) setState(() => _cameraReady = false);
+    if (old != null) {
+      try { if (old.value.isStreamingImages) await old.stopImageStream(); } catch (_) {}
+      try { await old.dispose(); } catch (_) {}
+    }
   }
 
   void _startTimeout() {
@@ -115,41 +130,55 @@ class _BinImageVerificationScreenState
     });
   }
 
-  Future<void> _initCamera() async {
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
+  void _initCamera() {
+    if (_cameraStarting) return;
+    _cameraStarting = true;
+    _cameraChain = _cameraChain
+        .then((_) => _doInitCamera())
+        .whenComplete(() => _cameraStarting = false);
+  }
 
-    _camDesc = cameras.firstWhere(
-      (c) => c.lensDirection == CameraLensDirection.back,
-      orElse: () => cameras.first,
-    );
-
-    _cam = CameraController(
-      _camDesc!,
-      ResolutionPreset.high,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
-    );
-
+  Future<void> _doInitCamera() async {
     try {
-      await _cam!.initialize();
-      try {
-        final min = await _cam!.getMinZoomLevel();
-        final max = await _cam!.getMaxZoomLevel();
-        await _cam!.setZoomLevel((min <= 1.0 && max >= 1.0) ? 1.0 : min);
-      } catch (_) {}
+      final cameras = await availableCameras();
+      if (cameras.isEmpty || !mounted) return;
 
-      if (!mounted) return;
-      setState(() {
-        _cameraReady = true;
-      });
-
-      await _cam!.startImageStream(_onFrame);
-    } catch (e) {
-      if (!mounted) return;
-      _messenger?.showSnackBar(
-        SnackBar(content: Text('Camera error: $e')),
+      _camDesc = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
       );
+
+      final cam = CameraController(
+        _camDesc!,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420,
+      );
+      _cam = cam;
+
+      try {
+        await cam.initialize();
+        if (!mounted || _cam != cam) return; // torn down while awaiting
+        try {
+          final min = await cam.getMinZoomLevel();
+          final max = await cam.getMaxZoomLevel();
+          await cam.setZoomLevel((min <= 1.0 && max >= 1.0) ? 1.0 : min);
+        } catch (_) {}
+
+        if (!mounted || _cam != cam) return;
+        setState(() {
+          _cameraReady = true;
+        });
+
+        await cam.startImageStream(_onFrame);
+      } catch (e) {
+        if (!mounted || _cam != cam) return; // superseded by teardown — not a real error
+        _messenger?.showSnackBar(
+          SnackBar(content: Text('Camera error: $e')),
+        );
+      }
+    } catch (_) {
+      // Swallow so an error here can't break the _cameraChain sequencing.
     }
   }
 

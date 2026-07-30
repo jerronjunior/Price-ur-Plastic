@@ -54,6 +54,15 @@ class _ScanBinScreenState extends State<ScanBinScreen>
   bool _confirmed       = false;
   bool _cameraStarting  = false; // guards re-entrant _initCamera() calls
 
+  // Every camera lifecycle operation (init or teardown) is chained onto this
+  // future so init and teardown never run concurrently on the same
+  // CameraController. Without this, a permission dialog appearing during
+  // cam.initialize() (which itself fires AppLifecycleState.inactive on
+  // Android) raced _teardownCamera()'s dispose() against the still-pending
+  // initialize()/startImageStream() call, throwing "CameraController was
+  // used after being disposed" straight to the user.
+  Future<void> _cameraChain = Future.value();
+
   final BinDetector _detector = BinDetector();
   late AnimationController _pulseCtrl;
 
@@ -90,7 +99,7 @@ class _ScanBinScreenState extends State<ScanBinScreen>
     // backgrounded — reusing that controller on resume leaves the preview
     // permanently black/stuck, so always tear down and reopen fresh.
     if (s == AppLifecycleState.inactive || s == AppLifecycleState.paused) {
-      _teardownCamera();
+      _cameraChain = _cameraChain.then((_) => _teardownCamera());
     } else if (s == AppLifecycleState.resumed) {
       _initCamera();
     }
@@ -110,9 +119,15 @@ class _ScanBinScreenState extends State<ScanBinScreen>
     }
   }
 
-  Future<void> _initCamera() async {
+  void _initCamera() {
     if (_cameraStarting) return;
     _cameraStarting = true;
+    _cameraChain = _cameraChain
+        .then((_) => _doInitCamera())
+        .whenComplete(() => _cameraStarting = false);
+  }
+
+  Future<void> _doInitCamera() async {
     try {
       final camera = await CameraService.getBackCamera();
       if (camera == null || !mounted) return;
@@ -128,11 +143,11 @@ class _ScanBinScreenState extends State<ScanBinScreen>
         setState(() => _cameraReady = true);
         await cam.startImageStream(_onFrame);
       } catch (e) {
-        if (!mounted) return;
+        if (!mounted || _cam != cam) return; // superseded by teardown — not a real error
         _messenger?.showSnackBar(SnackBar(content: Text('Camera error: $e')));
       }
-    } finally {
-      _cameraStarting = false;
+    } catch (_) {
+      // Swallow so an error here can't break the _cameraChain sequencing.
     }
   }
 
