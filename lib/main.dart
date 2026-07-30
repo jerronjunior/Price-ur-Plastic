@@ -201,7 +201,7 @@ class _EcoRecycleAppState extends State<EcoRecycleApp> {
         Provider<FirestoreService>.value(value: _firestoreService),
       ],
       child: MaterialApp.router(
-        title: 'EcoRecycle',
+        title: 'Price ur Plastic',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.theme,
         routerConfig: _router,

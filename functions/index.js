@@ -110,7 +110,7 @@ exports.sendOtp = functions.https.onCall(async (data) => {
   const providedOtp = String(data?.otp || '').trim();
   const code = providedOtp || generateOtp();
 
-  const message = `Your EcoRecycle verification code is ${code}. It expires in 5 minutes.`;
+  const message = `Your Price ur Plastic verification code is ${code}. It expires in 5 minutes.`;
   const createdAt = admin.firestore.FieldValue.serverTimestamp();
   const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000));
 
@@ -184,8 +184,8 @@ exports.sendBottleCount = functions.https.onCall(async (data) => {
   const totalPoints = Number(data?.totalPoints || 0);
 
   const message = bottleCount > 0
-    ? `EcoRecycle update: you added ${bottleCount} bottle${bottleCount === 1 ? '' : 's'} and earned ${totalPoints} points.`
-    : `EcoRecycle update: your recycling session is complete. Total points: ${totalPoints}.`;
+    ? `Price ur Plastic update: you added ${bottleCount} bottle${bottleCount === 1 ? '' : 's'} and earned ${totalPoints} points.`
+    : `Price ur Plastic update: your recycling session is complete. Total points: ${totalPoints}.`;
   const sms = await sendTextlkSms({ recipient: phone, message });
 
   return {

@@ -1,4 +1,4 @@
-# EcoRecycle
+# Price ur Plastic
 
 Flutter mobile app to reduce plastic bottle waste. Users scan bottle barcodes, confirm insertion via camera, and earn points.
 
