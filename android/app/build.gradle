@@ -17,7 +17,7 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.ideafactory.ecorecycle"
     compileSdk = 36
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -108,6 +108,16 @@ android {
             ]
         }
         jniLibs {
+            // Required for 16KB page-size compliance: ensures native
+            // libraries are packaged uncompressed and page-aligned rather
+            // than the old (pre-AGP 8.3) legacy packaging method.
+            useLegacyPackaging = false
+            // NOTE: this exclude targeted the OLD TensorFlow Lite GPU
+            // delegate filename. After upgrading tflite_flutter to 0.12.1+
+            // (LiteRT), the actual .so filenames may differ -- re-check the
+            // Play Console App Bundle Explorer after rebuilding and update
+            // or remove this line based on what (if anything) still needs
+            // excluding.
             excludes += [
                 "**/libtensorflowlite_gpu_jni.so"
             ]
