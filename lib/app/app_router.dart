@@ -11,6 +11,7 @@ import '../screens/scan/scan_bin_flow_screen.dart';
 import '../screens/admin/admin_dashboard_screen.dart';
 import '../screens/admin/manage_bins_screen.dart';
 import '../screens/admin/manage_rewards_screen.dart';
+import '../screens/achievements/achievements_screen.dart';
 import '../screens/startup/splash_screen.dart';
 import '../screens/startup/welcome_screen.dart';
 import '../screens/map/map_screen.dart';
@@ -37,7 +38,8 @@ GoRouter createAppRouter(AuthProvider authProvider) {
           location == '/leaderboard' ||
           location == '/profile' ||
           location == '/rewards' ||
-          location == '/map';
+          location == '/map' ||
+          location == '/achievements';
       if (onStartup) return null;
       if (!loggedIn && !onAuth) return '/login';
       if (!loggedIn) return null;
@@ -112,6 +114,10 @@ GoRouter createAppRouter(AuthProvider authProvider) {
       GoRoute(
         path: '/map',
         builder: (_, __) => const MapScreen(),
+      ),
+      GoRoute(
+        path: '/achievements',
+        builder: (_, __) => const AchievementsScreen(),
       ),
       GoRoute(
         path: '/admin',

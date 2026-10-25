@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/reward_config_model.dart';
@@ -183,6 +184,15 @@ class _RewardsScreenState extends State<RewardsScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: () => context.push('/achievements'),
+                              icon: const Icon(Icons.emoji_events_outlined),
+                              label: const Text('Achievements'),
+                            ),
+                          ),
 
                           // ── Not enough points warning ──────────────────
                           if (!canSpin)

@@ -225,6 +225,7 @@ class FirestoreService {
         'user_id': userId,
         'totalPoints': FieldValue.increment(1),
         'totalBottles': FieldValue.increment(1),
+        'achievementStats.bottlesInserted': FieldValue.increment(1),
       },
       SetOptions(merge: true),
     );
@@ -292,6 +293,7 @@ class FirestoreService {
           'user_id': bottle.userId,
           'totalPoints': FieldValue.increment(1),
           'totalBottles': FieldValue.increment(1),
+            'achievementStats.bottlesInserted': FieldValue.increment(1),
         },
         SetOptions(merge: true),
       );
