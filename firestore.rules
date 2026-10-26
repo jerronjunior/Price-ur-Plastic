@@ -58,6 +58,40 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Redemption catalog is managed by admins; users can redeem and view only
+    // their own redemption history.
+    match /redemption_items/{itemId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /redemptions/{redemptionId} {
+      allow read: if isAuthenticated()
+        && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.pointsSpent is number
+        && request.resource.data.pointsSpent > 0
+        && request.resource.data.status in ['pending', 'active']
+        && request.resource.data.keys().hasAll([
+          'userId', 'itemId', 'itemTitle', 'category', 'pointsSpent',
+          'status', 'emoji', 'createdAt'
+        ]);
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /achievement_unlocks/{unlockId} {
+      allow read: if isAuthenticated()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'userId', 'achievementId', 'points', 'unlockedAt'
+        ]);
+      allow update, delete: if false;
+    }
+
     // Top-level bin scans analytics.
     match /bin_scans/{scanId} {
       allow read: if isAdmin();

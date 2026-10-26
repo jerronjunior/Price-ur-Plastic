@@ -27,6 +27,7 @@ Usage:
   python analyze_collected_insertions.py --min-samples 200 --publish
 """
 
+import lib.session
 import argparse
 import sys
 from datetime import datetime, timedelta

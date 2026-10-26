@@ -186,11 +186,22 @@ class _RewardsScreenState extends State<RewardsScreen>
                         children: [
 
                           Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              onPressed: () => context.push('/achievements'),
-                              icon: const Icon(Icons.emoji_events_outlined),
-                              label: const Text('Achievements'),
+                            alignment: Alignment.center,
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 8,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () => context.push('/redeem'),
+                                  icon: const Icon(Icons.redeem),
+                                  label: const Text('Redeem points'),
+                                ),
+                                TextButton.icon(
+                                  onPressed: () => context.push('/achievements'),
+                                  icon: const Icon(Icons.emoji_events_outlined),
+                                  label: const Text('Achievements'),
+                                ),
+                              ],
                             ),
                           ),
 
