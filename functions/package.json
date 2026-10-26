@@ -6,7 +6,7 @@
     "node": "20"
   },
   "scripts": {
-    "start": "firebase emulators:start --only functions",
+    "start": "node init && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions"
   },
   "dependencies": {
