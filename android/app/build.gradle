@@ -41,6 +41,9 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
         targetSdk = 36 // pinned to match compileSdk, independent of local Flutter tool version
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         vectorDrawables.useSupportLibrary = true
@@ -82,7 +85,7 @@ android {
         abi {
             enable true
             reset()
-            include "armeabi-v7a", "arm64-v8a", "x86_64"
+            include "arm64-v8a", "x86_64"
             universalApk true
         }
     }
