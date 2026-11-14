@@ -27,6 +27,8 @@ Usage:
   python analyze_collected_insertions.py --min-samples 200 --publish
 """
 
+import lib.clients
+import lib.http_session
 import lib.transport
 import lib.session
 import argparse
